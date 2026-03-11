@@ -85,12 +85,14 @@ def generate_rubrics(config: dict, client: OpenAI | None = None) -> dict:
             {"role": "user", "content": user_content},
         ]
 
+        max_completion_tokens = config.get("max_completion_tokens", 4096)
         try:
             response = client.chat.completions.create(
                 model=model,
                 messages=messages,
                 temperature=0,
-                max_completion_tokens=4096,
+                max_completion_tokens=max_completion_tokens,
+                response_format={"type": "json_object"},
             )
             content = response.choices[0].message.content or "{}"
             raw = parse_llm_json(content)

@@ -345,6 +345,7 @@ def grade_group(
             messages=messages,
             temperature=0,
             max_completion_tokens=effective_max_completion,
+            response_format={"type": "json_object"},
         )
         content = response.choices[0].message.content or "{}"
         raw = parse_llm_json(content)
