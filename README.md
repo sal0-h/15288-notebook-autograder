@@ -328,6 +328,12 @@ To grade a different assignment, change `assignment_name` in `config.yaml` (and 
 
 - Stored in `.env` as `key=your-openai-api-key`
 - Loaded via `python-dotenv`; passed explicitly to `OpenAI(api_key=...)`
+- Fallback: `OPENAI_API_KEY` environment variable if `key` is not set
+
+### Security
+
+- **Do not commit `.env`** — it contains your API key. Ensure `.env` is in `.gitignore` (it is by default).
+- Student submissions are untrusted input; the pipeline sanitizes delimiter strings and instructs the LLM to treat student content as data, not instructions.
 
 ### LLM Response Validation
 
@@ -373,6 +379,7 @@ To grade a different assignment, change `assignment_name` in `config.yaml` (and 
 | `grading.grade_only` | Optional list of question IDs to grade; others get 0 and feedback `[skipped - not in grade_only]`. Omit to grade all. |
 | `rubrics` | Optional per-question rubrics (auto-generated or hand-edited). Dict of `{qid: {points, criteria}}`. |
 | `prompts.system` | System prompt for the LLM grader |
+| `upload_max_mb` | Max ZIP upload size in MB for Web UI gather (default: 500). |
 
 ---
 

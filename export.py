@@ -9,7 +9,7 @@ from parse_notebook import _sort_key_qid
 from utils import load_config
 
 
-def export_all(config: dict) -> dict:
+def export_all(config: dict) -> dict[str, str | int]:
     """
     Read graded_results.json and write:
     - output/gradescope/{StudentName}.json (Gradescope autograder format)

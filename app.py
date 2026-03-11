@@ -14,7 +14,7 @@ _grading_lock = threading.Lock()
 # Guard against concurrent reads/writes of graded_results.json (grading + review save)
 _results_lock = threading.Lock()
 
-MAX_UPLOAD_BYTES = 500 * 1024 * 1024  # 500MB
+DEFAULT_UPLOAD_MB = 500
 
 from fastapi import FastAPI, File, UploadFile, HTTPException, Body
 from fastapi.middleware.cors import CORSMiddleware
@@ -83,12 +83,14 @@ async def api_gather(zip_file: UploadFile = File(...)):
     """Run gather step. Expects a Gradescope export ZIP upload."""
     config = load_config()
     out_dir = Path(config.get("submissions_dir", "output/submissions"))
+    upload_max_mb = config.get("upload_max_mb", DEFAULT_UPLOAD_MB)
+    upload_max_bytes = upload_max_mb * 1024 * 1024
 
     content = await zip_file.read()
-    if len(content) > MAX_UPLOAD_BYTES:
+    if len(content) > upload_max_bytes:
         raise HTTPException(
             status_code=413,
-            detail=f"Upload exceeds {MAX_UPLOAD_BYTES // (1024 * 1024)}MB limit",
+            detail=f"Upload exceeds {upload_max_mb}MB limit",
         )
     try:
         zipfile.ZipFile(io.BytesIO(content), "r")

@@ -112,6 +112,14 @@ class TestParseLlmJson:
     def test_invalid_json(self):
         assert parse_llm_json("This is not JSON at all.") == {}
 
+    def test_multiple_json_objects_extracts_first(self):
+        """Greedy regex would capture from first { to last }; we extract first object only."""
+        text = '{"4.1": {"score": 2, "feedback": "ok"}} {"4.2": {"score": 0}}'
+        result = parse_llm_json(text)
+        assert "4.1" in result
+        assert "4.2" not in result
+        assert result["4.1"]["score"] == 2
+
 
 # ---------------------------------------------------------------------------
 # estimate_tokens

@@ -51,7 +51,7 @@ def _build_group_prompt(group: list[str], solution_parsed: dict) -> str:
     return "\n".join(parts)
 
 
-def generate_rubrics(config: dict, client: OpenAI | None = None) -> dict:
+def generate_rubrics(config: dict, client: OpenAI | None = None) -> dict[str, dict[str, int | str]]:
     """
     Generate grading rubrics from solution_parsed.json using the LLM.
 

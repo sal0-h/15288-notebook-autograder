@@ -70,6 +70,7 @@ class TestSaveConfig:
         config_path = tmp_path / "config.yaml"
         config_path.write_text("""
 assignment_name: Test
+model: gpt-4o-mini
 output_dir: output
 solution_notebook: sol.ipynb
 parsing:

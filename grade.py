@@ -3,6 +3,7 @@
 import json
 import logging
 import re
+import shutil
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -136,6 +137,47 @@ def truncate_output(text: str, max_chars: int) -> str:
     return text[:half] + f"\n... [truncated {len(text) - max_chars} chars] ...\n" + text[-half:]
 
 
+def _extract_first_json_object(text: str) -> str | None:
+    """Extract the first complete {...} JSON object using bracket matching.
+    Avoids greedy regex that can capture from first { to last } across multiple objects."""
+    start = text.find("{")
+    if start < 0:
+        return None
+    depth = 0
+    in_string = False
+    escape = False
+    quote_char = None
+    i = start
+    while i < len(text):
+        c = text[i]
+        if escape:
+            escape = False
+            i += 1
+            continue
+        if c == "\\" and in_string:
+            escape = True
+            i += 1
+            continue
+        if in_string:
+            if c == quote_char:
+                in_string = False
+            i += 1
+            continue
+        if c in ('"', "'"):
+            in_string = True
+            quote_char = c
+            i += 1
+            continue
+        if c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start : i + 1]
+        i += 1
+    return None
+
+
 def parse_llm_json(response_text: str) -> dict:
     """Extract JSON from LLM response, tolerating markdown code fences."""
     text = response_text.strip()
@@ -149,10 +191,10 @@ def parse_llm_json(response_text: str) -> dict:
             return json.loads(match.group(1).strip())
         except json.JSONDecodeError:
             pass
-    match = re.search(r"\{[\s\S]*\}", text)
-    if match:
+    first_obj = _extract_first_json_object(text)
+    if first_obj:
         try:
-            return json.loads(match.group(0))
+            return json.loads(first_obj)
         except json.JSONDecodeError:
             pass
     return {}
@@ -511,6 +553,18 @@ def grade_all_students(
             try:
                 return json.loads(out_path.read_text(encoding="utf-8"))
             except (json.JSONDecodeError, KeyError):
+                backup_path = output_dir / "graded_results.json.broken"
+                try:
+                    shutil.copy2(out_path, backup_path)
+                    logger.error(
+                        "graded_results.json is corrupted (invalid JSON). "
+                        "Backed up to %s. Starting fresh — previous grades will be re-run.",
+                        backup_path,
+                        exc_info=True,
+                    )
+                    print(f"Error: graded_results.json is corrupted. Backed up to {backup_path}. Re-grading all students.")
+                except OSError:
+                    logger.exception("Failed to backup corrupted graded_results.json")
                 return []
         return []
 

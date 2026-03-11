@@ -38,7 +38,9 @@ def load_config(config_path: Path | None = None) -> dict:
 
 def save_config(config: dict, config_path: Path | None = None) -> None:
     """Write config dict to YAML file. Reverses assignment-scoped paths so the saved
-    config stores the base output_dir (not output_dir/assignment_name)."""
+    config stores the base output_dir (not output_dir/assignment_name).
+    Validates config with AppConfig before persisting."""
+    AppConfig.model_validate(config)
     cfg = dict(config)
     # Reverse assignment-scoping so we save base paths
     if cfg.get("output_dir") and cfg.get("assignment_name"):
@@ -57,11 +59,14 @@ def save_config(config: dict, config_path: Path | None = None) -> None:
 # ---------------------------------------------------------------------------
 
 def get_openai_client(max_retries: int = 5) -> OpenAI:
-    """Initialize OpenAI client with .env key, with SDK-level retries."""
+    """Initialize OpenAI client with .env key, with SDK-level retries.
+    Checks 'key' first (from .env), then OPENAI_API_KEY as fallback."""
     load_dotenv()
-    api_key = os.environ.get("key")
+    api_key = os.environ.get("key") or os.environ.get("OPENAI_API_KEY")
     if not api_key:
-        raise ValueError("API key not found. Ensure .env contains 'key=your-api-key'")
+        raise ValueError(
+            "API key not found. Set 'key=your-api-key' in .env or OPENAI_API_KEY environment variable."
+        )
     return OpenAI(api_key=api_key, max_retries=max_retries)
 
 

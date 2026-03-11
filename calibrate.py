@@ -7,7 +7,7 @@ from pathlib import Path
 from utils import load_config
 
 
-def run_calibration(config: dict) -> list[dict]:
+def run_calibration(config: dict) -> list[dict[str, str | float]]:
     """
     Read graded_results.json and flag student-question pairs where the score
     is more than 2 standard deviations from the mean for that question.
