@@ -158,6 +158,24 @@ def parse_llm_json(response_text: str) -> dict:
     return {}
 
 
+_DELIMITER_REPLACEMENTS = [
+    ("<<<END_STUDENT_SUBMISSION>>>", "«END_STUDENT_SUBMISSION»"),
+    ("<<<STUDENT_SUBMISSION>>>",     "«STUDENT_SUBMISSION»"),
+    ("<<<",                          "«"),
+    (">>>",                          "»"),
+]
+
+
+def _sanitize_student_text(text: str) -> str:
+    """
+    Escape delimiter strings that could break out of <<<STUDENT_SUBMISSION>>> boundaries.
+    Replaces angle-bracket delimiters with visually similar but structurally inert characters.
+    """
+    for original, replacement in _DELIMITER_REPLACEMENTS:
+        text = text.replace(original, replacement)
+    return text
+
+
 def validate_question_groups(groups: list[list[str]], solution_parsed: dict) -> list[str]:
     """Return list of solution question IDs not covered by any group."""
     grouped: set[str] = {qid for group in groups for qid in group}
@@ -260,11 +278,11 @@ def build_group_prompt(
                 stu_q.get("answer_markdown_concat"),
             ])
             if stu_q.get("answer_code_concat"):
-                stu_text += f"Code:\n{stu_q['answer_code_concat']}\n\n"
+                stu_text += f"Code:\n{_sanitize_student_text(stu_q['answer_code_concat'])}\n\n"
             if stu_q.get("answer_text_concat"):
-                stu_text += f"Output:\n{truncate_output(stu_q['answer_text_concat'], max_output_chars)}\n\n"
+                stu_text += f"Output:\n{_sanitize_student_text(truncate_output(stu_q['answer_text_concat'], max_output_chars))}\n\n"
             if stu_q.get("answer_markdown_concat"):
-                stu_text += f"Answer:\n{stu_q['answer_markdown_concat']}\n\n"
+                stu_text += f"Answer:\n{_sanitize_student_text(stu_q['answer_markdown_concat'])}\n\n"
             if not has_any:
                 stu_text += "(no answer submitted)\n"
             for cell in stu_q.get("answer_cells", []):
