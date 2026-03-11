@@ -3,7 +3,9 @@
 import json
 import logging
 import re
+import threading
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 from openai import OpenAI
@@ -60,6 +62,72 @@ def _build_group_prompt(group: list[str], solution_parsed: dict) -> str:
     return "\n".join(parts)
 
 
+def _generate_one_group(
+    args: tuple[int, list[str], dict, dict, str, str, int, OpenAI | None],
+) -> tuple[int, list[str], dict[str, dict]]:
+    """Generate rubric for one group. Returns (group_idx, group, rubrics_for_group)."""
+    idx, group, solution_parsed, config, rubric_prompt, model, max_completion_tokens, client = args
+    if client is None:
+        client = get_openai_client()
+    rubrics_for_group: dict[str, dict] = {}
+
+    if not group:
+        return (idx, group, rubrics_for_group)
+
+    try:
+        temperature = temperature_for_model(model)
+        user_content = _build_group_prompt(group, solution_parsed)
+        messages = [
+            {"role": "system", "content": rubric_prompt},
+            {"role": "user", "content": user_content},
+        ]
+        response = client.chat.completions.create(
+            model=model,
+            messages=messages,
+            temperature=temperature,
+            max_completion_tokens=max_completion_tokens,
+            response_format={"type": "json_object"},
+        )
+        content = response.choices[0].message.content or "{}"
+        raw = parse_llm_json(content)
+
+        for k, v in raw.items():
+            normalized = k.strip().lstrip("Qq").strip()
+            if not normalized:
+                continue
+            if isinstance(v, dict):
+                pts_raw = v.get("points")
+                pts = int(pts_raw) if pts_raw is not None else None
+                if pts is None:
+                    sol_q = get_question_data(solution_parsed, normalized)
+                    pts = (sol_q or {}).get("points", 0)
+                raw_items = v.get("items", [])
+                parsed_items = []
+                total_deductions = 0.0
+                for item in raw_items:
+                    d = abs(float(item.get("deduction", 0)))
+                    parsed_items.append({
+                        "description": str(item.get("description", "")).strip() or "[missing]",
+                        "deduction": d,
+                    })
+                    total_deductions += d
+                if parsed_items and abs(total_deductions - pts) > 0.01:
+                    scale = pts / total_deductions if total_deductions else 1.0
+                    for item in parsed_items:
+                        item["deduction"] = round(item["deduction"] * scale, 2)
+                    diff = pts - sum(i["deduction"] for i in parsed_items)
+                    parsed_items[-1]["deduction"] = round(parsed_items[-1]["deduction"] + diff, 2)
+                rubrics_for_group[normalized] = {"points": pts, "items": parsed_items}
+    except Exception as e:
+        logger.exception("Rubric generation failed for group %s: %s", group, e)
+        for qid in group:
+            sol_q = get_question_data(solution_parsed, qid)
+            pts = (sol_q or {}).get("points", 0)
+            rubrics_for_group[qid] = {"points": pts, "items": [{"description": "[generation failed]", "deduction": pts}]}
+
+    return (idx, group, rubrics_for_group)
+
+
 def generate_rubrics(
     config: dict,
     client: OpenAI | None = None,
@@ -70,6 +138,7 @@ def generate_rubrics(
 
     Uses question_groups from config. One LLM call per group.
     When grade_only is set, only generates for those questions.
+    Uses config.workers (default 1) for parallel generation.
     progress_callback(group_index, total_groups, group, rubrics_so_far) is called after each group.
     Returns a dict: { "qid": {"points": N, "items": [{"description": "...", "deduction": ...}], ...} }
     """
@@ -89,79 +158,46 @@ def generate_rubrics(
     groups: list[list[str]] = grading_config.get("question_groups", [])
     grade_only: list[str] | None = grading_config.get("grade_only")
     model = config.get("model") or DEFAULT_MODEL
+    workers = config.get("workers", 1)
+    max_completion_tokens = config.get("max_completion_tokens", 4096)
+    rubric_prompt = config.get("prompts", {}).get("rubric_system") or DEFAULT_RUBRIC_SYSTEM_PROMPT
 
-    # When grade_only is set, only generate rubrics for those questions
     if grade_only is not None:
         grade_only_set = set(grade_only)
         groups = [[q for q in group if q in grade_only_set] for group in groups]
-        groups = [g for g in groups if g]  # drop empty groups
+        groups = [g for g in groups if g]
 
     rubrics: dict[str, dict] = {}
+    rubrics_lock = threading.Lock()
     total = len(groups)
+    to_process = [(idx, group, solution_parsed, config, rubric_prompt, model, max_completion_tokens, client)
+                  for idx, group in enumerate(groups) if group]
 
-    for idx, group in enumerate(groups):
-        if not group:
-            continue
-
+    if workers <= 1 or len(to_process) <= 1:
+        # Sequential
+        for item in to_process:
+            idx, group = item[0], item[1]
+            if progress_callback:
+                progress_callback(idx + 1, total, group, dict(rubrics))
+            _, _, rubrics_for_group = _generate_one_group(item)
+            rubrics.update(rubrics_for_group)
+            if progress_callback:
+                progress_callback(idx + 1, total, group, dict(rubrics))
+    else:
+        # Parallel
         if progress_callback:
-            progress_callback(idx + 1, total, group, dict(rubrics))  # "starting" event before LLM call
-        rubric_prompt = config.get("prompts", {}).get("rubric_system") or DEFAULT_RUBRIC_SYSTEM_PROMPT
-        user_content = _build_group_prompt(group, solution_parsed)
-        messages = [
-            {"role": "system", "content": rubric_prompt},
-            {"role": "user", "content": user_content},
-        ]
-
-        max_completion_tokens = config.get("max_completion_tokens", 4096)
-        try:
-            temperature = temperature_for_model(model)
-            response = client.chat.completions.create(
-                model=model,
-                messages=messages,
-                temperature=temperature,
-                max_completion_tokens=max_completion_tokens,
-                response_format={"type": "json_object"},
-            )
-            content = response.choices[0].message.content or "{}"
-            raw = parse_llm_json(content)
-
-            for k, v in raw.items():
-                normalized = k.strip().lstrip("Qq").strip()
-                if not normalized:
-                    continue
-                if isinstance(v, dict):
-                    pts_raw = v.get("points")
-                    pts = int(pts_raw) if pts_raw is not None else None
-                    if pts is None:
-                        sol_q = get_question_data(solution_parsed, normalized)
-                        pts = (sol_q or {}).get("points", 0)
-                    raw_items = v.get("items", [])
-                    parsed_items = []
-                    total_deductions = 0.0
-                    for item in raw_items:
-                        d = abs(float(item.get("deduction", 0)))
-                        parsed_items.append({
-                            "description": str(item.get("description", "")).strip() or "[missing]",
-                            "deduction": d,
-                        })
-                        total_deductions += d
-                    # Enforce sum == points: scale if off
-                    if parsed_items and abs(total_deductions - pts) > 0.01:
-                        scale = pts / total_deductions if total_deductions else 1.0
-                        for item in parsed_items:
-                            item["deduction"] = round(item["deduction"] * scale, 2)
-                        diff = pts - sum(i["deduction"] for i in parsed_items)
-                        parsed_items[-1]["deduction"] = round(parsed_items[-1]["deduction"] + diff, 2)
-                    rubrics[normalized] = {"points": pts, "items": parsed_items}
-        except Exception as e:
-            logger.exception("Rubric generation failed for group %s: %s", group, e)
-            for qid in group:
-                sol_q = get_question_data(solution_parsed, qid)
-                pts = (sol_q or {}).get("points", 0)
-                rubrics[qid] = {"points": pts, "items": [{"description": "[generation failed]", "deduction": pts}]}
-
-        if progress_callback:
-            progress_callback(idx + 1, total, group, dict(rubrics))
+            for idx, group in enumerate(groups):
+                if group:
+                    progress_callback(idx + 1, total, group, {})
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = {pool.submit(_generate_one_group, item): item for item in to_process}
+            for future in as_completed(futures):
+                idx, group, rubrics_for_group = future.result()
+                with rubrics_lock:
+                    rubrics.update(rubrics_for_group)
+                    rubrics_snapshot = dict(rubrics)
+                if progress_callback:
+                    progress_callback(idx + 1, total, group, rubrics_snapshot)
 
     return rubrics
 

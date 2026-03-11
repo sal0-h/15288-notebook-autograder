@@ -399,6 +399,7 @@ def grade_group(
     student_parsed: dict,
     config: dict,
     client: OpenAI,
+    student_name: str | None = None,
 ) -> tuple[GradingResponse, dict[str, int], dict]:
     """
     Grade one question group. Retries up to MAX_VALIDATION_RETRIES times
@@ -408,18 +409,19 @@ def grade_group(
     system_prompt = config.get("prompts", {}).get("system", "You are a grading assistant.")
     max_prompt_tokens = config.get("max_prompt_tokens", 80_000)
     max_completion_tokens = config.get("max_completion_tokens", 4_096)
-    effective_max_completion = min(max_completion_tokens, max(2048, len(group) * 512))
+    effective_max_completion = min(max_completion_tokens, max(2048, len(group) * 1024))
 
     rubrics = config.get("rubrics", {})
     messages, qid_to_max = build_group_prompt(
         group, solution_parsed, student_parsed, system_prompt, max_prompt_tokens, model, rubrics=rubrics
     )
 
+    ctx = f" [{student_name}]" if student_name else ""
     last_error: Exception | None = None
     for attempt in range(MAX_VALIDATION_RETRIES + 1):
         if attempt > 0:
             wait = 2 ** attempt
-            logger.warning("Retry %d for group %s after %ds", attempt, group, wait)
+            logger.warning("Retry %d for group %s%s after %ds", attempt, group, ctx, wait)
             time.sleep(wait)
 
         temperature = temperature_for_model(model)
@@ -430,7 +432,8 @@ def grade_group(
             max_completion_tokens=effective_max_completion,
             response_format={"type": "json_object"},
         )
-        content = response.choices[0].message.content or "{}"
+        raw_content = response.choices[0].message.content
+        content = raw_content or "{}"
         raw = parse_llm_json(content)
         usage = {}
         if getattr(response, "usage", None):
@@ -457,10 +460,16 @@ def grade_group(
             return grading_response, qid_to_max, usage
         except Exception as e:
             last_error = e
-            logger.warning("Validation failed on attempt %d for group %s: %s", attempt, group, e)
+            logger.warning("Validation failed on attempt %d for group %s%s: %s", attempt, group, ctx, e)
+            finish_reason = getattr(response.choices[0], "finish_reason", "?")
+            if raw_content:
+                preview = raw_content[:600] + ("..." if len(raw_content) > 600 else "")
+                logger.info("LLM response (len=%d, finish_reason=%s): %r", len(raw_content), finish_reason, preview)
+            else:
+                logger.info("LLM returned None/empty. finish_reason=%s", finish_reason)
 
     # All retries exhausted — return zeros
-    logger.error("Giving up on group %s after %d attempts: %s", group, MAX_VALIDATION_RETRIES + 1, last_error)
+    logger.error("Giving up on group %s%s after %d attempts: %s", group, ctx, MAX_VALIDATION_RETRIES + 1, last_error)
     return GradingResponse(
         grades={
             qid: QuestionGrade(
@@ -505,10 +514,13 @@ def grade_student(
     feedback_parts: list[str] = []
     usage_total = {"prompt_tokens": 0, "completion_tokens": 0}
 
+    logger.info("Grading %s (%d groups)", student_name, len(groups))
     for group in groups:
         if not group:
             continue
-        grading_response, qid_to_max, usage = grade_group(group, solution_parsed, student_parsed, config, client)
+        grading_response, qid_to_max, usage = grade_group(
+            group, solution_parsed, student_parsed, config, client, student_name=student_name
+        )
         usage_total["prompt_tokens"] += usage.get("prompt_tokens", 0)
         usage_total["completion_tokens"] += usage.get("completion_tokens", 0)
 
@@ -557,6 +569,8 @@ def grade_student(
     }
     if usage_total["prompt_tokens"] or usage_total["completion_tokens"]:
         result["_usage"] = usage_total
+    logger.info("Graded %s: %.1f/%.1f (tokens: %d in / %d out)", student_name, total_score, total_max,
+                usage_total.get("prompt_tokens", 0), usage_total.get("completion_tokens", 0))
     return result
 
 
@@ -624,6 +638,8 @@ def grade_all_students(
         results = []
         already_graded = set()
 
+    to_grade = [(i, path) for i, path in enumerate(student_files) if path.stem not in already_graded]
+
     # Validate question groups once (not per student)
     grading_config = config.get("grading", {})
     groups = grading_config.get("question_groups", [])
@@ -633,15 +649,15 @@ def grade_all_students(
         groups_filtered = [g for g in groups_filtered if g]
         ungrouped = validate_question_groups(groups_filtered, solution_parsed)
         print(f"Grade only: {grade_only} — skipping {len(ungrouped)} other questions")
-        logger.info("grade_only=%s, skipping %d questions", grade_only, len(ungrouped))
+        logger.info("grade_only=%s, skipping %d questions, grading %d students", grade_only, len(ungrouped), len(to_grade))
     else:
         ungrouped = validate_question_groups(groups, solution_parsed)
         if ungrouped:
             print(f"Warning: Questions not in any group (will score 0): {ungrouped}")
             logger.warning("Questions not in any group (will score 0): %s", ungrouped)
+        logger.info("Grading %d students", len(to_grade))
 
     workers = config.get("workers", 1)
-    to_grade = [(i, path) for i, path in enumerate(student_files) if path.stem not in already_graded]
     usage_total = {"prompt_tokens": 0, "completion_tokens": 0}
     model = config.get("model") or DEFAULT_MODEL
 
@@ -660,13 +676,11 @@ def grade_all_students(
                     usage_total["completion_tokens"] += u.get("completion_tokens", 0)
                 results.append(result)
                 graded_count += 1
-                should_save = (graded_count % 5 == 0) or (i == len(student_files) - 1)
-                if should_save:
-                    if results_lock:
-                        with results_lock:
-                            _write_results(results)
-                    else:
+                if results_lock:
+                    with results_lock:
                         _write_results(results)
+                else:
+                    _write_results(results)
                 yield {
                     "student": student_name,
                     "status": "done",
@@ -690,6 +704,9 @@ def grade_all_students(
         if usage_total["prompt_tokens"] or usage_total["completion_tokens"]:
             inp, out = MODEL_PRICING.get(model, MODEL_PRICING[DEFAULT_MODEL])
             cost = (usage_total["prompt_tokens"] / 1e6 * inp) + (usage_total["completion_tokens"] / 1e6 * out)
+            logger.info("Grading complete: %d students, %d tokens (%.0f in / %.0f out), ~$%.4f",
+                        graded_count, usage_total["prompt_tokens"] + usage_total["completion_tokens"],
+                        usage_total["prompt_tokens"], usage_total["completion_tokens"], cost)
             yield {
                 "student": "",
                 "status": "usage",
@@ -726,13 +743,11 @@ def grade_all_students(
                         usage_total["completion_tokens"] += u.get("completion_tokens", 0)
                     results.append(result)
                     graded_count += 1
-                    should_save = (graded_count % 5 == 0) or (graded_count == len(to_grade))
-                    if should_save:
-                        if results_lock:
-                            with results_lock:
-                                _write_results(results)
-                        else:
+                    if results_lock:
+                        with results_lock:
                             _write_results(results)
+                    else:
+                        _write_results(results)
                 yield {
                     "student": student_name,
                     "status": status,
@@ -745,6 +760,9 @@ def grade_all_students(
         if usage_total["prompt_tokens"] or usage_total["completion_tokens"]:
             inp, out = MODEL_PRICING.get(model, MODEL_PRICING[DEFAULT_MODEL])
             cost = (usage_total["prompt_tokens"] / 1e6 * inp) + (usage_total["completion_tokens"] / 1e6 * out)
+            logger.info("Grading complete: %d students, %d tokens (%.0f in / %.0f out), ~$%.4f",
+                        graded_count, usage_total["prompt_tokens"] + usage_total["completion_tokens"],
+                        usage_total["prompt_tokens"], usage_total["completion_tokens"], cost)
             yield {
                 "student": "",
                 "status": "usage",

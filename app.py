@@ -29,6 +29,8 @@ def _setup_file_logging() -> None:
     )
     root.addHandler(handler)
     root.setLevel(min(root.level, logging.INFO))
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
     logger.info("Logging to %s", log_path)
 import io
 import json
