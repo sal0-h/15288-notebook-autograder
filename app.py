@@ -120,6 +120,7 @@ def _default_config() -> dict:
     return {
         "assignment_name": "default",
         "model": DEFAULT_MODEL,
+        "rubric_model": "",
         "solution_notebook": "",
         "output_dir": "output",
         "workers": 1,

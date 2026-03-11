@@ -35,6 +35,7 @@ Constraints:
 - The sum of all deduction values MUST equal the total points for that question exactly. This ensures a student who fails every criterion scores 0.
 - Group related minor deductions into a single item rather than creating many small sub-deductions. As a guideline, use at most 1 item per point (e.g. a 1-point question gets at most 1 item; a 4-point question gets at most 4 items). For 1-point questions, prefer a single binary item (correct/incorrect) rather than fractional sub-deductions.
 - Phrase each criterion as what the student must do (positive), not what causes deduction (negative). E.g. "Classifier uses weights='distance' and best_k" not "Did not set weights='distance'".
+- For enumerated parameters (e.g., K values, p values, test_size), use the exact values from the reference code. Do not infer or add values. The reference code is the source of truth. Example: if the code uses `for kfold in [3, 5, 15, 20]`, the rubric must say (3, 5, 15, 20)—not (3, 5, 10, 15, 20) even if the question mentions "compare with K=10" as a baseline.
 
 Be specific and actionable. The criteria should help another grader (or an LLM) consistently score student submissions."""
 
@@ -157,7 +158,7 @@ def generate_rubrics(
     grading_config = config.get("grading", {})
     groups: list[list[str]] = grading_config.get("question_groups", [])
     grade_only: list[str] | None = grading_config.get("grade_only")
-    model = config.get("model") or DEFAULT_MODEL
+    model = config.get("rubric_model") or config.get("model") or DEFAULT_MODEL
     workers = config.get("workers", 1)
     max_completion_tokens = config.get("max_completion_tokens", 4096)
     rubric_prompt = config.get("prompts", {}).get("rubric_system") or DEFAULT_RUBRIC_SYSTEM_PROMPT

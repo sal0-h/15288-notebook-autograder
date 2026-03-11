@@ -253,6 +253,7 @@ class PromptsConfig(BaseModel):
 class AppConfig(BaseModel):
     assignment_name: str
     model: str
+    rubric_model: str = ""  # If set, used for rubric generation; else uses model
     solution_notebook: str
     submissions_dir: str = "output/submissions"
     parsed_dir: str = "output/parsed"

@@ -43,6 +43,19 @@ async function loadSetupFromConfig() {
             modelSelect.appendChild(opt);
             modelSelect.value = model;
         }
+        const rubricModelSelect = document.getElementById("setupRubricModel");
+        const rubricModel = setupConfig.rubric_model || "";
+        const hasRubricOpt = Array.from(rubricModelSelect.options).some(o => o.value === rubricModel);
+        if (hasRubricOpt) rubricModelSelect.value = rubricModel;
+        else if (rubricModel) {
+            const opt = document.createElement("option");
+            opt.value = rubricModel;
+            opt.textContent = rubricModel;
+            rubricModelSelect.appendChild(opt);
+            rubricModelSelect.value = rubricModel;
+        } else {
+            rubricModelSelect.value = "";
+        }
         setupQuestionGroups = (setupConfig.grading || {}).question_groups || [];
         const gradeOnly = (setupConfig.grading || {}).grade_only;
         document.getElementById("setupGradeOnlyCheck").checked = !!gradeOnly && gradeOnly.length > 0;
@@ -217,6 +230,7 @@ document.getElementById("setupSaveBtn").onclick = async () => {
     setupQuestionGroups = setupQuestionGroups.filter(g => g.length);
     setupConfig.assignment_name = document.getElementById("setupAssignmentName").value.trim() || setupConfig.assignment_name || "default";
     setupConfig.model = document.getElementById("setupModel").value;
+    setupConfig.rubric_model = document.getElementById("setupRubricModel").value || "";
     setupConfig.workers = parseInt(document.getElementById("setupWorkers").value, 10);
     setupConfig.grading = setupConfig.grading || {};
     setupConfig.grading.question_groups = setupQuestionGroups;
@@ -466,12 +480,16 @@ document.getElementById("rubricGenerateBtn").onclick = async () => {
                     existing.innerHTML = `<span>Group ${data.current}/${data.total}</span><span>${(data.group || []).join(", ")}</span>`;
                     existing.classList.add("done");
                 } else if (!data.done) {
-                    document.querySelectorAll(".progress-item.working").forEach(el => el.classList.remove("working"));
-                    const div = document.createElement("div");
-                    div.className = "progress-item working";
-                    div.dataset.groupIdx = data.current;
-                    div.innerHTML = `<span class="spinner spinner-dark"></span><span>Group ${data.current}/${data.total}</span><span>${(data.group || []).join(", ")}</span>`;
-                    progressDiv.appendChild(div);
+                    if (!existing) {
+                        const div = document.createElement("div");
+                        div.className = "progress-item working";
+                        div.dataset.groupIdx = data.current;
+                        div.innerHTML = `<span class="spinner spinner-dark"></span><span>Group ${data.current}/${data.total}</span><span>${(data.group || []).join(", ")}</span>`;
+                        progressDiv.appendChild(div);
+                    } else {
+                        existing.classList.add("working");
+                        existing.innerHTML = `<span class="spinner spinner-dark"></span><span>Group ${data.current}/${data.total}</span><span>${(data.group || []).join(", ")}</span>`;
+                    }
                 }
                 progressDiv.scrollTop = progressDiv.scrollHeight;
             } else if (data.status === "done" && data.rubrics) {

@@ -46,6 +46,20 @@
                 </select>
             </div>
             <div class="mb-2">
+                <label><strong>Rubric model</strong> <span style="font-size:0.85rem;color:#64748b">(optional; uses grading model if same)</span></label>
+                <select id="setupRubricModel" style="margin-left:8px;padding:8px 12px;border:1px solid #cbd5e1;border-radius:4px;font-size:0.9rem">
+                    <option value="">Same as grading model</option>
+                    <option value="gpt-4.1-mini">gpt-4.1-mini (deterministic)</option>
+                    <option value="gpt-4.1-mini-2025-04-14">gpt-4.1-mini (dated)</option>
+                    <option value="gpt-4.1">gpt-4.1</option>
+                    <option value="gpt-4.1-2025-04-14">gpt-4.1 (dated)</option>
+                    <option value="gpt-5-mini">gpt-5-mini</option>
+                    <option value="gpt-5-mini-2025-08-07">gpt-5-mini (dated)</option>
+                    <option value="gpt-5.2">gpt-5.2</option>
+                    <option value="gpt-5">gpt-5</option>
+                </select>
+            </div>
+            <div class="mb-2">
                 <label><strong>Solution notebook</strong></label>
                 <div class="upload-zone" id="setupSolutionUpload" style="display:inline-block;margin-left:8px;padding:12px 20px">
                     <input type="file" id="setupSolutionFile" accept=".ipynb">

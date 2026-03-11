@@ -13,7 +13,7 @@ from utils import load_config, DEFAULT_MODEL
 
 RUBRIC_SYSTEM_LEN = 800  # approx chars
 OUTPUT_TOKENS_PER_GROUP = 500  # rubric output
-OUTPUT_TOKENS_PER_GRADE_GROUP = 400  # grading output
+OUTPUT_TOKENS_PER_GRADE_GROUP = 1200  # grading output (LLM returns JSON with feedback per question; 400 was too low)
 
 
 def _cost(prompt_tokens: int, completion_tokens: int, model: str) -> float:
@@ -56,7 +56,7 @@ def estimate_rubrics(config: dict) -> dict:
         s = set(grade_only)
         groups = [[q for q in g if q in s] for g in groups]
         groups = [g for g in groups if g]
-    model = config.get("model") or DEFAULT_MODEL
+    model = config.get("rubric_model") or config.get("model") or DEFAULT_MODEL
 
     prompt_tokens = estimate_tokens(" " * RUBRIC_SYSTEM_LEN, 0, model)
     completion_tokens = 0
@@ -106,18 +106,22 @@ def estimate_grade(config: dict, student_name: str | None = None) -> dict:
     max_prompt_tokens = config.get("max_prompt_tokens", 80_000)
     rubrics = config.get("rubrics", {})
 
-    # Use first student as sample for token estimation
-    sample = json.loads(student_files[0].read_text(encoding="utf-8"))
+    # Sample up to 5 students and use max for conservative input estimate (variance in answer length/images)
+    sample_count = min(5, len(student_files))
     prompt_tokens_one = 0
-    completion_tokens_one = 0
-    for group in groups:
-        if not group:
-            continue
-        messages, _ = build_group_prompt(
-            group, solution_parsed, sample, system_prompt, max_prompt_tokens, model, rubrics=rubrics
-        )
-        prompt_tokens_one += _tokens_from_messages(messages, model)
-        completion_tokens_one += OUTPUT_TOKENS_PER_GRADE_GROUP
+    for i in range(sample_count):
+        sample = json.loads(student_files[i].read_text(encoding="utf-8"))
+        tok = 0
+        for group in groups:
+            if not group:
+                continue
+            messages, _ = build_group_prompt(
+                group, solution_parsed, sample, system_prompt, max_prompt_tokens, model, rubrics=rubrics
+            )
+            tok += _tokens_from_messages(messages, model)
+        prompt_tokens_one = max(prompt_tokens_one, tok)
+
+    completion_tokens_one = sum(OUTPUT_TOKENS_PER_GRADE_GROUP for g in groups if g)
 
     n_students = len(student_files)
     prompt_tokens = prompt_tokens_one * n_students
