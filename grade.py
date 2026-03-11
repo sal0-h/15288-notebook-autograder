@@ -1,0 +1,469 @@
+"""LLM-based grading engine with question groups, vision support, and Pydantic validation."""
+
+import json
+import logging
+import re
+import time
+from pathlib import Path
+from typing import Generator
+
+from openai import OpenAI
+from pydantic import BaseModel, field_validator
+
+from utils import load_config, get_openai_client
+
+logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
+
+CHARS_PER_TOKEN = 3.5       # conservative estimate for token counting
+TOKENS_PER_IMAGE = 1_000    # typical matplotlib plot at high detail
+MAX_VALIDATION_RETRIES = 2  # application-level retries if Pydantic parse fails
+
+
+# ---------------------------------------------------------------------------
+# Pydantic models for LLM response validation
+# ---------------------------------------------------------------------------
+
+class QuestionGrade(BaseModel):
+    score: float
+    feedback: str = ""
+
+    @field_validator("score", mode="before")
+    @classmethod
+    def coerce_score(cls, v) -> float:
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return 0.0
+
+    @field_validator("feedback", mode="before")
+    @classmethod
+    def coerce_feedback(cls, v) -> str:
+        return str(v) if v is not None else ""
+
+
+class GradingResponse(BaseModel):
+    grades: dict[str, QuestionGrade]
+
+    @classmethod
+    def from_raw(cls, raw: dict, expected_qids: list[str]) -> "GradingResponse":
+        """Parse and normalize LLM output dict. Handles Q4.1 and 4.1 key formats."""
+        grades: dict[str, QuestionGrade] = {}
+        for k, v in raw.items():
+            normalized = k.strip().lstrip("Qq").strip()
+            if isinstance(v, dict):
+                try:
+                    grades[normalized] = QuestionGrade.model_validate(v)
+                except Exception:
+                    grades[normalized] = QuestionGrade(score=0.0, feedback="[parse error in LLM response]")
+            elif isinstance(v, (int, float)):
+                grades[normalized] = QuestionGrade(score=float(v))
+
+        for qid in expected_qids:
+            if qid not in grades:
+                grades[qid] = QuestionGrade(score=0.0, feedback="[not returned by LLM]")
+        return cls(grades=grades)
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def get_question_data(parsed: dict, qid: str) -> dict | None:
+    for sec_data in parsed.get("sections", {}).values():
+        if qid in sec_data.get("questions", {}):
+            return sec_data["questions"][qid]
+    return None
+
+
+def estimate_tokens(text: str, n_images: int) -> int:
+    return int(len(text) / CHARS_PER_TOKEN) + n_images * TOKENS_PER_IMAGE
+
+
+def truncate_output(text: str, max_chars: int) -> str:
+    if len(text) <= max_chars:
+        return text
+    half = max_chars // 2
+    return text[:half] + f"\n... [truncated {len(text) - max_chars} chars] ...\n" + text[-half:]
+
+
+def parse_llm_json(response_text: str) -> dict:
+    """Extract JSON from LLM response, tolerating markdown code fences."""
+    text = response_text.strip()
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+    match = re.search(r"```(?:json)?\s*([\s\S]*?)```", text)
+    if match:
+        try:
+            return json.loads(match.group(1).strip())
+        except json.JSONDecodeError:
+            pass
+    match = re.search(r"\{[\s\S]*\}", text)
+    if match:
+        try:
+            return json.loads(match.group(0))
+        except json.JSONDecodeError:
+            pass
+    return {}
+
+
+def validate_question_groups(groups: list[list[str]], solution_parsed: dict) -> list[str]:
+    """Return list of solution question IDs not covered by any group."""
+    grouped: set[str] = {qid for group in groups for qid in group}
+    all_sol_qids: list[str] = []
+    for sec_data in solution_parsed.get("sections", {}).values():
+        all_sol_qids.extend(sec_data.get("questions", {}).keys())
+    return [q for q in all_sol_qids if q not in grouped]
+
+
+# ---------------------------------------------------------------------------
+# Prompt builder
+# ---------------------------------------------------------------------------
+
+def build_group_prompt(
+    group: list[str],
+    solution_parsed: dict,
+    student_parsed: dict,
+    system_prompt: str,
+    max_prompt_tokens: int = 80_000,
+) -> tuple[list[dict], dict[str, int]]:
+    """
+    Build messages for one question group with inline image labeling.
+    Returns (messages, qid_to_max_pts).
+    """
+    qid_to_max: dict[str, int] = {}
+    content_parts: list[dict] = []
+
+    # Header
+    header = (
+        f"You are grading questions {', '.join(group)}.\n"
+        "Return valid JSON only, no prose outside JSON.\n"
+        'Format: {"QID": {"score": N, "feedback": "..."}, ...}\n\n'
+    )
+    content_parts.append({"type": "text", "text": header})
+
+    # Estimate total chars across the group for truncation budget
+    total_estimated_tokens = estimate_tokens(header, 0)
+
+    for i, qid in enumerate(group):
+        sol_q = get_question_data(solution_parsed, qid)
+        stu_q = get_question_data(student_parsed, qid)
+        pts = (sol_q or stu_q or {}).get("points", 0)
+        qid_to_max[qid] = pts
+
+        # Per-question budget: distribute remaining tokens evenly across questions left
+        remaining_questions = len(group) - i
+        per_q_token_budget = max(2_000, (max_prompt_tokens - total_estimated_tokens) // remaining_questions)
+        max_output_chars = int(per_q_token_budget * CHARS_PER_TOKEN * 0.5)
+
+        q_md = (sol_q or stu_q or {}).get("question_markdown", f"Question {qid}")
+        q_header = f"--- QUESTION {qid} ({pts} pts) ---\n{q_md}\n\n"
+        content_parts.append({"type": "text", "text": q_header})
+
+        # Reference solution
+        ref_text = "REFERENCE SOLUTION:\n"
+        ref_images: list[dict] = []
+        if sol_q:
+            if sol_q.get("answer_code_concat"):
+                ref_text += f"Code:\n{sol_q['answer_code_concat']}\n\n"
+            if sol_q.get("answer_text_concat"):
+                ref_text += f"Output:\n{truncate_output(sol_q['answer_text_concat'], max_output_chars)}\n\n"
+            if sol_q.get("answer_markdown_concat"):
+                ref_text += f"Answer:\n{sol_q['answer_markdown_concat']}\n\n"
+            for cell in sol_q.get("answer_cells", []):
+                for img in cell.get("images", []):
+                    ref_images.append(img)
+            if ref_images:
+                ref_text += f"[{len(ref_images)} reference plot(s) follow below]\n"
+        else:
+            ref_text += "(no reference)\n"
+
+        content_parts.append({"type": "text", "text": ref_text})
+        for i, img in enumerate(ref_images):
+            b64 = img.get("base64")
+            if not b64:
+                continue
+            if isinstance(b64, list):
+                b64 = "".join(b64)
+            mime = img.get("mime", "image/png")
+            content_parts.append({
+                "type": "image_url",
+                "image_url": {"url": f"data:{mime};base64,{b64}"},
+            })
+
+        # Student submission
+        stu_text = "STUDENT SUBMISSION:\n"
+        stu_images: list[dict] = []
+        if stu_q:
+            has_any = any([
+                stu_q.get("answer_code_concat"),
+                stu_q.get("answer_text_concat"),
+                stu_q.get("answer_markdown_concat"),
+            ])
+            if stu_q.get("answer_code_concat"):
+                stu_text += f"Code:\n{stu_q['answer_code_concat']}\n\n"
+            if stu_q.get("answer_text_concat"):
+                stu_text += f"Output:\n{truncate_output(stu_q['answer_text_concat'], max_output_chars)}\n\n"
+            if stu_q.get("answer_markdown_concat"):
+                stu_text += f"Answer:\n{stu_q['answer_markdown_concat']}\n\n"
+            if not has_any:
+                stu_text += "(no answer submitted)\n"
+            for cell in stu_q.get("answer_cells", []):
+                for img in cell.get("images", []):
+                    stu_images.append(img)
+            if stu_images:
+                stu_text += f"[{len(stu_images)} student plot(s) follow below]\n"
+        else:
+            stu_text += "(question not found in student submission)\n"
+
+        content_parts.append({"type": "text", "text": stu_text + "\n"})
+        for img in stu_images:
+            b64 = img.get("base64")
+            if not b64:
+                continue
+            if isinstance(b64, list):
+                b64 = "".join(b64)
+            mime = img.get("mime", "image/png")
+            content_parts.append({
+                "type": "image_url",
+                "image_url": {"url": f"data:{mime};base64,{b64}"},
+            })
+
+        # Update token estimate
+        total_estimated_tokens += estimate_tokens(q_header + ref_text + stu_text, len(ref_images) + len(stu_images))
+
+    if total_estimated_tokens > max_prompt_tokens:
+        logger.warning(
+            "Group %s estimated ~%d tokens (limit %d). Outputs were truncated.",
+            group, total_estimated_tokens, max_prompt_tokens,
+        )
+
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": content_parts},
+    ]
+    return messages, qid_to_max
+
+
+# ---------------------------------------------------------------------------
+# Core grading functions
+# ---------------------------------------------------------------------------
+
+def grade_group(
+    group: list[str],
+    solution_parsed: dict,
+    student_parsed: dict,
+    config: dict,
+    client: OpenAI,
+) -> GradingResponse:
+    """
+    Grade one question group. Retries up to MAX_VALIDATION_RETRIES times
+    if the LLM response fails Pydantic validation.
+    """
+    model = config.get("model", "gpt-5-mini")
+    system_prompt = config.get("prompts", {}).get("system", "You are a grading assistant.")
+    max_prompt_tokens = config.get("max_prompt_tokens", 80_000)
+    max_completion_tokens = config.get("max_completion_tokens", 4_096)
+
+    messages, qid_to_max = build_group_prompt(
+        group, solution_parsed, student_parsed, system_prompt, max_prompt_tokens
+    )
+
+    last_error: Exception | None = None
+    for attempt in range(MAX_VALIDATION_RETRIES + 1):
+        if attempt > 0:
+            wait = 2 ** attempt
+            logger.warning("Retry %d for group %s after %ds", attempt, group, wait)
+            time.sleep(wait)
+
+        response = client.chat.completions.create(
+            model=model,
+            messages=messages,
+            temperature=0,
+            max_completion_tokens=max_completion_tokens,
+        )
+        content = response.choices[0].message.content or "{}"
+        raw = parse_llm_json(content)
+
+        try:
+            grading_response = GradingResponse.from_raw(raw, group)
+            # Retry if LLM returned nothing useful (empty raw or all placeholders)
+            placeholder_feedback = ("[not returned by LLM]", "[parse error in LLM response]")
+            all_placeholders = all(
+                g.feedback.strip() in placeholder_feedback
+                for g in grading_response.grades.values()
+            )
+            total_max = sum(qid_to_max.get(q, 0) for q in group)
+            if total_max > 0 and all_placeholders:
+                raise ValueError("LLM returned no valid grades — likely empty or malformed response")
+            return grading_response
+        except Exception as e:
+            last_error = e
+            logger.warning("Validation failed on attempt %d for group %s: %s", attempt, group, e)
+
+    # All retries exhausted — return zeros
+    logger.error("Giving up on group %s after %d attempts: %s", group, MAX_VALIDATION_RETRIES + 1, last_error)
+    return GradingResponse(
+        grades={qid: QuestionGrade(score=0.0, feedback="[grading failed after retries]") for qid in group}
+    )
+
+
+def grade_student(
+    student_parsed: dict,
+    solution_parsed: dict,
+    config: dict,
+    client: OpenAI | None = None,
+    ungrouped: list[str] | None = None,
+) -> dict:
+    """Grade one student. Returns result dict for graded_results.json."""
+    if client is None:
+        client = get_openai_client()
+
+    groups: list[list[str]] = config.get("grading", {}).get("question_groups", [])
+    student_name = student_parsed.get("student_name", "Unknown")
+
+    if ungrouped is None:
+        ungrouped = validate_question_groups(groups, solution_parsed)
+
+    questions: dict[str, dict] = {}
+    total_score = 0.0
+    total_max = 0.0
+    feedback_parts: list[str] = []
+
+    for group in groups:
+        if not group:
+            continue
+        grading_response = grade_group(group, solution_parsed, student_parsed, config, client)
+
+        for qid in group:
+            sol_q = get_question_data(solution_parsed, qid)
+            max_pts = (sol_q or {}).get("points", 0)
+            total_max += max_pts
+
+            q_grade = grading_response.grades.get(qid, QuestionGrade(score=0.0, feedback="[missing]"))
+            score = max(0.0, min(float(max_pts), q_grade.score))
+            feedback = q_grade.feedback.strip()
+
+            questions[qid] = {"score": score, "max": max_pts, "feedback": feedback}
+            total_score += score
+
+            # Only include deductions in summary (skip full marks)
+            if feedback and score < max_pts:
+                feedback_parts.append(f"Q{qid}: {feedback}")
+
+    # Zero-score ungrouped questions with a note
+    for qid in ungrouped:
+        sol_q = get_question_data(solution_parsed, qid)
+        max_pts = (sol_q or {}).get("points", 0)
+        total_max += max_pts
+        questions[qid] = {"score": 0.0, "max": max_pts, "feedback": "[not included in grading groups]"}
+        feedback_parts.append(f"Q{qid}: [not graded — not included in question_groups]")
+
+    return {
+        "student_name": student_name,
+        "questions": questions,
+        "total_score": round(total_score, 2),
+        "total_max": round(total_max, 2),
+        "summary_feedback": ". ".join(feedback_parts) if feedback_parts else "Full marks.",
+    }
+
+
+def grade_all_students(
+    config: dict,
+    client: OpenAI | None = None,
+) -> Generator[dict, None, None]:
+    """
+    Grade all students sequentially.
+    Yields progress events; saves graded_results.json after each student.
+    """
+    if client is None:
+        client = get_openai_client()
+
+    output_dir = Path(config.get("output_dir", "output"))
+    parsed_dir = Path(config.get("parsed_dir", "output/parsed"))
+    solution_path = output_dir / "solution_parsed.json"
+
+    if not solution_path.exists():
+        raise FileNotFoundError(
+            f"Solution parsed not found: {solution_path}. Run the parse step first."
+        )
+
+    solution_parsed = json.loads(solution_path.read_text(encoding="utf-8"))
+    student_files = sorted(parsed_dir.glob("*.json"))
+    output_dir.mkdir(parents=True, exist_ok=True)
+    out_path = output_dir / "graded_results.json"
+
+    # Validate question groups once (not per student)
+    groups = config.get("grading", {}).get("question_groups", [])
+    ungrouped = validate_question_groups(groups, solution_parsed)
+    if ungrouped:
+        logger.warning("Questions not in any group (will score 0): %s", ungrouped)
+
+    # Load any previously saved results for resume support
+    if out_path.exists():
+        try:
+            existing = json.loads(out_path.read_text(encoding="utf-8"))
+            already_graded = {r["student_name"] for r in existing if "student_name" in r}
+            results: list[dict] = existing
+        except (json.JSONDecodeError, KeyError):
+            results = []
+            already_graded: set[str] = set()
+    else:
+        results = []
+        already_graded = set()
+
+    for i, path in enumerate(student_files):
+        student_name = path.stem
+        if student_name in already_graded:
+            logger.info("Skipping already-graded student: %s", student_name)
+            continue
+
+        try:
+            student_parsed = json.loads(path.read_text(encoding="utf-8"))
+            result = grade_student(student_parsed, solution_parsed, config, client, ungrouped=ungrouped)
+            results.append(result)
+            out_path.write_text(json.dumps(results, indent=2), encoding="utf-8")
+            yield {
+                "student": student_name,
+                "status": "done",
+                "result": result,
+                "error": None,
+                "index": i + 1,
+                "total": len(student_files),
+            }
+        except Exception as e:
+            logger.exception("Failed to grade %s", student_name)
+            yield {
+                "student": student_name,
+                "status": "error",
+                "result": None,
+                "error": str(e),
+                "index": i + 1,
+                "total": len(student_files),
+            }
+
+
+def main():
+    import argparse
+    logging.basicConfig(level=logging.INFO)
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--config", type=Path, default=Path("config.yaml"))
+    args = parser.parse_args()
+
+    config = load_config(args.config)
+    for evt in grade_all_students(config):
+        if evt["status"] == "done":
+            r = evt["result"]
+            print(f"✓ {r['student_name']}: {r['total_score']}/{r['total_max']}")
+        else:
+            print(f"✗ {evt['student']}: {evt['error']}")
+    print("Done.")
+
+
+if __name__ == "__main__":
+    main()

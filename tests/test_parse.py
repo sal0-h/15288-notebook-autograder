@@ -1,0 +1,203 @@
+"""Tests for parse_notebook.py: parsing logic and helper functions."""
+
+import json
+import sys
+import textwrap
+from pathlib import Path
+
+import pytest
+
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from parse_notebook import (
+    extract_code_outputs,
+    get_all_question_ids,
+    get_total_points,
+    md_text,
+    parse_notebook,
+)
+
+
+# ---------------------------------------------------------------------------
+# Helper: build minimal notebook dict
+# ---------------------------------------------------------------------------
+
+def make_notebook(cells: list[dict]) -> dict:
+    return {"cells": cells, "nbformat": 4, "metadata": {}}
+
+
+def make_md_cell(source: str) -> dict:
+    return {"cell_type": "markdown", "source": [source], "metadata": {}}
+
+
+def make_code_cell(source: str, outputs: list[dict] | None = None) -> dict:
+    return {"cell_type": "code", "source": [source], "outputs": outputs or [], "metadata": {}}
+
+
+# ---------------------------------------------------------------------------
+# md_text
+# ---------------------------------------------------------------------------
+
+class TestMdText:
+    def test_plain(self):
+        cell = {"source": ["Hello ", "world"]}
+        assert md_text(cell) == "Hello world"
+
+    def test_empty(self):
+        assert md_text({"source": []}) == ""
+
+
+# ---------------------------------------------------------------------------
+# extract_code_outputs
+# ---------------------------------------------------------------------------
+
+class TestExtractCodeOutputs:
+    def test_stream_output(self):
+        cell = make_code_cell("print('hi')", [{"output_type": "stream", "text": ["hi\n"]}])
+        out = extract_code_outputs(cell)
+        assert "hi" in out["output_text"]
+
+    def test_execute_result_text(self):
+        cell = make_code_cell("42", [{
+            "output_type": "execute_result",
+            "data": {"text/plain": ["42"]},
+        }])
+        out = extract_code_outputs(cell)
+        assert "42" in out["output_text"]
+
+    def test_image_captured(self):
+        cell = make_code_cell("plt.show()", [{
+            "output_type": "display_data",
+            "data": {"image/png": "abc123=="},
+        }])
+        out = extract_code_outputs(cell, keep_images_base64=True)
+        assert len(out["images"]) == 1
+        assert out["images"][0]["base64"] == "abc123=="
+
+    def test_image_suppressed_when_disabled(self):
+        cell = make_code_cell("plt.show()", [{
+            "output_type": "display_data",
+            "data": {"image/png": "abc123=="},
+        }])
+        out = extract_code_outputs(cell, keep_images_base64=False)
+        assert out["images"] == []
+
+    def test_error_output(self):
+        cell = make_code_cell("1/0", [{
+            "output_type": "error",
+            "traceback": ["ZeroDivisionError: division by zero"],
+        }])
+        out = extract_code_outputs(cell)
+        assert "ZeroDivisionError" in out["output_text"]
+
+
+# ---------------------------------------------------------------------------
+# parse_notebook (integration-style, no file I/O)
+# ---------------------------------------------------------------------------
+
+CONFIG = {
+    "parsing": {
+        "section_regex": r"(?m)^\s*#\s*<font[^>]*>\s*(\d+)\b",
+        "question_regex": r"(?i)^\s*-\s*Q(\d+)\.(\d+)\s*.*?\[\s*(\d+)\s*PTS\s*\]",
+        "keep_images": True,
+    }
+}
+
+
+class TestParseNotebook:
+    def _write_and_parse(self, cells: list[dict], tmp_path: Path) -> dict:
+        nb = make_notebook(cells)
+        p = tmp_path / "test.ipynb"
+        p.write_text(json.dumps(nb), encoding="utf-8")
+        return parse_notebook(p, CONFIG)
+
+    def test_section_detected(self, tmp_path):
+        cells = [make_md_cell("# <font color='red'>1 Introduction</font>")]
+        result = self._write_and_parse(cells, tmp_path)
+        assert "1" in result["sections"]
+
+    def test_question_parsed(self, tmp_path):
+        cells = [
+            make_md_cell("# <font color='red'>1 Intro</font>"),
+            make_md_cell("- Q1.1 <font color='blue'>[2 PTS] Write hello world</font>"),
+            make_code_cell("print('hello world')"),
+        ]
+        result = self._write_and_parse(cells, tmp_path)
+        qs = result["sections"]["1"]["questions"]
+        assert "1.1" in qs
+        assert qs["1.1"]["points"] == 2
+        assert "print('hello world')" in qs["1.1"]["answer_code_concat"]
+
+    def test_markdown_answer_captured(self, tmp_path):
+        cells = [
+            make_md_cell("# <font color='red'>2 Theory</font>"),
+            make_md_cell("- Q2.1 <font color='blue'>[1 PTS] Explain gradient descent</font>"),
+            make_md_cell("Gradient descent minimizes loss iteratively."),
+        ]
+        result = self._write_and_parse(cells, tmp_path)
+        q = result["sections"]["2"]["questions"]["2.1"]
+        assert "gradient descent" in q["answer_markdown_concat"].lower()
+
+    def test_multiple_code_cells_concatenated(self, tmp_path):
+        cells = [
+            make_md_cell("# <font color='red'>3 Code</font>"),
+            make_md_cell("- Q3.1 <font color='blue'>[3 PTS] Do stuff</font>"),
+            make_code_cell("import numpy as np"),
+            make_code_cell("x = np.array([1, 2, 3])"),
+        ]
+        result = self._write_and_parse(cells, tmp_path)
+        concat = result["sections"]["3"]["questions"]["3.1"]["answer_code_concat"]
+        assert "import numpy" in concat
+        assert "np.array" in concat
+
+    def test_next_question_stops_collection(self, tmp_path):
+        cells = [
+            make_md_cell("# <font color='red'>1 Section</font>"),
+            make_md_cell("- Q1.1 <font color='blue'>[1 PTS] First</font>"),
+            make_code_cell("code_for_1_1 = True"),
+            make_md_cell("- Q1.2 <font color='blue'>[1 PTS] Second</font>"),
+            make_code_cell("code_for_1_2 = True"),
+        ]
+        result = self._write_and_parse(cells, tmp_path)
+        q1 = result["sections"]["1"]["questions"]["1.1"]["answer_code_concat"]
+        q2 = result["sections"]["1"]["questions"]["1.2"]["answer_code_concat"]
+        assert "code_for_1_1" in q1
+        assert "code_for_1_1" not in q2
+        assert "code_for_1_2" in q2
+
+
+# ---------------------------------------------------------------------------
+# get_all_question_ids
+# ---------------------------------------------------------------------------
+
+class TestGetAllQuestionIds:
+    def _make_parsed(self, qids: list[str]) -> dict:
+        sections: dict = {}
+        for qid in qids:
+            sec, _ = qid.split(".")
+            sections.setdefault(sec, {"questions": {}})
+            sections[sec]["questions"][qid] = {"points": 1}
+        return {"sections": sections}
+
+    def test_returns_sorted(self):
+        parsed = self._make_parsed(["2.1", "1.3", "1.1", "1.2"])
+        ids = get_all_question_ids(parsed)
+        assert ids == ["1.1", "1.2", "1.3", "2.1"]
+
+    def test_empty(self):
+        assert get_all_question_ids({"sections": {}}) == []
+
+
+# ---------------------------------------------------------------------------
+# get_total_points
+# ---------------------------------------------------------------------------
+
+class TestGetTotalPoints:
+    def test_sum(self):
+        parsed = {
+            "sections": {
+                "1": {"questions": {"1.1": {"points": 2}, "1.2": {"points": 3}}},
+                "2": {"questions": {"2.1": {"points": 5}}},
+            }
+        }
+        assert get_total_points(parsed) == 10

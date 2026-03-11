@@ -1,0 +1,62 @@
+assignment_name: LabTest_2_S26
+grading:
+  question_groups:
+  - - '1.1'
+    - '1.2'
+    - '1.3'
+    - '1.4'
+    - '1.5'
+    - '1.6'
+    - '1.7'
+    - '1.8'
+    - '1.9'
+  - - '2.1'
+    - '2.2'
+    - '2.3'
+  - - '3.1'
+  - - '4.1'
+    - '4.2'
+    - '4.3'
+  - - '5.1'
+    - '5.2'
+    - '5.3'
+  - - '6.1'
+    - '6.2'
+    - '6.3'
+    - '6.4'
+  - - '6.5'
+    - '6.6'
+    - '6.7'
+    - '6.8'
+  - - '6.9'
+    - '6.10'
+    - '6.11'
+    - '6.12'
+  - - '7.1'
+    - '7.2'
+  - - '8.1'
+    - '8.2'
+    - '8.3'
+    - '8.4'
+    - '8.5'
+    - '8.6'
+  - - '9.1'
+    - '9.2'
+    - '9.3'
+max_completion_tokens: 4096
+max_prompt_tokens: 80000
+model: gpt-5-mini
+output_dir: output
+parsed_dir: output/parsed
+parsing:
+  keep_images: true
+  question_regex: (?i)^\s*-\s*Q(\d+)\.(\d+)\s*.*?\[\s*(\d+)\s*PTS\s*\]
+  section_regex: (?m)^\s*#\s*<font[^>]*>\s*(\d+)\b
+prompts:
+  system: 'You are an expert Python instructor grading student lab work for a machine
+    learning course. Be specific, fair, and concise. Use deduction-style feedback
+    (e.g., "-1 (reason)"). Return valid JSON only, with one key per question (e.g.,
+    "1.1", "4.2") mapping to {"score": N, "feedback": "..."}.'
+solution_notebook: archive1/LabTest_2_S26_sol.ipynb
+submissions_dir: output/submissions
+workers: 1
