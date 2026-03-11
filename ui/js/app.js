@@ -14,7 +14,7 @@ document.querySelectorAll(".tab[data-tab]").forEach(t => {
         t.classList.add("active");
         document.getElementById("panel-" + t.dataset.tab).classList.add("active");
         if (t.dataset.tab === "rubrics") { loadRubricsForEdit(); loadRubricEstimate(); }
-        if (t.dataset.tab === "grade") { loadGradeEstimate(); document.getElementById("gradeProgress").innerHTML = ""; }
+        if (t.dataset.tab === "grade") { loadGradeEstimate(); if (!gradeStreamActive) document.getElementById("gradeProgress").innerHTML = ""; }
         if (t.dataset.tab === "setup") loadSetupFromConfig();
     };
 });
@@ -563,13 +563,57 @@ document.getElementById("rubricClearBtn").onclick = async () => {
 };
 
 // ==================== GRADE ====================
+let gradeStreamActive = false;
+let gradeEv = null;
+let gradePollInterval = null;
+
+function stopGradePolling() {
+    if (gradePollInterval) { clearInterval(gradePollInterval); gradePollInterval = null; }
+}
+
+async function pollGradeProgress() {
+    if (!gradeStreamActive) return;
+    try {
+        const [statusRes, resultsRes] = await Promise.all([
+            fetch(API + "/grade/status"),
+            fetch(API + "/results")
+        ]);
+        const status = await statusRes.json();
+        if (!status.in_progress) {
+            gradeStreamActive = false;
+            gradeEv = null;
+            stopGradePolling();
+            document.getElementById("gradeBtn").disabled = false;
+            document.getElementById("gradeBtn").textContent = "Start Grading";
+            return;
+        }
+        const results = await resultsRes.json();
+        const list = document.getElementById("gradeProgress");
+        const shown = new Set([...list.querySelectorAll(".progress-item")].map(el => el.dataset.student || "").filter(Boolean));
+        for (const r of results) {
+            const name = r.student_name;
+            if (!name || shown.has(name)) continue;
+            shown.add(name);
+            const div = document.createElement("div");
+            div.className = "progress-item done";
+            div.dataset.student = name;
+            div.innerHTML = `<span>${escHtml(name)}</span><span style="font-weight:600">${r.total_score}/${r.total_max}</span>`;
+            list.appendChild(div);
+        }
+        list.scrollTop = list.scrollHeight;
+    } catch (_) {}
+}
+
 document.getElementById("gradeBtn").onclick = async () => {
     const list = document.getElementById("gradeProgress");
     list.innerHTML = "";
     const btn = document.getElementById("gradeBtn");
     setLoading(btn, true, "Grading…");
+    gradeStreamActive = true;
+    stopGradePolling();
     try {
         const ev = new EventSource(API + "/grade");
+        gradeEv = ev;
         ev.addEventListener("progress", e => {
             const data = JSON.parse(e.data || "{}");
             const student = data.student || "";
@@ -591,32 +635,54 @@ document.getElementById("gradeBtn").onclick = async () => {
                 const existing = list.querySelector(`[data-student="${CSS.escape(r.student_name)}"]`);
                 const div = existing || document.createElement("div");
                 div.className = "progress-item done";
+                div.dataset.student = r.student_name;
                 div.innerHTML = `<span>${escHtml(r.student_name)}</span><span style="font-weight:600">${r.total_score}/${r.total_max}</span>`;
-                delete div.dataset.student;
                 if (!existing) list.appendChild(div);
             } else if (data.status === "error") {
                 const existing = list.querySelector(`[data-student="${CSS.escape(student)}"]`);
                 const div = existing || document.createElement("div");
                 div.className = "progress-item error";
+                div.dataset.student = student;
                 div.innerHTML = `<span>${escHtml(student)}</span><span>Error: ${escHtml(data.error || "")}</span>`;
-                delete div.dataset.student;
                 if (!existing) list.appendChild(div);
             }
             list.scrollTop = list.scrollHeight;
         });
-        ev.addEventListener("done", () => { ev.close(); setLoading(btn, false, "Start Grading"); });
+        ev.addEventListener("done", () => {
+            ev.close();
+            gradeEv = null;
+            gradeStreamActive = false;
+            stopGradePolling();
+            setLoading(btn, false, "Start Grading");
+        });
         ev.onerror = () => {
             ev.close();
+            gradeEv = null;
+            gradeStreamActive = false;
+            stopGradePolling();
             setLoading(btn, false, "Start Grading");
             if (list.querySelectorAll(".progress-item").length === 0) {
                 list.innerHTML = "<p class='status-warning'>Connection failed. Grading may already be in progress in another tab.</p>";
             }
         };
     } catch (e) {
+        gradeStreamActive = false;
+        gradeEv = null;
+        stopGradePolling();
         list.innerHTML = `<p class="status-error">Error: ${escHtml(e.message)}</p>`;
         setLoading(btn, false, "Start Grading");
     }
 };
+
+document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState !== "visible") return;
+    if (!gradeStreamActive || !gradeEv) return;
+    if (gradeEv.readyState === 2) {
+        gradeEv = null;
+        pollGradeProgress();
+        gradePollInterval = setInterval(pollGradeProgress, 2000);
+    }
+});
 
 // ==================== REVIEW ====================
 let reviewData = [];

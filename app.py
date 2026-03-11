@@ -432,6 +432,15 @@ def api_get_calibration():
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+@app.get("/grade/status")
+def api_grade_status():
+    """Return whether grading is currently in progress (for polling when SSE may have died)."""
+    acquired = _grading_lock.acquire(blocking=False)
+    if acquired:
+        _grading_lock.release()
+    return {"in_progress": not acquired}
+
+
 @app.get("/grade")
 async def api_grade():
     """SSE stream: runs grading in a background thread, emits progress events."""
