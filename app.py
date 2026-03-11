@@ -26,6 +26,8 @@ from gather import gather_submissions
 from parse_notebook import parse_all_students, get_all_question_ids
 from grade import grade_all_students
 from export import export_all
+from rubric import generate_rubrics
+from calibrate import run_calibration
 
 
 def _safe_path(base: Path, user_input: str) -> Path:
@@ -147,6 +149,63 @@ async def api_parse():
         "preview": preview,
         "solution_questions": solution_questions,
     }
+
+
+# ---------------------------------------------------------------------------
+# Rubric endpoints
+# ---------------------------------------------------------------------------
+
+@app.post("/generate-rubrics")
+async def api_generate_rubrics():
+    """Generate rubrics from solution notebook. Saves to config."""
+    config = load_config()
+    rubrics = await asyncio.to_thread(generate_rubrics, config)
+    config["rubrics"] = rubrics
+    save_config(config)
+    return {"rubrics": rubrics}
+
+
+@app.get("/rubrics")
+def api_get_rubrics():
+    """Read rubrics from config."""
+    config = load_config()
+    return config.get("rubrics", {})
+
+
+@app.put("/rubrics")
+def api_put_rubrics(rubrics: dict = Body(...)):
+    """Save edited rubrics to config."""
+    config = load_config()
+    config["rubrics"] = rubrics
+    try:
+        AppConfig.model_validate(config)
+    except Exception as e:
+        raise HTTPException(status_code=422, detail=f"Invalid rubrics: {e}")
+    save_config(config)
+    return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# Calibration endpoints
+# ---------------------------------------------------------------------------
+
+@app.post("/calibrate")
+async def api_calibrate():
+    """Run calibration (outlier detection) on graded results."""
+    config = load_config()
+    flagged = await asyncio.to_thread(run_calibration, config)
+    return {"flagged": flagged, "count": len(flagged)}
+
+
+@app.get("/calibration")
+def api_get_calibration():
+    """Read saved calibration report."""
+    config = load_config()
+    output_dir = Path(config.get("output_dir", "output"))
+    path = output_dir / "calibration_report.json"
+    if not path.exists():
+        return []
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
 @app.get("/grade")

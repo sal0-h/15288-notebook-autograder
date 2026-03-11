@@ -89,6 +89,26 @@ class GradingConfig(BaseModel):
     question_groups: list[list[str]]
 
 
+class RubricEntry(BaseModel):
+    points: int
+    criteria: str = ""
+
+    @field_validator("points", mode="before")
+    @classmethod
+    def coerce_points(cls, v) -> int:
+        if v is None:
+            return 0
+        try:
+            return int(v)
+        except (TypeError, ValueError):
+            return 0
+
+    @field_validator("criteria", mode="before")
+    @classmethod
+    def coerce_criteria(cls, v) -> str:
+        return str(v) if v is not None else ""
+
+
 class PromptsConfig(BaseModel):
     system: str
 
@@ -101,6 +121,7 @@ class AppConfig(BaseModel):
     parsed_dir: str = "output/parsed"
     output_dir: str = "output"
     workers: int = 1
+    rubrics: dict[str, RubricEntry] = {}
     max_prompt_tokens: int = 80_000
     max_completion_tokens: int = 4_096
     parsing: ParsingConfig

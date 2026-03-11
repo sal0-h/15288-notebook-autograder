@@ -68,6 +68,13 @@
         .hidden { display: none !important; }
         .mb-2 { margin-bottom: 16px; }
         .mb-1 { margin-bottom: 8px; }
+        .badge { font-size: 0.7rem; padding: 2px 6px; border-radius: 4px; font-weight: 600; margin-left: 6px; }
+        .badge-high { background: #dcfce7; color: #166534; }
+        .badge-medium { background: #fef9c3; color: #854d0e; }
+        .badge-low { background: #fee2e2; color: #991b1b; }
+        .badge-review { background: #fef3c7; color: #92400e; }
+        .student-item.flagged .sname::before { content: "⚠ "; color: #d97706; }
+        .outlier-banner { background: #fef3c7; border: 1px solid #f59e0b; border-radius: 6px; padding: 8px 12px; margin: 8px 0; font-size: 0.85rem; color: #92400e; }
     </style>
     <script src="https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js"></script>
 </head>
@@ -76,9 +83,10 @@
     <div class="tabs">
         <div class="tab active" data-tab="gather">1. Gather</div>
         <div class="tab" data-tab="parse">2. Parse</div>
-        <div class="tab" data-tab="grade">3. Grade</div>
-        <div class="tab" data-tab="review">4. Review</div>
-        <div class="tab" data-tab="export">5. Export</div>
+        <div class="tab" data-tab="rubrics">3. Rubrics</div>
+        <div class="tab" data-tab="grade">4. Grade</div>
+        <div class="tab" data-tab="review">5. Review</div>
+        <div class="tab" data-tab="export">6. Export</div>
     </div>
 
     <!-- GATHER -->
@@ -105,6 +113,18 @@
         </div>
     </div>
 
+    <!-- RUBRICS -->
+    <div id="panel-rubrics" class="panel">
+        <h2>Rubrics</h2>
+        <p class="mb-2">Generate grading criteria from the solution notebook, then review and edit before grading.</p>
+        <div class="mb-2" style="display:flex;gap:10px;flex-wrap:wrap">
+            <button class="btn" id="rubricGenerateBtn">Generate Rubrics</button>
+            <button class="btn btn-secondary" id="rubricSaveBtn" disabled>Save Rubrics</button>
+        </div>
+        <div id="rubricResults" class="mb-2"></div>
+        <div id="rubricForm" class="hidden"></div>
+    </div>
+
     <!-- GRADE -->
     <div id="panel-grade" class="panel">
         <h2>Grade with LLM</h2>
@@ -117,7 +137,14 @@
     <div id="panel-review" class="panel">
         <h2>Review &amp; Edit</h2>
         <p class="mb-2">Inspect each student's answers alongside scores and feedback. Edit and save changes.</p>
-        <button class="btn btn-secondary mb-2" id="reviewLoadBtn">Load Results</button>
+        <div class="mb-2" style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+            <button class="btn btn-secondary" id="reviewLoadBtn">Load Results</button>
+            <button class="btn btn-secondary" id="reviewCalibrateBtn">Run Calibration</button>
+        </div>
+        <label class="mb-2" style="display:flex;align-items:center;gap:8px;cursor:pointer">
+            <input type="checkbox" id="reviewFlaggedFirst">
+            <span>Show flagged students first</span>
+        </label>
         <div class="review-layout hidden" id="reviewLayout">
             <div class="student-list" id="studentList"></div>
             <div id="reviewDetail"><p style="padding:16px;color:#64748b">Select a student to review.</p></div>
@@ -144,6 +171,7 @@
             document.querySelectorAll(".panel").forEach(x => x.classList.remove("active"));
             t.classList.add("active");
             document.getElementById("panel-" + t.dataset.tab).classList.add("active");
+            if (t.dataset.tab === "rubrics") loadRubricsForEdit();
         };
     });
 
@@ -239,6 +267,125 @@
     };
 
     // =========================================================
+    // RUBRICS
+    // =========================================================
+    let rubricQuestionGroups = [];
+
+    async function loadRubricsForEdit() {
+        try {
+            const [configRes, rubricsRes] = await Promise.all([
+                fetch(API + "/config"),
+                fetch(API + "/rubrics")
+            ]);
+            const config = await configRes.json();
+            const rubrics = await rubricsRes.json();
+            rubricQuestionGroups = (config.grading || {}).question_groups || [];
+            renderRubricForm(rubrics);
+        } catch (e) {
+            document.getElementById("rubricResults").innerHTML = `<p class="status-error">Error: ${escHtml(e.message)}</p>`;
+        }
+    }
+
+    function renderRubricForm(rubrics) {
+        const form = document.getElementById("rubricForm");
+        const results = document.getElementById("rubricResults");
+        if (!rubrics || Object.keys(rubrics).length === 0) {
+            form.classList.add("hidden");
+            results.innerHTML = "<p class='status-warning'>No rubrics yet. Run Parse, then click Generate Rubrics.</p>";
+            document.getElementById("rubricSaveBtn").disabled = true;
+            return;
+        }
+        form.classList.remove("hidden");
+        results.innerHTML = "";
+        document.getElementById("rubricSaveBtn").disabled = false;
+
+        const allQids = rubricQuestionGroups.length
+            ? rubricQuestionGroups.flat()
+            : Object.keys(rubrics).sort((a, b) => {
+                const pa = a.split(".").map(Number);
+                const pb = b.split(".").map(Number);
+                return (pa[0] - pb[0]) || ((pa[1] || 0) - (pb[1] || 0));
+            });
+
+        let html = "";
+        for (const group of rubricQuestionGroups) {
+            if (!group.length) continue;
+            html += "<div class='q-section mb-2'><div class='q-section-label'>Questions " + escHtml(group.join(", ")) + "</div>";
+            for (const qid of group) {
+                const r = rubrics[qid] || { points: 0, criteria: "" };
+                html += `<div class="q-block" style="margin-bottom:12px">
+                    <div class="q-block-header" style="cursor:default">
+                        <h4>Q${escHtml(qid)} (${r.points || 0} pts)</h4>
+                    </div>
+                    <div class="q-block-body open">
+                        <textarea data-rubric-q="${escHtml(qid)}" data-rubric-pts="${r.points || 0}" rows="4" style="width:100%;padding:8px;font-family:inherit;font-size:0.9rem">${escHtml(r.criteria || "")}</textarea>
+                    </div>
+                </div>`;
+            }
+            html += "</div>";
+        }
+        if (!rubricQuestionGroups.length) {
+            for (const qid of allQids) {
+                const r = rubrics[qid] || { points: 0, criteria: "" };
+                html += `<div class="q-block" style="margin-bottom:12px">
+                    <div class="q-block-header" style="cursor:default">
+                        <h4>Q${escHtml(qid)} (${r.points || 0} pts)</h4>
+                    </div>
+                    <div class="q-block-body open">
+                        <textarea data-rubric-q="${escHtml(qid)}" data-rubric-pts="${r.points || 0}" rows="4" style="width:100%;padding:8px;font-family:inherit;font-size:0.9rem">${escHtml(r.criteria || "")}</textarea>
+                    </div>
+                </div>`;
+            }
+        }
+        form.innerHTML = html;
+    }
+
+    document.getElementById("rubricGenerateBtn").onclick = async () => {
+        const btn = document.getElementById("rubricGenerateBtn");
+        setLoading(btn, true, "Generating…");
+        document.getElementById("rubricResults").innerHTML = "";
+        try {
+            const r = await fetch(API + "/generate-rubrics", { method: "POST" });
+            const data = await r.json();
+            if (data.detail) throw new Error(data.detail);
+            document.getElementById("rubricResults").innerHTML = `<p class="status-ok">✓ Generated rubrics for ${Object.keys(data.rubrics || {}).length} questions.</p>`;
+            renderRubricForm(data.rubrics || {});
+        } catch (e) {
+            document.getElementById("rubricResults").innerHTML = `<p class="status-error">Error: ${escHtml(e.message)}</p>`;
+        } finally {
+            setLoading(btn, false, "Generate Rubrics");
+        }
+    };
+
+    document.getElementById("rubricSaveBtn").onclick = async () => {
+        const form = document.getElementById("rubricForm");
+        const rubrics = {};
+        form.querySelectorAll("textarea[data-rubric-q]").forEach(ta => {
+            const qid = ta.dataset.rubricQ;
+            const pts = parseInt(ta.dataset.rubricPts || "0", 10);
+            rubrics[qid] = { points: pts, criteria: ta.value };
+        });
+        const btn = document.getElementById("rubricSaveBtn");
+        setLoading(btn, true, "Saving…");
+        try {
+            const r = await fetch(API + "/rubrics", {
+                method: "PUT",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(rubrics),
+            });
+            if (!r.ok) {
+                const err = await r.json();
+                throw new Error(err.detail || "Save failed");
+            }
+            document.getElementById("rubricResults").innerHTML = `<p class="status-ok">✓ Rubrics saved.</p>`;
+        } catch (e) {
+            document.getElementById("rubricResults").innerHTML = `<p class="status-error">Error: ${escHtml(e.message)}</p>`;
+        } finally {
+            setLoading(btn, false, "Save Rubrics");
+        }
+    };
+
+    // =========================================================
     // GRADE
     // =========================================================
     document.getElementById("gradeBtn").onclick = async () => {
@@ -284,14 +431,32 @@
     // =========================================================
     let reviewData = [];
     let parsedCache = {};
+    let calibrationData = [];
+
+    function calibrationLookup() {
+        const m = {};
+        for (const f of calibrationData) {
+            m[f.student_name + "|" + f.qid] = f;
+        }
+        return m;
+    }
+
+    async function loadReviewAndCalibration() {
+        const [resultsRes, calRes] = await Promise.all([
+            fetch(API + "/results"),
+            fetch(API + "/calibration")
+        ]);
+        reviewData = await resultsRes.json();
+        if (!Array.isArray(reviewData)) reviewData = [];
+        calibrationData = await calRes.json();
+        if (!Array.isArray(calibrationData)) calibrationData = [];
+    }
 
     document.getElementById("reviewLoadBtn").onclick = async () => {
         const btn = document.getElementById("reviewLoadBtn");
         setLoading(btn, true, "Loading…");
         try {
-            const r = await fetch(API + "/results");
-            reviewData = await r.json();
-            if (!Array.isArray(reviewData)) reviewData = [];
+            await loadReviewAndCalibration();
             document.getElementById("reviewLayout").classList.remove("hidden");
             renderStudentList();
             if (reviewData.length) showReviewDetail(0);
@@ -303,17 +468,60 @@
         }
     };
 
+    document.getElementById("reviewCalibrateBtn").onclick = async () => {
+        const btn = document.getElementById("reviewCalibrateBtn");
+        setLoading(btn, true, "Calibrating…");
+        try {
+            const r = await fetch(API + "/calibrate", { method: "POST" });
+            const data = await r.json();
+            if (data.detail) throw new Error(data.detail);
+            calibrationData = data.flagged || [];
+            if (reviewData.length && currentReviewIdx >= 0) showReviewDetail(currentReviewIdx);
+            renderStudentList();
+        } catch (e) {
+            alert("Calibration failed: " + e.message);
+        } finally {
+            setLoading(btn, false, "Run Calibration");
+        }
+    };
+
+    function isStudentFlagged(s) {
+        const qs = s.questions || {};
+        for (const q of Object.values(qs)) {
+            if (q.requires_review || (q.confidence || "").toLowerCase() === "low") return true;
+        }
+        const lookup = calibrationLookup();
+        for (const qid of Object.keys(qs || {})) {
+            if (lookup[s.student_name + "|" + qid]) return true;
+        }
+        return false;
+    }
+
     function renderStudentList() {
         const list = document.getElementById("studentList");
-        list.innerHTML = reviewData.map((s, i) => `
-            <div class="student-item" data-idx="${i}">
+        const flaggedFirst = document.getElementById("reviewFlaggedFirst")?.checked || false;
+        let order = reviewData.map((_, i) => i);
+        if (flaggedFirst) {
+            order.sort((a, b) => {
+                const fa = isStudentFlagged(reviewData[a]);
+                const fb = isStudentFlagged(reviewData[b]);
+                return (fb ? 1 : 0) - (fa ? 1 : 0);
+            });
+        }
+        list.innerHTML = order.map(i => {
+            const s = reviewData[i];
+            const flagged = isStudentFlagged(s);
+            return `<div class="student-item ${flagged ? "flagged" : ""}" data-idx="${i}">
                 <span class="sname">${escHtml(s.student_name)}</span>
                 <span class="sscore">${s.total_score} / ${s.total_max}</span>
-            </div>`).join("");
+            </div>`;
+        }).join("");
         list.querySelectorAll(".student-item").forEach(el => {
             el.onclick = () => showReviewDetail(parseInt(el.dataset.idx));
         });
     }
+
+    document.getElementById("reviewFlaggedFirst").onchange = () => renderStudentList();
 
     let currentReviewIdx = -1;
 
@@ -359,12 +567,21 @@
             }
 
             const scoreClass = q.score === q.max ? "status-ok" : q.score === 0 ? "status-error" : "status-warning";
+            const conf = (q.confidence || "medium").toLowerCase();
+            const confClass = conf === "high" ? "badge-high" : conf === "low" ? "badge-low" : "badge-medium";
+            const confBadge = `<span class="badge ${confClass}">${conf}</span>`;
+            const reviewBadge = q.requires_review ? `<span class="badge badge-review">NEEDS REVIEW</span>` : "";
+            const outlier = calibrationLookup()[s.student_name + "|" + qid];
+            const outlierBanner = outlier
+                ? `<div class="outlier-banner">Statistical outlier: score ${outlier.score}/${outlier.max || q.max}, class mean ${outlier.mean} ± ${outlier.std}</div>`
+                : "";
+
             html += `<div class="q-block" id="qblock-${qid}">
                 <div class="q-block-header" onclick="toggleBlock('${qid}')">
-                    <h4>Q${qid}</h4>
+                    <h4>Q${qid} ${confBadge} ${reviewBadge}</h4>
                     <span class="q-block-score ${scoreClass}">${q.score} / ${q.max}</span>
                 </div>
-                <div class="q-block-body" id="qbody-${qid}">`;
+                <div class="q-block-body" id="qbody-${qid}">${outlierBanner}`;
 
             if (qMarkdown) {
                 html += `<div class="q-section"><div class="q-section-label">Question</div>

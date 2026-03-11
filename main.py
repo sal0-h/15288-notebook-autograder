@@ -49,9 +49,19 @@ CONFIG = {
     },
     "prompts": {
         "system": (
-            "You are an expert Python instructor grading student lab work for a machine learning course. "
-            "Be specific, fair, and concise. Use deduction-style feedback (e.g., \"-1 (reason)\"). "
-            "Return valid JSON only, with one key per question (e.g., \"1.1\", \"4.2\") mapping to {\"score\": N, \"feedback\": \"...\"}."
+            "You are an expert Python instructor grading student lab work for a machine learning course.\n\n"
+            "GRADING GUIDELINES:\n"
+            "- Accept functionally equivalent approaches even if they differ from the reference solution.\n"
+            "- For numerical answers, allow floating-point tolerance (within 1% or 0.01 absolute).\n"
+            "- Do not penalize formatting differences (extra whitespace, print style, variable names).\n"
+            "- If student code produces an error traceback but shows partial understanding, award partial credit.\n"
+            "- For plots: check that the correct data is plotted, axes are labeled, and the trend matches. Minor cosmetic differences are acceptable.\n"
+            "- Use deduction-style feedback: start from full marks and subtract. Example: \"-1: missing axis label\".\n"
+            "- If a student's answer is completely blank or missing, score 0 with feedback \"[no submission]\".\n\n"
+            "RESPONSE FORMAT:\n"
+            "Return valid JSON only, no prose outside JSON.\n"
+            "One key per question ID mapping to {\"score\": N, \"feedback\": \"...\", \"confidence\": \"high|medium|low\", \"requires_review\": true|false}.\n"
+            "Set requires_review to true ONLY when you genuinely cannot evaluate the answer (e.g., answer is an image you cannot interpret, or the question is ambiguous)."
         ),
     },
 }
@@ -90,7 +100,7 @@ Examples:
     parser.add_argument(
         "--steps",
         nargs="+",
-        choices=["gather", "parse", "grade", "export"],
+        choices=["gather", "parse", "generate-rubrics", "grade", "calibrate", "export"],
         default=["parse", "grade", "export"],
         help="Pipeline steps to run (default: parse grade export)",
     )
@@ -169,6 +179,14 @@ Examples:
             icon = "✓" if r["status"] == "ok" else "⚠"
             print(f"  {icon} {r['student_name']}: {len(r.get('questions_found', []))} questions")
 
+    if "generate-rubrics" in steps:
+        from rubric import generate_rubrics
+
+        rubrics = generate_rubrics(config)
+        config["rubrics"] = rubrics
+        save_config(config, args.config)
+        print(f"Generate rubrics: {len(rubrics)} questions")
+
     if "grade" in steps:
         from grade import grade_all_students
 
@@ -179,6 +197,12 @@ Examples:
             elif evt["status"] == "error":
                 print(f"  ✗ {evt['student']}: {evt['error']}")
         print("Grade: done")
+
+    if "calibrate" in steps:
+        from calibrate import run_calibration
+
+        flagged = run_calibration(config)
+        print(f"Calibrate: {len(flagged)} outlier(s) flagged")
 
     if "export" in steps:
         from export import export_all
