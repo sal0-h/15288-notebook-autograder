@@ -10,6 +10,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app import app, DEFAULT_UPLOAD_MB
+from utils import DEFAULT_MODEL
 
 
 @pytest.fixture
@@ -41,7 +42,7 @@ def _full_config(tmp_path):
     sol.write_text("{}")
     return {
         "assignment_name": "Test",
-        "model": "gpt-4o-mini",
+        "model": DEFAULT_MODEL,
         "solution_notebook": str(sol),
         "parsed_dir": str(parsed_dir),
         "output_dir": str(output_dir),
@@ -142,17 +143,17 @@ class TestGradingLock:
 
 class TestRubricsEndpoints:
     def test_get_rubrics_returns_config_rubrics(self, client, mock_config):
-        mock_config["rubrics"] = {"1.1": {"points": 2, "criteria": "Check plot."}}
+        mock_config["rubrics"] = {"1.1": {"points": 2, "items": [{"description": "Check plot.", "deduction": 2.0}]}}
         with patch("app.load_config", return_value=mock_config):
             r = client.get("/rubrics")
         assert r.status_code == 200
-        assert r.json() == {"1.1": {"points": 2, "criteria": "Check plot."}}
+        assert r.json() == {"1.1": {"points": 2, "items": [{"description": "Check plot.", "deduction": 2.0}]}}
 
     def test_put_rubrics_saves_to_config(self, client, tmp_path):
         cfg = _full_config(tmp_path)
         cfg["rubrics"] = {}
         with patch("app.load_config", return_value=cfg), patch("app.save_config") as mock_save:
-            r = client.put("/rubrics", json={"1.1": {"points": 2, "criteria": "Full marks: correct."}})
+            r = client.put("/rubrics", json={"1.1": {"points": 2, "items": [{"description": "Full marks: correct.", "deduction": 2.0}]}})
         assert r.status_code == 200
         mock_save.assert_called_once()
 
@@ -164,7 +165,7 @@ class TestRubricsEndpoints:
         mock_config["output_dir"] = str(tmp_path / "output")
         mock_config["grading"] = {"question_groups": [["1.1"]]}
         with patch("app.load_config", return_value=mock_config), patch(
-            "app.generate_rubrics", return_value={"1.1": {"points": 2, "criteria": "ok"}}
+            "app.generate_rubrics", return_value={"1.1": {"points": 2, "items": [{"description": "ok", "deduction": 2.0}]}}
         ), patch("app.save_config"):
             r = client.post("/generate-rubrics")
         assert r.status_code == 200

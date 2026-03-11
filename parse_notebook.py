@@ -100,7 +100,13 @@ def parse_notebook(nb_path: Path, config: dict) -> dict:
 
         qm = match_question(cell)
         if qm:
-            sec_id, qnum, pts = qm.group(2), qm.group(3), int(qm.group(4))
+            # Support both regex formats:
+            # - 4 groups: (optional_dash, section, qnum, pts) — default
+            # - 3 groups: (section, qnum, pts) — e.g. required dash, no optional capture
+            if qm.lastindex >= 4:
+                sec_id, qnum, pts = qm.group(2), qm.group(3), int(qm.group(4))
+            else:
+                sec_id, qnum, pts = qm.group(1), qm.group(2), int(qm.group(3))
             qid = f"{sec_id}.{qnum}"
 
             if current_section != sec_id:

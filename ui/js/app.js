@@ -1,0 +1,871 @@
+/** AI Autograder - main app logic (setup, gather, parse, rubrics, grade, review, export) */
+
+document.getElementById("expandBtn").onclick = () => {
+    const c = document.querySelector(".container");
+    const btn = document.getElementById("expandBtn");
+    c.classList.toggle("wide");
+    btn.textContent = c.classList.contains("wide") ? "⤡ Collapse" : "⤢ Expand";
+};
+
+document.querySelectorAll(".tab[data-tab]").forEach(t => {
+    t.onclick = () => {
+        document.querySelectorAll(".tab").forEach(x => x.classList.remove("active"));
+        document.querySelectorAll(".panel").forEach(x => x.classList.remove("active"));
+        t.classList.add("active");
+        document.getElementById("panel-" + t.dataset.tab).classList.add("active");
+        if (t.dataset.tab === "rubrics") { loadRubricsForEdit(); loadRubricEstimate(); }
+        if (t.dataset.tab === "grade") { loadGradeEstimate(); document.getElementById("gradeProgress").innerHTML = ""; }
+        if (t.dataset.tab === "setup") loadSetupFromConfig();
+    };
+});
+
+// ==================== SETUP ====================
+let setupQuestionGroups = [];
+let setupConfig = {};
+
+async function loadSetupFromConfig() {
+    try {
+        const r = await fetch(API + "/config");
+        const cfg = await r.json();
+        setupConfig = Object.keys(cfg).length ? cfg : await (await fetch(API + "/config/default")).json();
+        document.getElementById("setupAssignmentName").value = setupConfig.assignment_name || "";
+        document.getElementById("setupWorkers").value = setupConfig.workers || 1;
+        document.getElementById("setupWorkersVal").textContent = setupConfig.workers || 1;
+        document.getElementById("setupSolutionPath").textContent = setupConfig.solution_notebook ? "✓ " + setupConfig.solution_notebook : "";
+        const modelSelect = document.getElementById("setupModel");
+        const model = setupConfig.model || DEFAULT_MODEL;
+        const hasOpt = Array.from(modelSelect.options).some(o => o.value === model);
+        if (hasOpt) modelSelect.value = model;
+        else {
+            const opt = document.createElement("option");
+            opt.value = model;
+            opt.textContent = model;
+            modelSelect.appendChild(opt);
+            modelSelect.value = model;
+        }
+        setupQuestionGroups = (setupConfig.grading || {}).question_groups || [];
+        const gradeOnly = (setupConfig.grading || {}).grade_only;
+        document.getElementById("setupGradeOnlyCheck").checked = !!gradeOnly && gradeOnly.length > 0;
+        document.getElementById("setupGradeOnlyInput").value = gradeOnly ? gradeOnly.join(", ") : "";
+        document.getElementById("setupGradeOnlyInput").classList.toggle("hidden", !gradeOnly || gradeOnly.length === 0);
+        renderSetupGroups();
+        updateOutputDirHint();
+    } catch (e) {
+        document.getElementById("setupResults").innerHTML = `<p class="status-error">Error: ${escHtml(e.message)}</p>`;
+    }
+}
+
+function updateOutputDirHint() {
+    const name = document.getElementById("setupAssignmentName").value.trim() || "default";
+    const safe = name.replace(/[/\\:*?"<>|.]/g, "_").replace(/_+$/, "") || "default";
+    document.getElementById("setupOutputDirHint").textContent = "Output: output/" + safe + "/";
+}
+
+let dragQchip = null, dragGroupIdx = null, dragGroupCard = null;
+
+function renderSetupGroups() {
+    const container = document.getElementById("setupGroupsContainer");
+    container.innerHTML = setupQuestionGroups.map((group, gi) => `
+        <div class="setup-group-card" data-group-idx="${gi}" data-drag-type="group">
+            <div class="setup-group-header">
+                <span class="setup-group-handle" draggable="true" data-group-idx="${gi}" title="Drag to reorder groups">⋮⋮</span>
+                <span class="q-section-label">Group ${gi + 1}</span>
+                <button class="btn btn-secondary" style="padding:4px 10px;margin-left:auto" onclick="removeSetupGroup(${gi})">Remove</button>
+            </div>
+            <div class="setup-group-questions" data-group-idx="${gi}">
+                ${group.map(qid => `<span class="setup-q-chip" draggable="true" data-qid="${escHtml(qid)}" data-group-idx="${gi}">${escHtml(qid)}</span>`).join("")}
+                ${group.length === 0 ? '<span style="font-size:0.85rem;color:#94a3b8">Drop questions here</span>' : ""}
+            </div>
+        </div>
+    `).join("");
+    attachGroupDragListeners();
+}
+
+function attachGroupDragListeners() {
+    document.querySelectorAll(".setup-q-chip").forEach(el => {
+        el.ondragstart = e => { dragQchip = { qid: el.dataset.qid, groupIdx: parseInt(el.dataset.groupIdx, 10) }; el.classList.add("dragging"); e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", el.dataset.qid); };
+        el.ondragend = () => { el.classList.remove("dragging"); dragQchip = null; document.querySelectorAll(".setup-group-card").forEach(c => c.classList.remove("drag-over")); };
+    });
+    document.querySelectorAll(".setup-group-handle").forEach(handle => {
+        handle.ondragstart = e => { dragGroupCard = parseInt(handle.dataset.groupIdx, 10); e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", "group"); handle.closest(".setup-group-card").classList.add("dragging"); };
+        handle.ondragend = () => { document.querySelectorAll(".setup-group-card").forEach(c => c.classList.remove("dragging")); dragGroupCard = null; };
+    });
+    document.querySelectorAll(".setup-group-card").forEach(card => {
+        card.ondragover = e => { e.preventDefault(); if (dragQchip !== null || dragGroupCard !== null) card.classList.add("drag-over"); };
+        card.ondragleave = () => card.classList.remove("drag-over");
+        card.ondrop = e => {
+            e.preventDefault();
+            card.classList.remove("drag-over");
+            if (dragGroupCard !== null) {
+                const targetIdx = parseInt(card.dataset.groupIdx, 10);
+                if (targetIdx !== dragGroupCard) {
+                    const [g] = setupQuestionGroups.splice(dragGroupCard, 1);
+                    setupQuestionGroups.splice(targetIdx > dragGroupCard ? targetIdx - 1 : targetIdx, 0, g);
+                    renderSetupGroups();
+                }
+            } else if (dragQchip !== null) {
+                moveQuestion(dragQchip.groupIdx, dragQchip.qid, parseInt(card.dataset.groupIdx, 10));
+                dragQchip = null;
+            }
+        };
+    });
+}
+
+function moveQuestion(fromIdx, qid, toIdx) {
+    const fromGroup = setupQuestionGroups[fromIdx];
+    const fromIdxQ = fromGroup.indexOf(qid);
+    if (fromIdxQ < 0) return;
+    fromGroup.splice(fromIdxQ, 1);
+    if (fromIdx === toIdx) fromGroup.push(qid);
+    else {
+        setupQuestionGroups[toIdx].push(qid);
+        if (fromGroup.length === 0) setupQuestionGroups.splice(fromIdx, 1);
+    }
+    renderSetupGroups();
+}
+
+window.removeSetupGroup = function(gi) {
+    setupQuestionGroups.splice(gi, 1);
+    renderSetupGroups();
+};
+
+document.getElementById("setupAssignmentName").oninput = updateOutputDirHint;
+document.getElementById("setupSolutionUpload").onclick = () => document.getElementById("setupSolutionFile").click();
+document.getElementById("setupSolutionFile").onchange = e => {
+    document.getElementById("setupParseUploadBtn").disabled = !e.target.files.length;
+    document.getElementById("setupSolutionLabel").textContent = e.target.files.length ? e.target.files[0].name : "Upload .ipynb or use existing";
+};
+document.getElementById("setupWorkers").oninput = e => { document.getElementById("setupWorkersVal").textContent = e.target.value; };
+document.getElementById("setupGradeOnlyCheck").onchange = e => {
+    document.getElementById("setupGradeOnlyInput").classList.toggle("hidden", !e.target.checked);
+};
+
+document.getElementById("setupParseUploadBtn").onclick = async () => {
+    const name = document.getElementById("setupAssignmentName").value.trim();
+    const file = document.getElementById("setupSolutionFile").files[0];
+    if (!name || !file) {
+        document.getElementById("setupResults").innerHTML = `<p class="status-warning">Enter assignment name and select solution notebook.</p>`;
+        return;
+    }
+    const btn = document.getElementById("setupParseUploadBtn");
+    setLoading(btn, true, "Parsing…");
+    document.getElementById("setupDuplicateWarning").classList.add("hidden");
+    document.getElementById("setupResults").innerHTML = "";
+    try {
+        const fd = new FormData();
+        fd.append("assignment_name", name);
+        fd.append("solution_file", file);
+        const r = await fetch(API + "/parse-solution-upload", { method: "POST", body: fd });
+        const data = await r.json();
+        if (data.detail) throw new Error(data.detail);
+        setupConfig.assignment_name = data.assignment_name;
+        setupConfig.solution_notebook = data.solution_notebook;
+        setupQuestionGroups = data.suggested_groups || [];
+        setupConfig.grading = setupConfig.grading || {};
+        setupConfig.grading.question_groups = setupQuestionGroups;
+        document.getElementById("setupSolutionPath").textContent = "✓ " + data.solution_notebook;
+        setupConfig.workers = parseInt(document.getElementById("setupWorkers").value, 10);
+        if (data.duplicate_qids && data.duplicate_qids.length) {
+            const w = document.getElementById("setupDuplicateWarning");
+            w.textContent = "Duplicate question IDs detected: " + data.duplicate_qids.join(", ") + ". Review the solution notebook.";
+            w.classList.remove("hidden");
+        }
+        document.getElementById("setupGroupsEditor").classList.remove("hidden");
+        renderSetupGroups();
+        document.getElementById("setupResults").innerHTML = `<p class="status-ok">✓ Found ${data.question_ids?.length || 0} questions in ${Object.keys(data.sections || {}).length} sections.</p>`;
+    } catch (e) {
+        document.getElementById("setupResults").innerHTML = `<p class="status-error">Error: ${escHtml(e.message)}</p>`;
+    } finally {
+        setLoading(btn, false, "Parse uploaded solution");
+        document.getElementById("setupParseUploadBtn").disabled = !document.getElementById("setupSolutionFile").files.length;
+    }
+};
+
+document.getElementById("setupParseExistingBtn").onclick = async () => {
+    const btn = document.getElementById("setupParseExistingBtn");
+    setLoading(btn, true, "Parsing…");
+    document.getElementById("setupDuplicateWarning").classList.add("hidden");
+    document.getElementById("setupResults").innerHTML = "";
+    try {
+        const r = await fetch(API + "/parse-solution", { method: "POST" });
+        const data = await r.json();
+        if (data.detail) throw new Error(data.detail);
+        setupQuestionGroups = data.suggested_groups || [];
+        setupConfig.grading = setupConfig.grading || {};
+        setupConfig.grading.question_groups = setupQuestionGroups;
+        if (data.duplicate_qids && data.duplicate_qids.length) {
+            const w = document.getElementById("setupDuplicateWarning");
+            w.textContent = "Duplicate question IDs detected: " + data.duplicate_qids.join(", ") + ". Review the solution notebook.";
+            w.classList.remove("hidden");
+        }
+        document.getElementById("setupGroupsEditor").classList.remove("hidden");
+        renderSetupGroups();
+        document.getElementById("setupResults").innerHTML = `<p class="status-ok">✓ Found ${data.question_ids?.length || 0} questions.</p>`;
+    } catch (e) {
+        document.getElementById("setupResults").innerHTML = `<p class="status-error">Error: ${escHtml(e.message)}</p>`;
+    } finally {
+        setLoading(btn, false, "Parse existing solution");
+    }
+};
+
+document.getElementById("setupAddGroupBtn").onclick = () => {
+    setupQuestionGroups.push([]);
+    renderSetupGroups();
+};
+
+document.getElementById("setupSaveBtn").onclick = async () => {
+    setupQuestionGroups = setupQuestionGroups.filter(g => g.length);
+    setupConfig.assignment_name = document.getElementById("setupAssignmentName").value.trim() || setupConfig.assignment_name || "default";
+    setupConfig.model = document.getElementById("setupModel").value;
+    setupConfig.workers = parseInt(document.getElementById("setupWorkers").value, 10);
+    setupConfig.grading = setupConfig.grading || {};
+    setupConfig.grading.question_groups = setupQuestionGroups;
+    const gradeOnlyCheck = document.getElementById("setupGradeOnlyCheck").checked;
+    const gradeOnlyInput = document.getElementById("setupGradeOnlyInput").value.trim();
+    setupConfig.grading.grade_only = gradeOnlyCheck && gradeOnlyInput ? gradeOnlyInput.split(/[\s,]+/).filter(x => x.trim()) : null;
+    const btn = document.getElementById("setupSaveBtn");
+    setLoading(btn, true, "Saving…");
+    try {
+        const r = await fetch(API + "/config", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(setupConfig) });
+        if (!r.ok) { const err = await r.json(); throw new Error(err.detail || "Save failed"); }
+        document.getElementById("setupResults").innerHTML = `<p class="status-ok">✓ Config saved.</p>`;
+        loadRubricEstimate();
+        loadGradeEstimate();
+    } catch (e) {
+        document.getElementById("setupResults").innerHTML = `<p class="status-error">Error: ${escHtml(e.message)}</p>`;
+    } finally {
+        setLoading(btn, false, "Save config");
+    }
+};
+
+// ==================== GATHER ====================
+let gatheredDroppedFile = null;
+document.getElementById("gatherUpload").onclick = () => document.getElementById("gatherFile").click();
+document.getElementById("gatherUpload").ondragover = e => { e.preventDefault(); };
+document.getElementById("gatherUpload").ondrop = e => {
+    e.preventDefault();
+    const f = e.dataTransfer.files[0];
+    if (!f) return;
+    if (f.name.toLowerCase().endsWith(".zip")) {
+        gatheredDroppedFile = f;
+        document.getElementById("gatherBtn").disabled = false;
+        document.getElementById("gatherResults").innerHTML = `<p class="status-ok">Ready: ${escHtml(f.name)}</p>`;
+    } else {
+        gatheredDroppedFile = null;
+        document.getElementById("gatherResults").innerHTML = `<p class="status-warning">Please drop a ZIP file.</p>`;
+    }
+};
+document.getElementById("gatherFile").onchange = e => {
+    gatheredDroppedFile = null;
+    document.getElementById("gatherBtn").disabled = !e.target.files.length;
+};
+
+document.getElementById("gatherBtn").onclick = async () => {
+    const file = gatheredDroppedFile || document.getElementById("gatherFile").files[0];
+    if (!file) return;
+    const btn = document.getElementById("gatherBtn");
+    setLoading(btn, true, "Gathering…");
+    const fd = new FormData();
+    fd.append("zip_file", file);
+    try {
+        const r = await fetch(API + "/gather", { method: "POST", body: fd });
+        const data = await r.json();
+        const results = data.results || [];
+        const ok = results.filter(x => x.status === "ok").length;
+        const miss = results.filter(x => x.status === "missing").length;
+        const dup = results.filter(x => x.status === "duplicate").length;
+        let html = `<p class="status-ok">✓ ${ok} of ${results.length} notebooks gathered</p>`;
+        if (miss || dup) html += `<p class="status-warning">${miss} missing, ${dup} duplicate — see table below.</p>`;
+        html += "<table><tr><th>Student</th><th>Filename</th><th>Status</th><th>Note</th></tr>";
+        results.forEach(x => {
+            const cls = x.status === "ok" ? "" : x.status === "duplicate" ? "warning" : "error";
+            html += `<tr class="${cls}"><td>${escHtml(x.student_name)}</td><td>${escHtml(x.filename || "—")}</td><td>${x.status}</td><td>${escHtml(x.message || "")}</td></tr>`;
+        });
+        html += "</table>";
+        document.getElementById("gatherResults").innerHTML = html;
+    } catch (e) {
+        document.getElementById("gatherResults").innerHTML = `<p class="status-error">Error: ${escHtml(e.message)}</p>`;
+    } finally {
+        setLoading(btn, false, "Gather");
+        btn.disabled = false;
+    }
+};
+
+// ==================== PARSE ====================
+document.getElementById("parseBtn").onclick = async () => {
+    const btn = document.getElementById("parseBtn");
+    setLoading(btn, true, "Parsing…");
+    document.getElementById("parseResults").innerHTML = "";
+    document.getElementById("parsePreview").classList.add("hidden");
+    try {
+        const r = await fetch(API + "/parse", { method: "POST" });
+        const data = await r.json();
+        if (data.detail) throw new Error(data.detail);
+        const report = data.report || [];
+        const ok = report.filter(x => x.status === "ok").length;
+        const dupes = data.solution_duplicate_qids || [];
+        let html = `<p class="${ok === report.length ? "status-ok" : "status-warning"}">Parsed ${report.length} students — ${ok} OK, ${report.length - ok} with warnings.</p>`;
+        if (dupes.length) html += `<p class="status-warning">⚠ Duplicate question IDs in solution: ${dupes.join(", ")}</p>`;
+        html += "<table><tr><th>Student</th><th>Status</th><th>Questions Found</th><th>Missing</th></tr>";
+        report.forEach(x => {
+            const cls = x.status === "ok" ? "" : x.status === "error" ? "error" : "warning";
+            html += `<tr class="${cls}"><td>${escHtml(x.student_name)}</td><td>${x.status}</td><td>${(x.questions_found || []).length}</td><td>${escHtml((x.questions_missing || []).join(", ") || "—")}</td></tr>`;
+        });
+        html += "</table>";
+        document.getElementById("parseResults").innerHTML = html;
+        if (data.preview) {
+            document.getElementById("parsePreview").classList.remove("hidden");
+            const j = JSON.stringify(data.preview, null, 2);
+            document.getElementById("parsePreviewContent").textContent = j.length > 6000 ? j.slice(0, 6000) + "\n…" : j;
+        }
+    } catch (e) {
+        document.getElementById("parseResults").innerHTML = `<p class="status-error">Error: ${escHtml(e.message)}</p>`;
+    } finally {
+        setLoading(btn, false, "Run Parse");
+    }
+};
+
+// ==================== RUBRICS ====================
+let rubricQuestionGroups = [];
+let fullRubricsCache = {};
+
+async function loadRubricsForEdit() {
+    try {
+        const [configRes, rubricsRes] = await Promise.all([fetch(API + "/config"), fetch(API + "/rubrics")]);
+        const config = await configRes.json();
+        const rubrics = await rubricsRes.json();
+        fullRubricsCache = rubrics;
+        let groups = (config.grading || {}).question_groups || [];
+        const gradeOnly = (config.grading || {}).grade_only;
+        if (gradeOnly && Array.isArray(gradeOnly)) {
+            const set = new Set(gradeOnly);
+            groups = groups.map(g => g.filter(q => set.has(q))).filter(g => g.length);
+        }
+        rubricQuestionGroups = groups;
+        const toShow = gradeOnly && gradeOnly.length ? Object.fromEntries(Object.entries(rubrics).filter(([k]) => new Set(gradeOnly).has(k))) : rubrics;
+        renderRubricForm(toShow);
+    } catch (e) {
+        document.getElementById("rubricResults").innerHTML = `<p class="status-error">Error: ${escHtml(e.message)}</p>`;
+    }
+}
+
+function renderRubricItemRow(desc, ded) {
+    return `<tr class="rubric-item-row">
+        <td><input type="text" class="rubric-item-desc" value="${escHtml(desc || "")}" placeholder="Criterion description" style="width:100%;padding:6px 8px;font-size:0.9rem" /></td>
+        <td style="width:90px"><input type="number" class="rubric-item-ded" value="${ded != null ? ded : ""}" step="0.5" min="0" placeholder="0" style="width:100%;padding:6px 8px;font-size:0.9rem;box-sizing:border-box" /></td>
+        <td style="width:40px"><button type="button" class="btn btn-secondary rubric-remove-item" title="Remove" style="padding:4px 8px">✕</button></td>
+    </tr>`;
+}
+
+function updateRubricDeductionSum(block) {
+    const pts = parseInt(block.dataset.rubricPts || "0", 10);
+    let sum = 0;
+    block.querySelectorAll(".rubric-item-ded").forEach(inp => { sum += parseFloat(inp.value) || 0; });
+    const span = block.querySelector(".rubric-ded-sum");
+    if (span) {
+        span.textContent = `${sum.toFixed(1)} / ${pts}`;
+        span.classList.toggle("status-error", Math.abs(sum - pts) > 0.01);
+        span.classList.toggle("status-ok", Math.abs(sum - pts) <= 0.01 && sum > 0);
+    }
+}
+
+function renderRubricForm(rubrics) {
+    const form = document.getElementById("rubricForm");
+    const results = document.getElementById("rubricResults");
+    if (!rubrics || Object.keys(rubrics).length === 0) {
+        form.classList.add("hidden");
+        results.innerHTML = "<p class='status-warning'>No rubrics yet. Run Parse, then click Generate Rubrics.</p>";
+        document.getElementById("rubricSaveBtn").disabled = true;
+        return;
+    }
+    form.classList.remove("hidden");
+    results.innerHTML = "";
+    document.getElementById("rubricSaveBtn").disabled = false;
+    const allQids = rubricQuestionGroups.length ? rubricQuestionGroups.flat() : Object.keys(rubrics).sort((a, b) => {
+        const pa = a.split(".").map(Number);
+        const pb = b.split(".").map(Number);
+        return (pa[0] - pb[0]) || ((pa[1] || 0) - (pb[1] || 0));
+    });
+    let html = "";
+    const renderBlock = (qid, r) => {
+        const pts = r.points || 0;
+        const items = r.items || [];
+        const rows = items.length ? items.map(i => renderRubricItemRow(i.description, i.deduction)).join("") : renderRubricItemRow("", "");
+        return `<div class="q-block rubric-q-block" style="margin-bottom:16px" data-rubric-q="${escHtml(qid)}" data-rubric-pts="${pts}">
+            <div class="q-block-header" style="cursor:default">
+                <h4>Q${escHtml(qid)} (${pts} pts) — Deductions: <span class="rubric-ded-sum">0 / ${pts}</span></h4>
+            </div>
+            <div class="q-block-body open">
+                <table style="width:100%;border-collapse:collapse;margin-bottom:8px">
+                    <thead><tr><th style="text-align:left;padding:6px 8px;font-size:0.85rem">Description</th><th style="width:90px;padding:6px 8px;font-size:0.85rem">Deduction</th><th style="width:40px"></th></tr></thead>
+                    <tbody>${rows}</tbody>
+                </table>
+                <button type="button" class="btn btn-secondary rubric-add-item" style="padding:6px 12px;font-size:0.9rem">+ Add item</button>
+            </div>
+        </div>`;
+    };
+    for (const group of rubricQuestionGroups) {
+        if (!group.length) continue;
+        html += "<div class='q-section mb-2'><div class='q-section-label'>Questions " + escHtml(group.join(", ")) + "</div>";
+        for (const qid of group) {
+            const r = rubrics[qid] || { points: 0, items: [] };
+            html += renderBlock(qid, r);
+        }
+        html += "</div>";
+    }
+    if (!rubricQuestionGroups.length) {
+        for (const qid of allQids) {
+            const r = rubrics[qid] || { points: 0, items: [] };
+            html += renderBlock(qid, r);
+        }
+    }
+    form.innerHTML = html;
+    form.querySelectorAll(".rubric-q-block").forEach(block => {
+        updateRubricDeductionSum(block);
+        block.addEventListener("input", () => updateRubricDeductionSum(block));
+        block.querySelector(".rubric-add-item").onclick = () => {
+            const tbody = block.querySelector("tbody");
+            tbody.insertAdjacentHTML("beforeend", renderRubricItemRow("", ""));
+            const lastRow = tbody.querySelector(".rubric-item-row:last-child");
+            lastRow.querySelector(".rubric-remove-item").onclick = () => {
+                if (block.querySelectorAll(".rubric-item-row").length > 1) lastRow.remove();
+                updateRubricDeductionSum(block);
+            };
+            updateRubricDeductionSum(block);
+        };
+        block.querySelectorAll(".rubric-remove-item").forEach(btn => {
+            btn.onclick = () => {
+                const row = btn.closest(".rubric-item-row");
+                if (block.querySelectorAll(".rubric-item-row").length > 1) row.remove();
+                updateRubricDeductionSum(block);
+            };
+        });
+    });
+}
+
+document.getElementById("rubricGenerateBtn").onclick = async () => {
+    const btn = document.getElementById("rubricGenerateBtn");
+    const progressDiv = document.getElementById("rubricProgress");
+    const resultsDiv = document.getElementById("rubricResults");
+    setLoading(btn, true, "Generating…");
+    resultsDiv.innerHTML = "";
+    progressDiv.innerHTML = "";
+    progressDiv.classList.remove("hidden");
+    progressDiv.appendChild(Object.assign(document.createElement("div"), { className: "progress-item", innerHTML: "<span>Connecting…</span>" }));
+    try {
+        const ev = new EventSource(API + "/generate-rubrics");
+        let gotResult = false;
+        ev.addEventListener("progress", (e) => {
+            const data = JSON.parse(e.data || "{}");
+            if (data.status === "progress") {
+                const last = progressDiv.querySelector(".progress-item:last-child");
+                if (last && last.textContent.includes("Connecting")) last.remove();
+                const existing = progressDiv.querySelector(`[data-group-idx="${data.current}"]`);
+                if (data.done && existing) {
+                    existing.classList.remove("working");
+                    existing.innerHTML = `<span>Group ${data.current}/${data.total}</span><span>${(data.group || []).join(", ")}</span>`;
+                    existing.classList.add("done");
+                } else if (!data.done) {
+                    document.querySelectorAll(".progress-item.working").forEach(el => el.classList.remove("working"));
+                    const div = document.createElement("div");
+                    div.className = "progress-item working";
+                    div.dataset.groupIdx = data.current;
+                    div.innerHTML = `<span class="spinner spinner-dark"></span><span>Group ${data.current}/${data.total}</span><span>${(data.group || []).join(", ")}</span>`;
+                    progressDiv.appendChild(div);
+                }
+                progressDiv.scrollTop = progressDiv.scrollHeight;
+            } else if (data.status === "done" && data.rubrics) {
+                gotResult = true;
+                fullRubricsCache = data.rubrics;
+                const div = document.createElement("div");
+                div.className = "progress-item done";
+                div.innerHTML = `<span>✓ Generated ${Object.keys(data.rubrics).length} rubrics</span>`;
+                progressDiv.appendChild(div);
+                resultsDiv.innerHTML = `<p class="status-ok">✓ Generated rubrics for ${Object.keys(data.rubrics).length} questions.</p>`;
+                renderRubricForm(data.rubrics);
+                progressDiv.classList.add("hidden");
+            } else if (data.status === "error") {
+                gotResult = true;
+                resultsDiv.innerHTML = `<p class="status-error">Error: ${escHtml(data.error || "")}</p>`;
+                progressDiv.classList.add("hidden");
+            }
+        });
+        ev.addEventListener("done", () => { ev.close(); progressDiv.classList.add("hidden"); setLoading(btn, false, "Generate Rubrics"); });
+        ev.onerror = async () => {
+            ev.close();
+            if (!gotResult) {
+                progressDiv.classList.add("hidden");
+                resultsDiv.innerHTML = "<p class='status-warning'>Stream unavailable. Using POST…</p>";
+                try {
+                    const r = await fetch(API + "/generate-rubrics", { method: "POST" });
+                    const data = await r.json();
+                    if (data.detail) throw new Error(data.detail);
+                    fullRubricsCache = data.rubrics || {};
+                    resultsDiv.innerHTML = `<p class="status-ok">✓ Generated rubrics for ${Object.keys(fullRubricsCache).length} questions.</p>`;
+                    loadRubricsForEdit();
+                } catch (err) {
+                    resultsDiv.innerHTML = `<p class="status-error">Error: ${escHtml(err.message)}</p>`;
+                }
+            }
+            setLoading(btn, false, "Generate Rubrics");
+        };
+    } catch (e) {
+        setLoading(btn, false, "Generate Rubrics");
+        progressDiv.classList.add("hidden");
+        resultsDiv.innerHTML = `<p class="status-error">Error: ${escHtml(e.message)}</p>`;
+    }
+};
+
+document.getElementById("rubricSaveBtn").onclick = async () => {
+    const form = document.getElementById("rubricForm");
+    const formRubrics = {};
+    form.querySelectorAll(".rubric-q-block").forEach(block => {
+        const qid = block.dataset.rubricQ;
+        const pts = parseInt(block.dataset.rubricPts || "0", 10);
+        const items = [];
+        block.querySelectorAll(".rubric-item-row").forEach(row => {
+            const desc = (row.querySelector(".rubric-item-desc")?.value || "").trim();
+            const ded = parseFloat(row.querySelector(".rubric-item-ded")?.value) || 0;
+            if (desc || ded > 0) items.push({ description: desc || "[unnamed]", deduction: ded });
+        });
+        formRubrics[qid] = { points: pts, items };
+    });
+    const rubrics = { ...fullRubricsCache, ...formRubrics };
+    const btn = document.getElementById("rubricSaveBtn");
+    setLoading(btn, true, "Saving…");
+    try {
+        const r = await fetch(API + "/rubrics", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(rubrics) });
+        if (!r.ok) { const err = await r.json(); throw new Error(err.detail || "Save failed"); }
+        document.getElementById("rubricResults").innerHTML = `<p class="status-ok">✓ Rubrics saved.</p>`;
+    } catch (e) {
+        document.getElementById("rubricResults").innerHTML = `<p class="status-error">Error: ${escHtml(e.message)}</p>`;
+    } finally {
+        setLoading(btn, false, "Save Rubrics");
+    }
+};
+
+document.getElementById("rubricClearBtn").onclick = async () => {
+    if (!confirm("Clear all rubrics? This cannot be undone.")) return;
+    const btn = document.getElementById("rubricClearBtn");
+    setLoading(btn, true, "Clearing…");
+    try {
+        const r = await fetch(API + "/rubrics", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({}) });
+        if (!r.ok) { const err = await r.json(); throw new Error(err.detail || "Clear failed"); }
+        document.getElementById("rubricResults").innerHTML = `<p class="status-ok">✓ All rubrics cleared.</p>`;
+        document.getElementById("rubricForm").innerHTML = "";
+        document.getElementById("rubricForm").classList.add("hidden");
+        document.getElementById("rubricSaveBtn").disabled = true;
+    } catch (e) {
+        document.getElementById("rubricResults").innerHTML = `<p class="status-error">Error: ${escHtml(e.message)}</p>`;
+    } finally {
+        setLoading(btn, false, "Clear All Rubrics");
+    }
+};
+
+// ==================== GRADE ====================
+document.getElementById("gradeBtn").onclick = async () => {
+    const list = document.getElementById("gradeProgress");
+    list.innerHTML = "";
+    const btn = document.getElementById("gradeBtn");
+    setLoading(btn, true, "Grading…");
+    try {
+        const ev = new EventSource(API + "/grade");
+        ev.addEventListener("progress", e => {
+            const data = JSON.parse(e.data || "{}");
+            const student = data.student || "";
+            if (data.status === "usage") {
+                const div = document.createElement("div");
+                const u = data.usage || {};
+                const cost = data.cost_usd != null ? `$${data.cost_usd}` : "";
+                div.className = "progress-item done";
+                div.innerHTML = `<span>Token usage: ${(u.prompt_tokens || 0).toLocaleString()} in / ${(u.completion_tokens || 0).toLocaleString()} out</span><span style="font-weight:600">${cost}</span>`;
+                list.appendChild(div);
+            } else if (data.status === "working") {
+                const div = document.createElement("div");
+                div.className = "progress-item working";
+                div.dataset.student = student;
+                div.innerHTML = `<span class="spinner spinner-dark"></span><span>Grading ${escHtml(student)}…</span>`;
+                list.appendChild(div);
+            } else if (data.status === "done" && data.result) {
+                const r = data.result;
+                const existing = list.querySelector(`[data-student="${CSS.escape(r.student_name)}"]`);
+                const div = existing || document.createElement("div");
+                div.className = "progress-item done";
+                div.innerHTML = `<span>${escHtml(r.student_name)}</span><span style="font-weight:600">${r.total_score}/${r.total_max}</span>`;
+                delete div.dataset.student;
+                if (!existing) list.appendChild(div);
+            } else if (data.status === "error") {
+                const existing = list.querySelector(`[data-student="${CSS.escape(student)}"]`);
+                const div = existing || document.createElement("div");
+                div.className = "progress-item error";
+                div.innerHTML = `<span>${escHtml(student)}</span><span>Error: ${escHtml(data.error || "")}</span>`;
+                delete div.dataset.student;
+                if (!existing) list.appendChild(div);
+            }
+            list.scrollTop = list.scrollHeight;
+        });
+        ev.addEventListener("done", () => { ev.close(); setLoading(btn, false, "Start Grading"); });
+        ev.onerror = () => {
+            ev.close();
+            setLoading(btn, false, "Start Grading");
+            if (list.querySelectorAll(".progress-item").length === 0) {
+                list.innerHTML = "<p class='status-warning'>Connection failed. Grading may already be in progress in another tab.</p>";
+            }
+        };
+    } catch (e) {
+        list.innerHTML = `<p class="status-error">Error: ${escHtml(e.message)}</p>`;
+        setLoading(btn, false, "Start Grading");
+    }
+};
+
+// ==================== REVIEW ====================
+let reviewData = [];
+let parsedCache = {};
+let calibrationData = [];
+let currentReviewIdx = -1;
+
+function calibrationLookup() {
+    const m = {};
+    for (const f of calibrationData) m[f.student_name + "|" + f.qid] = f;
+    return m;
+}
+
+async function loadReviewAndCalibration() {
+    const [resultsRes, calRes] = await Promise.all([fetch(API + "/results"), fetch(API + "/calibration")]);
+    reviewData = await resultsRes.json();
+    if (!Array.isArray(reviewData)) reviewData = [];
+    calibrationData = await calRes.json();
+    if (!Array.isArray(calibrationData)) calibrationData = [];
+}
+
+function isStudentFlagged(s) {
+    return getStudentFlagReasons(s).length > 0;
+}
+
+function getStudentFlagReasons(s) {
+    const reasons = [];
+    const qs = s.questions || {};
+    const gradedQids = Object.keys(qs).filter(qid => (qs[qid].feedback || "") !== "[skipped - not in grade_only]");
+    for (const qid of gradedQids) {
+        const q = qs[qid];
+        if (q.requires_review) reasons.push({ qid, type: "needs_review" });
+        else if ((q.confidence || "").toLowerCase() === "low") reasons.push({ qid, type: "low_confidence" });
+    }
+    const lookup = calibrationLookup();
+    for (const qid of gradedQids) {
+        const o = lookup[s.student_name + "|" + qid];
+        if (o) reasons.push({ qid, type: "outlier", flag_reason: o.flag_reason });
+    }
+    return reasons;
+}
+
+function formatFlagReasons(reasons) {
+    const seen = new Set();
+    const parts = [];
+    for (const r of reasons) {
+        let label = "";
+        if (r.type === "needs_review" && !seen.has("needs_review")) { label = "needs review"; seen.add("needs_review"); }
+        else if (r.type === "low_confidence" && !seen.has("low_confidence")) { label = "low confidence"; seen.add("low_confidence"); }
+        else if (r.type === "outlier" && !seen.has("outlier_" + r.flag_reason)) {
+            label = r.flag_reason === "low" ? "outlier (below mean)" : "outlier (above mean)";
+            seen.add("outlier_" + (r.flag_reason || ""));
+        }
+        if (label) parts.push(label);
+    }
+    return parts.join(", ");
+}
+
+function renderStudentList() {
+    const list = document.getElementById("studentList");
+    const flaggedFirst = document.getElementById("reviewFlaggedFirst")?.checked || false;
+    let order = reviewData.map((_, i) => i);
+    if (flaggedFirst) {
+        order.sort((a, b) => (isStudentFlagged(reviewData[b]) ? 1 : 0) - (isStudentFlagged(reviewData[a]) ? 1 : 0));
+    }
+    list.innerHTML = order.map(i => {
+        const s = reviewData[i];
+        const reasons = getStudentFlagReasons(s);
+        const flagged = reasons.length > 0;
+        const reasonText = formatFlagReasons(reasons);
+        return `<div class="student-item ${flagged ? "flagged" : ""}" data-idx="${i}" title="${escHtml(reasonText) || ""}"><span class="sname">${flagged ? "⚠ " : ""}${escHtml(s.student_name)}</span><span class="sscore">${s.total_score} / ${s.total_max}</span>${flagged ? `<span class="sscore" style="font-size:0.75rem;color:#d97706;">${escHtml(reasonText)}</span>` : ""}</div>`;
+    }).join("");
+    list.querySelectorAll(".student-item").forEach(el => {
+        el.onclick = () => showReviewDetail(parseInt(el.dataset.idx));
+    });
+}
+
+window.toggleBlock = function(qid) {
+    const body = document.getElementById("qbody-" + qid);
+    if (body) body.classList.toggle("open");
+};
+
+window.recalcTotal = function() {
+    let total = 0;
+    document.querySelectorAll("#reviewDetail input[data-q]").forEach(inp => { total += parseFloat(inp.value) || 0; });
+    const el = document.getElementById("totalDisplay");
+    if (el) el.textContent = Math.round(total * 100) / 100;
+};
+
+async function showReviewDetail(idx) {
+    currentReviewIdx = idx;
+    const errEl = document.getElementById("reviewError");
+    if (errEl) errEl.innerHTML = "";
+    document.querySelectorAll(".student-item").forEach((el) => el.classList.toggle("selected", el.dataset.idx == String(idx)));
+    const s = reviewData[idx];
+    if (!s) return;
+    const detail = document.getElementById("reviewDetail");
+    detail.innerHTML = `<p style="color:#64748b;padding:8px">Loading student answers…</p>`;
+    let parsed = parsedCache[s.student_name];
+    if (!parsed) {
+        try {
+            const r = await fetch(API + "/parsed/" + encodeURIComponent(s.student_name));
+            if (r.ok) { parsed = await r.json(); parsedCache[s.student_name] = parsed; }
+        } catch (_) {}
+    }
+    let html = `<div class="total-display" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap"><span>Total: <span id="totalDisplay">${s.total_score}</span> / ${s.total_max}</span><span id="regradeEstimate" class="status-ok" style="font-size:0.85rem"></span></div>`;
+    const qs = s.questions || {};
+    const gradedQs = Object.entries(qs).filter(([, q]) => (q.feedback || "") !== "[skipped - not in grade_only]");
+    for (const [qid, q] of gradedQs) {
+        let qMarkdown = "", studentCode = "", studentOutput = "", studentMd = "";
+        if (parsed) {
+            for (const secData of Object.values(parsed.sections || {})) {
+                if (secData.questions && secData.questions[qid]) {
+                    const pq = secData.questions[qid];
+                    qMarkdown = pq.question_markdown || "";
+                    studentCode = pq.answer_code_concat || "";
+                    studentOutput = pq.answer_text_concat || "";
+                    studentMd = pq.answer_markdown_concat || "";
+                    break;
+                }
+            }
+        }
+        const scoreClass = q.score === q.max ? "status-ok" : q.score === 0 ? "status-error" : "status-warning";
+        const conf = (q.confidence || "medium").toLowerCase();
+        const confClass = conf === "high" ? "badge-high" : conf === "low" ? "badge-low" : "badge-medium";
+        const confBadge = `<span class="badge ${confClass}" title="LLM confidence in this grade">conf: ${conf}</span>`;
+        const reviewBadge = q.requires_review ? `<span class="badge badge-review" title="LLM marked for human review">NEEDS REVIEW</span>` : "";
+        const outlier = calibrationLookup()[s.student_name + "|" + qid];
+        const outlierBanner = outlier ? `<div class="outlier-banner">Statistical outlier (${outlier.flag_reason === "high" ? "above" : "below"} class mean): score ${outlier.score}/${outlier.max || q.max}, mean ${outlier.mean} ± ${outlier.std}</div>` : "";
+        html += `<div class="q-block" id="qblock-${qid}"><div class="q-block-header" onclick="toggleBlock('${qid}')"><h4>Q${qid} ${confBadge} ${reviewBadge}</h4><span class="q-block-score ${scoreClass}">${q.score} / ${q.max}</span></div><div class="q-block-body" id="qbody-${qid}">${outlierBanner}`;
+        if (qMarkdown) html += `<div class="q-section"><div class="q-section-label">Question</div><div class="q-markdown">${sanitizeQuestionHtml(qMarkdown)}</div></div>`;
+        if (studentCode) html += `<div class="q-section"><div class="q-section-label">Student Code</div><pre class="code-block">${escHtml(studentCode)}</pre></div>`;
+        if (studentOutput) html += `<div class="q-section"><div class="q-section-label">Output</div><pre class="code-block">${escHtml(studentOutput.slice(0, 800))}${studentOutput.length > 800 ? "\n…" : ""}</pre></div>`;
+        if (studentMd) html += `<div class="q-section"><div class="q-section-label">Written Answer</div><div class="q-markdown">${escHtml(studentMd)}</div></div>`;
+        html += `<div class="edit-row"><input type="number" data-q="${qid}" value="${q.score}" min="0" max="${q.max}" step="0.5" onchange="recalcTotal()"><textarea data-q-fb="${qid}" rows="2">${escHtml(q.feedback || "")}</textarea></div></div></div>`;
+    }
+    html += `<div class="review-actions"><button class="btn" onclick="saveReview()">Save Changes</button><span id="reviewSaveFeedback" style="font-size:0.85rem;margin-left:8px"></span><button class="btn btn-secondary" id="regradeStudentBtn" onclick="regradeStudent()">Re-grade this student</button></div>`;
+    detail.innerHTML = html;
+    loadRegradeEstimate(s.student_name);
+}
+
+window.saveReview = async function() {
+    if (currentReviewIdx < 0) return;
+    const s = reviewData[currentReviewIdx];
+    const qs = JSON.parse(JSON.stringify(s.questions));
+    document.querySelectorAll(`#reviewDetail input[data-q]`).forEach(inp => { if (qs[inp.dataset.q]) qs[inp.dataset.q].score = parseFloat(inp.value) || 0; });
+    document.querySelectorAll(`#reviewDetail textarea[data-q-fb]`).forEach(ta => { if (qs[ta.dataset.qFb]) qs[ta.dataset.qFb].feedback = ta.value; });
+    let total = 0;
+    for (const q of Object.values(qs)) total += q.score;
+    total = Math.round(total * 100) / 100;
+    const updated = { ...s, questions: qs, total_score: total };
+    reviewData[currentReviewIdx] = updated;
+    const fb = document.getElementById("reviewSaveFeedback");
+    try {
+        const r = await fetch(API + "/results/" + encodeURIComponent(s.student_name), { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(updated) });
+        if (!r.ok) throw new Error(await r.text());
+        const el = document.querySelector(`.student-item[data-idx="${currentReviewIdx}"] .sscore`);
+        if (el) el.textContent = `${total} / ${s.total_max}`;
+        if (fb) { fb.innerHTML = '<span class="status-ok">✓ Saved</span>'; setTimeout(() => { fb.innerHTML = ""; }, 2000); }
+    } catch (e) {
+        if (fb) fb.innerHTML = `<span class="status-error">Save failed: ${escHtml(e.message)}</span>`;
+    }
+};
+
+window.regradeStudent = async function() {
+    if (currentReviewIdx < 0) return;
+    const s = reviewData[currentReviewIdx];
+    const btn = document.getElementById("regradeStudentBtn");
+    if (!btn) return;
+    setLoading(btn, true, "Re-grading…");
+    try {
+        const r = await fetch(API + "/grade/" + encodeURIComponent(s.student_name), { method: "POST" });
+        const data = await r.json();
+        if (data.detail) throw new Error(data.detail);
+        if (data.result) {
+            const errEl = document.getElementById("reviewError");
+            if (errEl) errEl.innerHTML = "";
+            reviewData[currentReviewIdx] = data.result;
+            showReviewDetail(currentReviewIdx);
+            renderStudentList();
+        }
+    } catch (e) {
+        document.getElementById("reviewError").innerHTML = `<p class="status-error">Re-grade failed: ${escHtml(e.message)}</p>`;
+    } finally {
+        setLoading(btn, false, "Re-grade this student");
+    }
+};
+
+document.getElementById("reviewLoadBtn").onclick = async () => {
+    const btn = document.getElementById("reviewLoadBtn");
+    const msgDiv = document.getElementById("reviewCalibrationResults");
+    setLoading(btn, true, "Loading…");
+    msgDiv.innerHTML = "";
+    try {
+        await loadReviewAndCalibration();
+        document.getElementById("reviewLayout").classList.remove("hidden");
+        renderStudentList();
+        if (reviewData.length) showReviewDetail(0);
+        if (calibrationData.length) msgDiv.innerHTML = `<p class="status-warning">Loaded: ${calibrationData.length} outlier(s) from last calibration. Click "Run Calibration" to re-run.</p>`;
+    } catch (e) {
+        document.getElementById("reviewDetail").innerHTML = `<p class="status-error">Error: ${escHtml(e.message)}</p>`;
+    } finally {
+        setLoading(btn, false, "Load Results");
+        btn.disabled = false;
+    }
+};
+
+document.getElementById("reviewCalibrateBtn").onclick = async () => {
+    const btn = document.getElementById("reviewCalibrateBtn");
+    const msgDiv = document.getElementById("reviewCalibrationResults");
+    setLoading(btn, true, "Calibrating…");
+    msgDiv.innerHTML = "";
+    try {
+        const r = await fetch(API + "/calibrate", { method: "POST" });
+        const data = await r.json();
+        if (data.detail) throw new Error(data.detail);
+        calibrationData = data.flagged || [];
+        const n = calibrationData.length;
+        msgDiv.innerHTML = n ? `<p class="status-warning">Calibration complete: ${n} outlier(s) flagged. Students with outliers show a ⚠ and yellow banner on affected questions.</p>` : `<p class="status-ok">Calibration complete: no outliers detected (all scores within 2 std of mean).</p>`;
+        if (reviewData.length && currentReviewIdx >= 0) showReviewDetail(currentReviewIdx);
+        renderStudentList();
+    } catch (e) {
+        msgDiv.innerHTML = `<p class="status-error">Calibration failed: ${escHtml(e.message)}</p>`;
+    } finally {
+        setLoading(btn, false, "Run Calibration");
+    }
+};
+
+document.getElementById("reviewFlaggedFirst").onchange = () => renderStudentList();
+
+// ==================== EXPORT ====================
+document.getElementById("exportBtn").onclick = async () => {
+    const btn = document.getElementById("exportBtn");
+    setLoading(btn, true, "Exporting…");
+    document.getElementById("exportResults").innerHTML = "";
+    try {
+        const r = await fetch(API + "/export", { method: "POST" });
+        const data = await r.json();
+        if (data.detail) throw new Error(data.detail);
+        document.getElementById("exportResults").innerHTML = `<p class="status-ok">✓ Exported ${data.students} students.</p><p>Gradescope JSONs: <code>${data.gradescope_dir}</code></p><p>Excel: <code>${data.excel_path}</code></p>`;
+        const dl = document.getElementById("excelDownload");
+        dl.classList.remove("hidden");
+        dl.href = "/export/excel?t=" + Date.now();
+    } catch (e) {
+        document.getElementById("exportResults").innerHTML = `<p class="status-error">Error: ${escHtml(e.message)}</p>`;
+    } finally {
+        setLoading(btn, false, "Run Export");
+    }
+};
+
+// Init
+loadSetupFromConfig();

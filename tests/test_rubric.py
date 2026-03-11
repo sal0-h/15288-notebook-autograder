@@ -41,8 +41,13 @@ class TestGenerateRubrics:
         mock_response = MagicMock()
         mock_response.choices = [MagicMock()]
         mock_response.choices[0].message.content = json.dumps({
-            "Q4.1": {"points": 2, "criteria": "Full marks: correct."},
-            "q4.2": {"points": 2, "criteria": "Full marks: correct."},
+            "Q4.1": {"points": 2, "items": [
+                {"description": "Correct output", "deduction": 1.0},
+                {"description": "Correct method", "deduction": 1.0},
+            ]},
+            "q4.2": {"points": 2, "items": [
+                {"description": "Full marks: correct.", "deduction": 2.0},
+            ]},
         })
 
         with patch("rubric.get_openai_client") as mock_get_client:
@@ -55,7 +60,8 @@ class TestGenerateRubrics:
         assert "4.1" in rubrics
         assert "4.2" in rubrics
         assert rubrics["4.1"]["points"] == 2
-        assert rubrics["4.1"]["criteria"] == "Full marks: correct."
+        assert rubrics["4.1"]["items"][0]["description"] == "Correct output"
+        assert rubrics["4.1"]["items"][0]["deduction"] == 1.0
         assert rubrics["4.2"]["points"] == 2
 
     def test_fallback_when_points_missing_uses_solution(self, tmp_path):
@@ -73,7 +79,7 @@ class TestGenerateRubrics:
         mock_response = MagicMock()
         mock_response.choices = [MagicMock()]
         mock_response.choices[0].message.content = json.dumps({
-            "5.1": {"criteria": "Check the plot."},
+            "5.1": {"items": [{"description": "Check the plot.", "deduction": 2.0}]},
         })
 
         with patch("rubric.get_openai_client") as mock_get_client:
@@ -84,7 +90,7 @@ class TestGenerateRubrics:
             rubrics = generate_rubrics(config, client=mock_client)
 
         assert rubrics["5.1"]["points"] == 2
-        assert rubrics["5.1"]["criteria"] == "Check the plot."
+        assert rubrics["5.1"]["items"][0]["description"] == "Check the plot."
 
     def test_fallback_when_llm_fails(self, tmp_path):
         """When LLM call raises, fallback to solution points and error message."""
@@ -106,7 +112,42 @@ class TestGenerateRubrics:
             rubrics = generate_rubrics(config, client=mock_client)
 
         assert rubrics["6.1"]["points"] == 2
-        assert "[generation failed" in rubrics["6.1"]["criteria"]
+        assert rubrics["6.1"]["items"][0]["description"] == "[generation failed]"
+        assert rubrics["6.1"]["items"][0]["deduction"] == 2
+
+    def test_deductions_rescaled_when_off(self, tmp_path):
+        """When LLM returns items summing to wrong total, rescale to match points."""
+        sol = _solution_parsed(["7.1"])
+        (tmp_path / "solution_parsed.json").write_text(json.dumps(sol), encoding="utf-8")
+
+        config = {
+            "output_dir": str(tmp_path),
+            "grading": {"question_groups": [["7.1"]]},
+            "model": "gpt-4o",
+            "max_completion_tokens": 4096,
+        }
+
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        # LLM returns 3 total deductions for a 2-point question
+        mock_response.choices[0].message.content = json.dumps({
+            "7.1": {"points": 2, "items": [
+                {"description": "A", "deduction": 1.0},
+                {"description": "B", "deduction": 1.0},
+                {"description": "C", "deduction": 1.0},
+            ]},
+        })
+
+        with patch("rubric.get_openai_client") as mock_get_client:
+            mock_client = MagicMock()
+            mock_client.chat.completions.create.return_value = mock_response
+            mock_get_client.return_value = mock_client
+
+            rubrics = generate_rubrics(config, client=mock_client)
+
+        assert rubrics["7.1"]["points"] == 2
+        total = sum(i["deduction"] for i in rubrics["7.1"]["items"])
+        assert abs(total - 2.0) < 0.01
 
     def test_missing_solution_raises(self, tmp_path):
         """FileNotFoundError when solution_parsed.json does not exist."""

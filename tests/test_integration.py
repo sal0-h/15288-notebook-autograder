@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from utils import DEFAULT_MODEL
 from parse_notebook import get_all_question_ids, parse_all_students, parse_notebook
 from export import export_all
 from grade import grade_student
@@ -52,7 +53,7 @@ class TestIntegrationPipeline:
 
         config = {
             "assignment_name": "SmokeTest",
-            "model": "gpt-4o-mini",
+            "model": DEFAULT_MODEL,
             "solution_notebook": str(sol_path),
             "output_dir": str(output_dir),
             "submissions_dir": str(submissions_dir),
@@ -79,6 +80,7 @@ class TestIntegrationPipeline:
         mock_response = MagicMock()
         mock_response.choices = [MagicMock()]
         mock_response.choices[0].message.content = '{"1.1": {"score": 2, "feedback": "ok"}}'
+        mock_response.usage = MagicMock(prompt_tokens=100, completion_tokens=50)
         with patch("grade.get_openai_client") as mock_get_client:
             mock_client = MagicMock()
             mock_client.chat.completions.create.return_value = mock_response

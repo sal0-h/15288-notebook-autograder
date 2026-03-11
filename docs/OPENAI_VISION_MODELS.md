@@ -23,6 +23,15 @@ From `python test_openai_connection.py --list-models`:
 
 ---
 
+## Temperature (deterministic grading)
+
+- **GPT-5 family** (gpt-5, gpt-5-mini, gpt-5-nano): Only support temperature=1. Regrades can vary.
+- **GPT-4.1, GPT-4.1-mini, GPT-4o-mini**: Support temperature=0 for deterministic, reproducible grading.
+
+Use **gpt-4.1-mini** or **gpt-4o-mini** if you need consistent scores on regrade.
+
+---
+
 ## Vision Models: Pricing (approx.)
 
 | Model | Input ($/1M) | Output ($/1M) | Best for |

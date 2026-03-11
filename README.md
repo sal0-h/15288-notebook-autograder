@@ -155,10 +155,14 @@ For each question group, sends the question text and reference solution to the L
 rubrics:
   "1.1":
     points: 2
-    criteria: "Full marks: correct plot with labeled axes. -1: axes unlabeled. Zero: wrong data or blank."
+    items:
+      - description: "Correct plot with labeled axes"
+        deduction: 1.0
+      - description: "Axes labeled"
+        deduction: 1.0
 ```
 
-Rubrics are optional — if absent, grading proceeds without pre-defined criteria.
+Rubrics are optional — if absent, grading proceeds without pre-defined criteria. Deductions must sum to the question's total points.
 
 ---
 
@@ -197,7 +201,7 @@ Set `grading.grade_only: ['1.1', '2.1', '4.2']` in config to grade only those qu
 --- QUESTION 1.1 (1 pts) ---
 <question text>
 RUBRIC:
-<rubric criteria if set>
+<rubric items if set>
 
 REFERENCE SOLUTION:
 Code:
@@ -312,7 +316,9 @@ Computes the mean and standard deviation of scores per question across all stude
 
 ### Config and Path Resolution
 
-- **Config file:** `config.yaml` (default). Paths in config are resolved **relative to the config file's directory**, not the current working directory.
+- **Output-first layout:** The root `config.yaml` holds the assignment pointer (`assignment_name`, `output_dir`) and **prompts** (grading system prompt). The assignment-specific config (rubrics, question groups, model, etc.) is stored at `output/{assignment_name}/config.yaml`. Prompts stay at the project root so they are visible and reusable across assignments.
+- **Legacy:** If `output/{assignment_name}/config.yaml` does not exist, the root config is used (full config at root). On first save, the config migrates to the output folder.
+- **Paths:** All paths in config are resolved **relative to the project root** (directory containing the root `config.yaml`).
 - **Example:** If `config.yaml` is at `/home/project/config.yaml` and `solution_notebook: "archive1/sol.ipynb"`, it resolves to `/home/project/archive1/sol.ipynb`.
 
 ### Per-assignment output directories
@@ -377,7 +383,7 @@ To grade a different assignment, change `assignment_name` in `config.yaml` (and 
 | `parsing.keep_images` | Whether to include Base64 images in parsed output |
 | `grading.question_groups` | List of question ID lists, e.g. `[["1.1","1.2"], ["2.1"]]` |
 | `grading.grade_only` | Optional list of question IDs to grade; others get 0 and feedback `[skipped - not in grade_only]`. Omit to grade all. |
-| `rubrics` | Optional per-question rubrics (auto-generated or hand-edited). Dict of `{qid: {points, criteria}}`. |
+| `rubrics` | Optional per-question rubrics (auto-generated or hand-edited). Dict of `{qid: {points, items: [{description, deduction}]}}`. Deductions must sum to points. |
 | `prompts.system` | System prompt for the LLM grader |
 | `upload_max_mb` | Max ZIP upload size in MB for Web UI gather (default: 500). |
 

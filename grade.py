@@ -18,7 +18,7 @@ except ImportError:
     _TIKTOKEN_AVAILABLE = False
 from pydantic import BaseModel, field_validator
 
-from utils import load_config, get_openai_client
+from utils import load_config, get_openai_client, temperature_for_model, DEFAULT_MODEL
 
 logger = logging.getLogger(__name__)
 
@@ -117,8 +117,9 @@ def get_question_data(parsed: dict, qid: str) -> dict | None:
 _enc_cache = None
 
 
-def estimate_tokens(text: str, n_images: int, model: str = "gpt-4o") -> int:
+def estimate_tokens(text: str, n_images: int, model: str | None = None) -> int:
     """Estimate token count. Uses tiktoken when available, else chars/3.5."""
+    model = model or DEFAULT_MODEL
     if _TIKTOKEN_AVAILABLE:
         global _enc_cache
         if _enc_cache is None:
@@ -237,13 +238,14 @@ def build_group_prompt(
     student_parsed: dict,
     system_prompt: str,
     max_prompt_tokens: int = 80_000,
-    model: str = "gpt-4o",
+    model: str | None = None,
     rubrics: dict | None = None,
 ) -> tuple[list[dict], dict[str, int]]:
     """
     Build messages for one question group with inline image labeling.
     Returns (messages, qid_to_max_pts).
     """
+    model = model or DEFAULT_MODEL
     rubrics = rubrics or {}
     qid_to_max: dict[str, int] = {}
     content_parts: list[dict] = []
@@ -275,8 +277,10 @@ def build_group_prompt(
         q_md = (sol_q or stu_q or {}).get("question_markdown", f"Question {qid}")
         q_header = f"--- QUESTION {qid} ({pts} pts) ---\n{q_md}\n\n"
         rubric_entry = rubrics.get(qid)
-        if rubric_entry and isinstance(rubric_entry, dict) and rubric_entry.get("criteria"):
-            q_header += f"RUBRIC:\n{rubric_entry['criteria']}\n\n"
+        items = (rubric_entry or {}).get("items", []) if isinstance(rubric_entry, dict) else []
+        if items:
+            rubric_lines = "\n".join(f"  - {item['description']}: -{item['deduction']} pts" for item in items)
+            q_header += f"RUBRIC (deduct from {pts} pts):\n{rubric_lines}\nMinimum score: 0\n\n"
         content_parts.append({"type": "text", "text": q_header})
 
         # Reference solution
@@ -371,18 +375,36 @@ def build_group_prompt(
 # Core grading functions
 # ---------------------------------------------------------------------------
 
+# Pricing per 1M tokens (input, output) for cost estimation. From docs/OPENAI_VISION_MODELS.md
+MODEL_PRICING = {
+    "gpt-5-nano": (0.05, 0.40),
+    "gpt-5-nano-2025-08-07": (0.05, 0.40),
+    "gpt-4o-mini": (0.15, 0.60),
+    "gpt-5-mini": (0.25, 2.00),
+    "gpt-5-mini-2025-08-07": (0.25, 2.00),
+    "gpt-4.1-mini": (0.40, 1.60),
+    "gpt-4.1-mini-2025-04-14": (0.40, 1.60),
+    "gpt-5": (1.25, 10.00),
+    "gpt-4.1": (2.00, 8.00),
+    "gpt-4.1-2025-04-14": (2.00, 8.00),
+    "gpt-5.2": (1.75, 14.00),
+    "gpt-4o": (2.50, 10.00),
+    "gpt-4-turbo": (10.00, 30.00),
+}
+
+
 def grade_group(
     group: list[str],
     solution_parsed: dict,
     student_parsed: dict,
     config: dict,
     client: OpenAI,
-) -> GradingResponse:
+) -> tuple[GradingResponse, dict[str, int], dict]:
     """
     Grade one question group. Retries up to MAX_VALIDATION_RETRIES times
     if the LLM response fails Pydantic validation.
     """
-    model = config.get("model", "gpt-5-mini")
+    model = config.get("model") or DEFAULT_MODEL
     system_prompt = config.get("prompts", {}).get("system", "You are a grading assistant.")
     max_prompt_tokens = config.get("max_prompt_tokens", 80_000)
     max_completion_tokens = config.get("max_completion_tokens", 4_096)
@@ -400,28 +422,39 @@ def grade_group(
             logger.warning("Retry %d for group %s after %ds", attempt, group, wait)
             time.sleep(wait)
 
+        temperature = temperature_for_model(model)
         response = client.chat.completions.create(
             model=model,
             messages=messages,
-            temperature=1,
+            temperature=temperature,
             max_completion_tokens=effective_max_completion,
             response_format={"type": "json_object"},
         )
         content = response.choices[0].message.content or "{}"
         raw = parse_llm_json(content)
+        usage = {}
+        if getattr(response, "usage", None):
+            usage = {
+                "prompt_tokens": getattr(response.usage, "prompt_tokens", 0) or 0,
+                "completion_tokens": getattr(response.usage, "completion_tokens", 0) or 0,
+            }
 
         try:
             grading_response = GradingResponse.from_raw(raw, group)
             # Retry if LLM returned any placeholder (partial response = missing data)
             placeholder_feedback = ("[not returned by LLM]", "[parse error in LLM response]")
-            any_placeholder = any(
-                g.feedback.strip() in placeholder_feedback
-                for g in grading_response.grades.values()
-            )
+            missing = [
+                qid for qid, g in grading_response.grades.items()
+                if g.feedback.strip() in placeholder_feedback
+            ]
             total_max = sum(qid_to_max.get(q, 0) for q in group)
-            if total_max > 0 and any_placeholder:
-                raise ValueError("LLM returned partial or malformed response — some grades missing")
-            return grading_response, qid_to_max
+            if total_max > 0 and missing:
+                reasons = {qid: grading_response.grades[qid].feedback.strip() for qid in missing}
+                raise ValueError(
+                    f"LLM returned partial or malformed response — missing/invalid for: {missing} "
+                    f"({reasons})"
+                )
+            return grading_response, qid_to_max, usage
         except Exception as e:
             last_error = e
             logger.warning("Validation failed on attempt %d for group %s: %s", attempt, group, e)
@@ -438,7 +471,7 @@ def grade_group(
             )
             for qid in group
         }
-    ), qid_to_max
+    ), qid_to_max, {}
 
 
 def grade_student(
@@ -470,11 +503,14 @@ def grade_student(
     total_score = 0.0
     total_max = 0.0
     feedback_parts: list[str] = []
+    usage_total = {"prompt_tokens": 0, "completion_tokens": 0}
 
     for group in groups:
         if not group:
             continue
-        grading_response, qid_to_max = grade_group(group, solution_parsed, student_parsed, config, client)
+        grading_response, qid_to_max, usage = grade_group(group, solution_parsed, student_parsed, config, client)
+        usage_total["prompt_tokens"] += usage.get("prompt_tokens", 0)
+        usage_total["completion_tokens"] += usage.get("completion_tokens", 0)
 
         for qid in group:
             max_pts = qid_to_max.get(qid, 0)
@@ -512,13 +548,16 @@ def grade_student(
         }
         feedback_parts.append(f"Q{qid}: {skip_msg}")
 
-    return {
+    result = {
         "student_name": student_name,
         "questions": questions,
         "total_score": round(total_score, 2),
         "total_max": round(total_max, 2),
         "summary_feedback": ". ".join(feedback_parts) if feedback_parts else "Full marks.",
     }
+    if usage_total["prompt_tokens"] or usage_total["completion_tokens"]:
+        result["_usage"] = usage_total
+    return result
 
 
 def grade_all_students(
@@ -603,15 +642,22 @@ def grade_all_students(
 
     workers = config.get("workers", 1)
     to_grade = [(i, path) for i, path in enumerate(student_files) if path.stem not in already_graded]
+    usage_total = {"prompt_tokens": 0, "completion_tokens": 0}
+    model = config.get("model") or DEFAULT_MODEL
 
     if workers <= 1 or len(to_grade) <= 1:
         # Sequential grading
         graded_count = 0
         for i, path in to_grade:
             student_name = path.stem
+            yield {"student": student_name, "status": "working", "result": None, "error": None, "index": i + 1, "total": len(student_files)}
             try:
                 student_parsed = json.loads(path.read_text(encoding="utf-8"))
                 result = grade_student(student_parsed, solution_parsed, config, client, ungrouped=ungrouped)
+                u = result.pop("_usage", None)
+                if u:
+                    usage_total["prompt_tokens"] += u.get("prompt_tokens", 0)
+                    usage_total["completion_tokens"] += u.get("completion_tokens", 0)
                 results.append(result)
                 graded_count += 1
                 should_save = (graded_count % 5 == 0) or (i == len(student_files) - 1)
@@ -639,6 +685,20 @@ def grade_all_students(
                     "index": i + 1,
                     "total": len(student_files),
                 }
+
+        # Final usage summary
+        if usage_total["prompt_tokens"] or usage_total["completion_tokens"]:
+            inp, out = MODEL_PRICING.get(model, MODEL_PRICING[DEFAULT_MODEL])
+            cost = (usage_total["prompt_tokens"] / 1e6 * inp) + (usage_total["completion_tokens"] / 1e6 * out)
+            yield {
+                "student": "",
+                "status": "usage",
+                "result": None,
+                "error": None,
+                "usage": usage_total,
+                "cost_usd": round(cost, 4),
+                "model": model,
+            }
     else:
         # Parallel grading
         def _grade_one(args):
@@ -653,11 +713,17 @@ def grade_all_students(
                 return (i, student_name, "error", None, str(e))
 
         graded_count = 0
+        for i, path in to_grade:
+            yield {"student": path.stem, "status": "working", "result": None, "error": None, "index": i + 1, "total": len(student_files)}
         with ThreadPoolExecutor(max_workers=workers) as pool:
             futures = {pool.submit(_grade_one, item): item for item in to_grade}
             for future in as_completed(futures):
                 i, student_name, status, result, error = future.result()
                 if status == "done":
+                    u = result.pop("_usage", None)
+                    if u:
+                        usage_total["prompt_tokens"] += u.get("prompt_tokens", 0)
+                        usage_total["completion_tokens"] += u.get("completion_tokens", 0)
                     results.append(result)
                     graded_count += 1
                     should_save = (graded_count % 5 == 0) or (graded_count == len(to_grade))
@@ -676,6 +742,19 @@ def grade_all_students(
                     "total": len(student_files),
                 }
 
+        if usage_total["prompt_tokens"] or usage_total["completion_tokens"]:
+            inp, out = MODEL_PRICING.get(model, MODEL_PRICING[DEFAULT_MODEL])
+            cost = (usage_total["prompt_tokens"] / 1e6 * inp) + (usage_total["completion_tokens"] / 1e6 * out)
+            yield {
+                "student": "",
+                "status": "usage",
+                "result": None,
+                "error": None,
+                "usage": usage_total,
+                "cost_usd": round(cost, 4),
+                "model": model,
+            }
+
 
 def main():
     import argparse
@@ -689,6 +768,10 @@ def main():
         if evt["status"] == "done":
             r = evt["result"]
             print(f"✓ {r['student_name']}: {r['total_score']}/{r['total_max']}")
+        elif evt["status"] == "usage":
+            u = evt.get("usage", {})
+            cost = evt.get("cost_usd", 0)
+            print(f"Token usage: {u.get('prompt_tokens', 0):,} in / {u.get('completion_tokens', 0):,} out — ~${cost:.4f}")
         else:
             print(f"✗ {evt['student']}: {evt['error']}")
     print("Done.")

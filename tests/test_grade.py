@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from utils import DEFAULT_MODEL
 from grade import (
     GradingResponse,
     QuestionGrade,
@@ -238,6 +239,22 @@ class TestBuildGroupPrompt:
         all_text = " ".join(p["text"] for p in content if p["type"] == "text")
         assert "not found in student submission" in all_text
 
+    def test_rubric_items_rendered_in_prompt(self):
+        sol = self._minimal_parsed("1.1")
+        stu = self._minimal_parsed("1.1")
+        rubrics = {
+            "1.1": {"points": 2, "items": [
+                {"description": "Correct code", "deduction": 1.0},
+                {"description": "Correct output", "deduction": 1.0},
+            ]},
+        }
+        messages, _ = build_group_prompt(["1.1"], sol, stu, "You grade.", rubrics=rubrics)
+        content = messages[1]["content"]
+        all_text = " ".join(p["text"] for p in content if p["type"] == "text")
+        assert "RUBRIC (deduct from 2 pts)" in all_text
+        assert "Correct code" in all_text
+        assert "-1.0 pts" in all_text or "-1 pts" in all_text
+
 
 # ---------------------------------------------------------------------------
 # _sanitize_student_text (prompt injection mitigation)
@@ -337,7 +354,7 @@ class TestGradeOnly:
                 "question_groups": [["1.1", "1.2"], ["2.1"]],
                 "grade_only": ["1.1"],
             },
-            "model": "gpt-4o-mini",
+            "model": DEFAULT_MODEL,
             "prompts": {"system": "Grade."},
             "max_prompt_tokens": 80000,
             "max_completion_tokens": 4096,

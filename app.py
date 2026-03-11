@@ -1,6 +1,9 @@
 """FastAPI backend for the AI Autograder pipeline."""
 
 import asyncio
+import logging
+
+logger = logging.getLogger(__name__)
 import io
 import json
 import tempfile
@@ -13,6 +16,7 @@ from urllib.parse import unquote
 _grading_lock = threading.Lock()
 # Guard against concurrent reads/writes of graded_results.json (grading + review save)
 _results_lock = threading.Lock()
+_rubric_lock = threading.Lock()
 
 DEFAULT_UPLOAD_MB = 500
 
@@ -23,13 +27,14 @@ from sse_starlette.sse import EventSourceResponse
 
 import re
 
-from utils import load_config, save_config, AppConfig
+from utils import load_config, save_config, AppConfig, DEFAULT_MODEL
 from gather import gather_submissions
 from parse_notebook import parse_all_students, parse_notebook, get_all_question_ids
 from grade import grade_all_students, grade_student, validate_question_groups
 from export import export_all
 from rubric import generate_rubrics
 from calibrate import run_calibration
+from estimate import estimate_rubrics, estimate_grade
 
 
 def _safe_path(base: Path, user_input: str) -> Path:
@@ -80,7 +85,7 @@ def _default_config() -> dict:
     """Return a minimal valid config for new assignments."""
     return {
         "assignment_name": "default",
-        "model": "gpt-4o-mini",
+        "model": DEFAULT_MODEL,
         "solution_notebook": "",
         "output_dir": "output",
         "workers": 1,
@@ -277,14 +282,83 @@ async def api_parse():
 # Rubric endpoints
 # ---------------------------------------------------------------------------
 
+@app.get("/generate-rubrics")
+async def api_generate_rubrics_stream():
+    """SSE stream: generates rubrics from solution notebook, emits progress, saves to config when done."""
+    if not _rubric_lock.acquire(blocking=False):
+        raise HTTPException(
+            status_code=409,
+            detail="Rubric generation already in progress. Wait for it to finish or refresh.",
+        )
+    thread_started = False
+    try:
+        config = load_config()
+        queue: asyncio.Queue = asyncio.Queue()
+        loop = asyncio.get_running_loop()
+
+        def _rubric_thread():
+            try:
+                def progress_cb(idx: int, total: int, group: list, rubrics_so_far: dict):
+                    # If any qid from this group is in rubrics_so_far, group is done; else starting
+                    is_done = any(q in rubrics_so_far for q in group)
+                    loop.call_soon_threadsafe(
+                        queue.put_nowait,
+                        {"status": "progress", "current": idx, "total": total, "group": group, "done": is_done},
+                    )
+
+                rubrics = generate_rubrics(config, progress_callback=progress_cb)
+                config["rubrics"] = rubrics
+                save_config(config)
+                loop.call_soon_threadsafe(
+                    queue.put_nowait,
+                    {"status": "done", "rubrics": rubrics},
+                )
+            except Exception as e:
+                loop.call_soon_threadsafe(
+                    queue.put_nowait,
+                    {"status": "error", "error": str(e)},
+                )
+            finally:
+                loop.call_soon_threadsafe(queue.put_nowait, None)
+                _rubric_lock.release()
+
+        threading.Thread(target=_rubric_thread, daemon=True).start()
+        thread_started = True
+
+        async def event_generator():
+            try:
+                while True:
+                    evt = await queue.get()
+                    if evt is None:
+                        yield {"event": "done", "data": "{}"}
+                        return
+                    yield {"event": "progress", "data": json.dumps(evt)}
+            except GeneratorExit:
+                pass
+
+        return EventSourceResponse(event_generator())
+    except Exception:
+        if not thread_started:
+            _rubric_lock.release()
+        raise
+
+
 @app.post("/generate-rubrics")
-async def api_generate_rubrics():
-    """Generate rubrics from solution notebook. Saves to config."""
-    config = load_config()
-    rubrics = await asyncio.to_thread(generate_rubrics, config)
-    config["rubrics"] = rubrics
-    save_config(config)
-    return {"rubrics": rubrics}
+async def api_generate_rubrics_post():
+    """Generate rubrics (blocking). Saves to config. Use GET /generate-rubrics for progress stream."""
+    if not _rubric_lock.acquire(blocking=False):
+        raise HTTPException(
+            status_code=409,
+            detail="Rubric generation already in progress. Wait for it to finish or refresh.",
+        )
+    try:
+        config = load_config()
+        rubrics = await asyncio.to_thread(generate_rubrics, config)
+        config["rubrics"] = rubrics
+        save_config(config)
+        return {"rubrics": rubrics}
+    finally:
+        _rubric_lock.release()
 
 
 @app.get("/rubrics")
@@ -305,6 +379,34 @@ def api_put_rubrics(rubrics: dict = Body(...)):
         raise HTTPException(status_code=422, detail=f"Invalid rubrics: {e}")
     save_config(config)
     return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# Estimate endpoints (cost/token preview before API calls)
+# ---------------------------------------------------------------------------
+
+@app.get("/estimate/rubrics")
+def api_estimate_rubrics():
+    """Estimate tokens and cost for rubric generation."""
+    config = load_config()
+    return estimate_rubrics(config)
+
+
+@app.get("/estimate/grade")
+def api_estimate_grade_all():
+    """Estimate tokens and cost for grading all students."""
+    config = load_config()
+    return estimate_grade(config, student_name=None)
+
+
+@app.get("/estimate/grade/{student_name:path}")
+def api_estimate_grade_one(student_name: str):
+    """Estimate tokens and cost for re-grading one student."""
+    student_name = unquote(student_name)
+    if "/" in student_name or "\\" in student_name or ".." in student_name:
+        raise HTTPException(status_code=400, detail="Invalid student name")
+    config = load_config()
+    return estimate_grade(config, student_name=student_name)
 
 
 # ---------------------------------------------------------------------------
@@ -367,6 +469,15 @@ async def api_grade():
                     if evt is None:
                         yield {"event": "done", "data": "{}"}
                         return
+                    if evt.get("status") == "usage":
+                        u = evt.get("usage", {})
+                        cost = evt.get("cost_usd", 0)
+                        logger.info(
+                            "Grading token usage: %s in / %s out — ~$%.4f",
+                            u.get("prompt_tokens", 0),
+                            u.get("completion_tokens", 0),
+                            cost,
+                        )
                     yield {"event": "progress", "data": json.dumps(evt)}
             except GeneratorExit:
                 pass  # client disconnected; lock released in thread

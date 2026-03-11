@@ -1,49 +1,5 @@
 assignment_name: LabTest_3_S26
-grading:
-  grade_only:
-  - '8.1'
-  - '8.2'
-  - '8.3'
-  - '9.1'
-  - '10.1'
-  - '10.2'
-  - '11.1'
-  - '11.2'
-  question_groups:
-  - - '1.1'
-  - - '2.1'
-    - '2.2'
-    - '2.3'
-    - '2.4'
-    - '2.5'
-    - '2.6'
-    - '2.7'
-  - - '3.1'
-  - - '4.1'
-    - '4.2'
-    - '4.3'
-  - - '5.1'
-    - '5.2'
-  - - '6.1'
-    - '6.2'
-  - - '7.1'
-    - '7.2'
-  - - '8.1'
-    - '8.2'
-    - '8.3'
-  - - '9.1'
-  - - '10.1'
-    - '10.2'
-  - - '11.1'
-    - '11.2'
-max_completion_tokens: 4096
-max_prompt_tokens: 80000
-model: gpt-5-mini
 output_dir: output
-parsing:
-  keep_images: true
-  question_regex: (?i)^\s*(-\s*)?Q(\d+)\.(\d+)\s*.*?\[\s*(\d+)\s*PTS\s*\]
-  section_regex: (?m)^\s*#\s*<font[^>]*>\s*(\d+)\b
 prompts:
   system: 'You are an expert Python instructor grading student lab work for a machine
     learning course.
@@ -63,6 +19,13 @@ prompts:
 
 
     GRADING GUIDELINES:
+
+    - FOLLOW THE RUBRIC STRICTLY. Apply the criteria and point structure exactly as
+    given. Do not invent new deductions or criteria.
+
+    - WHEN IN DOUBT, GIVE MORE POINTS. If the rubric is ambiguous or the student''s
+    answer is borderline, lean toward awarding full or higher partial credit. Only
+    deduct when the rubric clearly warrants it.
 
     - Accept functionally equivalent approaches even if they differ from the reference
     solution.
@@ -96,163 +59,25 @@ prompts:
     (e.g., answer is an image you cannot interpret, or the question is ambiguous).
 
     '
-rubrics:
-  '1.1':
-    criteria: '[generation failed: Error code: 400 - {''error'': {''message'': "Unsupported
-      value: ''temperature'' does not support 0 with this model. Only the default
-      (1) value is supported.", ''type'': ''invalid_request_error'', ''param'': ''temperature'',
-      ''code'': ''unsupported_value''}}]'
-    points: 1
-  '10.1':
-    criteria: '[generation failed: Error code: 400 - {''error'': {''message'': "Unsupported
-      value: ''temperature'' does not support 0 with this model. Only the default
-      (1) value is supported.", ''type'': ''invalid_request_error'', ''param'': ''temperature'',
-      ''code'': ''unsupported_value''}}]'
-    points: 1
-  '10.2':
-    criteria: '[generation failed: Error code: 400 - {''error'': {''message'': "Unsupported
-      value: ''temperature'' does not support 0 with this model. Only the default
-      (1) value is supported.", ''type'': ''invalid_request_error'', ''param'': ''temperature'',
-      ''code'': ''unsupported_value''}}]'
-    points: 4
-  '11.1':
-    criteria: '[generation failed: Error code: 400 - {''error'': {''message'': "Unsupported
-      value: ''temperature'' does not support 0 with this model. Only the default
-      (1) value is supported.", ''type'': ''invalid_request_error'', ''param'': ''temperature'',
-      ''code'': ''unsupported_value''}}]'
-    points: 4
-  '11.2':
-    criteria: '[generation failed: Error code: 400 - {''error'': {''message'': "Unsupported
-      value: ''temperature'' does not support 0 with this model. Only the default
-      (1) value is supported.", ''type'': ''invalid_request_error'', ''param'': ''temperature'',
-      ''code'': ''unsupported_value''}}]'
-    points: 4
-  '2.1':
-    criteria: '[generation failed: Error code: 400 - {''error'': {''message'': "Unsupported
-      value: ''temperature'' does not support 0 with this model. Only the default
-      (1) value is supported.", ''type'': ''invalid_request_error'', ''param'': ''temperature'',
-      ''code'': ''unsupported_value''}}]'
-    points: 1
-  '2.2':
-    criteria: '[generation failed: Error code: 400 - {''error'': {''message'': "Unsupported
-      value: ''temperature'' does not support 0 with this model. Only the default
-      (1) value is supported.", ''type'': ''invalid_request_error'', ''param'': ''temperature'',
-      ''code'': ''unsupported_value''}}]'
-    points: 3
-  '2.3':
-    criteria: '[generation failed: Error code: 400 - {''error'': {''message'': "Unsupported
-      value: ''temperature'' does not support 0 with this model. Only the default
-      (1) value is supported.", ''type'': ''invalid_request_error'', ''param'': ''temperature'',
-      ''code'': ''unsupported_value''}}]'
-    points: 2
-  '2.4':
-    criteria: '[generation failed: Error code: 400 - {''error'': {''message'': "Unsupported
-      value: ''temperature'' does not support 0 with this model. Only the default
-      (1) value is supported.", ''type'': ''invalid_request_error'', ''param'': ''temperature'',
-      ''code'': ''unsupported_value''}}]'
-    points: 7
-  '2.5':
-    criteria: '[generation failed: Error code: 400 - {''error'': {''message'': "Unsupported
-      value: ''temperature'' does not support 0 with this model. Only the default
-      (1) value is supported.", ''type'': ''invalid_request_error'', ''param'': ''temperature'',
-      ''code'': ''unsupported_value''}}]'
-    points: 6
-  '2.6':
-    criteria: '[generation failed: Error code: 400 - {''error'': {''message'': "Unsupported
-      value: ''temperature'' does not support 0 with this model. Only the default
-      (1) value is supported.", ''type'': ''invalid_request_error'', ''param'': ''temperature'',
-      ''code'': ''unsupported_value''}}]'
-    points: 3
-  '2.7':
-    criteria: '[generation failed: Error code: 400 - {''error'': {''message'': "Unsupported
-      value: ''temperature'' does not support 0 with this model. Only the default
-      (1) value is supported.", ''type'': ''invalid_request_error'', ''param'': ''temperature'',
-      ''code'': ''unsupported_value''}}]'
-    points: 3
-  '3.1':
-    criteria: '[generation failed: Error code: 400 - {''error'': {''message'': "Unsupported
-      value: ''temperature'' does not support 0 with this model. Only the default
-      (1) value is supported.", ''type'': ''invalid_request_error'', ''param'': ''temperature'',
-      ''code'': ''unsupported_value''}}]'
-    points: 3
-  '4.1':
-    criteria: '[generation failed: Error code: 400 - {''error'': {''message'': "Unsupported
-      value: ''temperature'' does not support 0 with this model. Only the default
-      (1) value is supported.", ''type'': ''invalid_request_error'', ''param'': ''temperature'',
-      ''code'': ''unsupported_value''}}]'
-    points: 7
-  '4.2':
-    criteria: '[generation failed: Error code: 400 - {''error'': {''message'': "Unsupported
-      value: ''temperature'' does not support 0 with this model. Only the default
-      (1) value is supported.", ''type'': ''invalid_request_error'', ''param'': ''temperature'',
-      ''code'': ''unsupported_value''}}]'
-    points: 9
-  '4.3':
-    criteria: '[generation failed: Error code: 400 - {''error'': {''message'': "Unsupported
-      value: ''temperature'' does not support 0 with this model. Only the default
-      (1) value is supported.", ''type'': ''invalid_request_error'', ''param'': ''temperature'',
-      ''code'': ''unsupported_value''}}]'
-    points: 2
-  '5.1':
-    criteria: '[generation failed: Error code: 400 - {''error'': {''message'': "Unsupported
-      value: ''temperature'' does not support 0 with this model. Only the default
-      (1) value is supported.", ''type'': ''invalid_request_error'', ''param'': ''temperature'',
-      ''code'': ''unsupported_value''}}]'
-    points: 3
-  '5.2':
-    criteria: '[generation failed: Error code: 400 - {''error'': {''message'': "Unsupported
-      value: ''temperature'' does not support 0 with this model. Only the default
-      (1) value is supported.", ''type'': ''invalid_request_error'', ''param'': ''temperature'',
-      ''code'': ''unsupported_value''}}]'
-    points: 3
-  '6.1':
-    criteria: '[generation failed: Error code: 400 - {''error'': {''message'': "Unsupported
-      value: ''temperature'' does not support 0 with this model. Only the default
-      (1) value is supported.", ''type'': ''invalid_request_error'', ''param'': ''temperature'',
-      ''code'': ''unsupported_value''}}]'
-    points: 2
-  '6.2':
-    criteria: '[generation failed: Error code: 400 - {''error'': {''message'': "Unsupported
-      value: ''temperature'' does not support 0 with this model. Only the default
-      (1) value is supported.", ''type'': ''invalid_request_error'', ''param'': ''temperature'',
-      ''code'': ''unsupported_value''}}]'
-    points: 5
-  '7.1':
-    criteria: '[generation failed: Error code: 400 - {''error'': {''message'': "Unsupported
-      value: ''temperature'' does not support 0 with this model. Only the default
-      (1) value is supported.", ''type'': ''invalid_request_error'', ''param'': ''temperature'',
-      ''code'': ''unsupported_value''}}]'
-    points: 5
-  '7.2':
-    criteria: '[generation failed: Error code: 400 - {''error'': {''message'': "Unsupported
-      value: ''temperature'' does not support 0 with this model. Only the default
-      (1) value is supported.", ''type'': ''invalid_request_error'', ''param'': ''temperature'',
-      ''code'': ''unsupported_value''}}]'
-    points: 5
-  '8.1':
-    criteria: '[generation failed: Error code: 400 - {''error'': {''message'': "Unsupported
-      value: ''temperature'' does not support 0 with this model. Only the default
-      (1) value is supported.", ''type'': ''invalid_request_error'', ''param'': ''temperature'',
-      ''code'': ''unsupported_value''}}]'
-    points: 2
-  '8.2':
-    criteria: '[generation failed: Error code: 400 - {''error'': {''message'': "Unsupported
-      value: ''temperature'' does not support 0 with this model. Only the default
-      (1) value is supported.", ''type'': ''invalid_request_error'', ''param'': ''temperature'',
-      ''code'': ''unsupported_value''}}]'
-    points: 2
-  '8.3':
-    criteria: '[generation failed: Error code: 400 - {''error'': {''message'': "Unsupported
-      value: ''temperature'' does not support 0 with this model. Only the default
-      (1) value is supported.", ''type'': ''invalid_request_error'', ''param'': ''temperature'',
-      ''code'': ''unsupported_value''}}]'
-    points: 4
-  '9.1':
-    criteria: '[generation failed: Error code: 400 - {''error'': {''message'': "Unsupported
-      value: ''temperature'' does not support 0 with this model. Only the default
-      (1) value is supported.", ''type'': ''invalid_request_error'', ''param'': ''temperature'',
-      ''code'': ''unsupported_value''}}]'
-    points: 7
-solution_notebook: /home/salman/Insync/shajizad@andrew.cmu.edu/Google Drive/S-26/15288
-  CA/ai_autograder/LabTest_3_S26/LabTest_3_S26_sol.ipynb
-workers: 1
+  rubric_system: |
+    You are an expert instructor creating grading rubrics for student lab work.
+
+    Given a question and its reference solution, produce structured grading criteria for that question.
+    Return valid JSON only, no prose outside JSON.
+
+    For each question ID, output:
+    {
+      "QID": {
+        "points": N,
+        "items": [
+          {"description": "Criterion description", "deduction": 1.0},
+          ...
+        ]
+      }
+    }
+
+    Constraints:
+    - The sum of all deduction values MUST equal the total points for that question exactly. This ensures a student who fails every criterion scores 0.
+    - Group related minor deductions into a single item rather than creating many small sub-deductions. As a guideline, use at most 1 item per point (e.g. a 1-point question gets at most 1 item; a 4-point question gets at most 4 items). For 1-point questions, prefer a single binary item (correct/incorrect) rather than fractional sub-deductions.
+
+    Be specific and actionable. The criteria should help another grader (or an LLM) consistently score student submissions.
