@@ -2,6 +2,7 @@
 
 import json
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -10,6 +11,7 @@ from grade import (
     QuestionGrade,
     build_group_prompt,
     estimate_tokens,
+    grade_student,
     parse_llm_json,
     truncate_output,
     validate_question_groups,
@@ -226,3 +228,60 @@ class TestBuildGroupPrompt:
         content = messages[1]["content"]
         all_text = " ".join(p["text"] for p in content if p["type"] == "text")
         assert "not found in student submission" in all_text
+
+
+# ---------------------------------------------------------------------------
+# grade_student with grade_only
+# ---------------------------------------------------------------------------
+
+class TestGradeOnly:
+    def _make_solution(self, qids: list[str]) -> dict:
+        sections: dict = {}
+        for qid in qids:
+            sec, _ = qid.split(".")
+            sections.setdefault(sec, {"questions": {}})
+            sections[sec]["questions"][qid] = {"points": 2, "question_markdown": f"Q{qid}", "answer_cells": []}
+        return {"sections": sections}
+
+    def test_grade_only_skips_others(self):
+        """When grade_only is set, only those questions are graded; others get 0 [skipped]."""
+        sol = self._make_solution(["1.1", "1.2", "2.1"])
+        stu = self._make_solution(["1.1", "1.2", "2.1"])
+        stu["student_name"] = "TestStudent"
+
+        config = {
+            "grading": {
+                "question_groups": [["1.1", "1.2"], ["2.1"]],
+                "grade_only": ["1.1"],
+            },
+            "model": "gpt-4o-mini",
+            "prompts": {"system": "Grade."},
+            "max_prompt_tokens": 80000,
+            "max_completion_tokens": 4096,
+            "rubrics": {},
+        }
+
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message.content = '{"1.1": {"score": 2, "feedback": "correct"}}'
+
+        with patch("grade.get_openai_client") as mock_client_cls:
+            mock_client = MagicMock()
+            mock_client.chat.completions.create.return_value = mock_response
+            mock_client_cls.return_value = mock_client
+
+            result = grade_student(stu, sol, config, client=mock_client)
+
+        # 1.1 graded by LLM
+        assert result["questions"]["1.1"]["score"] == 2.0
+        assert result["questions"]["1.1"]["feedback"] == "correct"
+
+        # 1.2 and 2.1 skipped
+        assert result["questions"]["1.2"]["score"] == 0.0
+        assert "[skipped - not in grade_only]" in result["questions"]["1.2"]["feedback"]
+        assert result["questions"]["2.1"]["score"] == 0.0
+        assert "[skipped - not in grade_only]" in result["questions"]["2.1"]["feedback"]
+
+        # total_max includes all questions
+        assert result["total_max"] == 6.0  # 2+2+2
+        assert result["total_score"] == 2.0  # only 1.1 contributes

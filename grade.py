@@ -392,8 +392,16 @@ def grade_student(
     if client is None:
         client = get_openai_client()
 
-    groups: list[list[str]] = config.get("grading", {}).get("question_groups", [])
+    grading_config = config.get("grading", {})
+    groups: list[list[str]] = grading_config.get("question_groups", [])
+    grade_only: list[str] | None = grading_config.get("grade_only")
     student_name = student_parsed.get("student_name", "Unknown")
+
+    # When grade_only is set, only grade those questions; filter groups accordingly
+    if grade_only is not None:
+        grade_only_set = set(grade_only)
+        groups = [[q for q in group if q in grade_only_set] for group in groups]
+        groups = [g for g in groups if g]
 
     if ungrouped is None:
         ungrouped = validate_question_groups(groups, solution_parsed)
@@ -429,19 +437,20 @@ def grade_student(
             if feedback and score < max_pts:
                 feedback_parts.append(f"Q{qid}: {feedback}")
 
-    # Zero-score ungrouped questions with a note
+    # Zero-score ungrouped or skipped questions
+    skip_msg = "[skipped - not in grade_only]" if grade_only else "[not included in grading groups]"
     for qid in ungrouped:
         sol_q = get_question_data(solution_parsed, qid)
-        max_pts = (sol_q or {}).get("points", 0)  # ungrouped not in qid_to_max
+        max_pts = (sol_q or {}).get("points", 0)
         total_max += max_pts
         questions[qid] = {
             "score": 0.0,
             "max": max_pts,
-            "feedback": "[not included in grading groups]",
+            "feedback": skip_msg,
             "confidence": "low",
             "requires_review": False,
         }
-        feedback_parts.append(f"Q{qid}: [not graded — not included in question_groups]")
+        feedback_parts.append(f"Q{qid}: {skip_msg}")
 
     return {
         "student_name": student_name,
@@ -505,11 +514,20 @@ def grade_all_students(
         already_graded = set()
 
     # Validate question groups once (not per student)
-    groups = config.get("grading", {}).get("question_groups", [])
-    ungrouped = validate_question_groups(groups, solution_parsed)
-    if ungrouped:
-        print(f"Warning: Questions not in any group (will score 0): {ungrouped}")
-        logger.warning("Questions not in any group (will score 0): %s", ungrouped)
+    grading_config = config.get("grading", {})
+    groups = grading_config.get("question_groups", [])
+    grade_only = grading_config.get("grade_only")
+    if grade_only:
+        groups_filtered = [[q for q in g if q in set(grade_only)] for g in groups]
+        groups_filtered = [g for g in groups_filtered if g]
+        ungrouped = validate_question_groups(groups_filtered, solution_parsed)
+        print(f"Grade only: {grade_only} — skipping {len(ungrouped)} other questions")
+        logger.info("grade_only=%s, skipping %d questions", grade_only, len(ungrouped))
+    else:
+        ungrouped = validate_question_groups(groups, solution_parsed)
+        if ungrouped:
+            print(f"Warning: Questions not in any group (will score 0): {ungrouped}")
+            logger.warning("Questions not in any group (will score 0): %s", ungrouped)
 
     workers = config.get("workers", 1)
     to_grade = [(i, path) for i, path in enumerate(student_files) if path.stem not in already_graded]

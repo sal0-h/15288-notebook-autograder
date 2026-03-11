@@ -1,5 +1,7 @@
 assignment_name: LabTest_2_S26
 grading:
+  # Optional: only grade these questions; others get 0 [skipped]. Remove or leave empty to grade all.
+  # grade_only: ['1.1', '2.1', '4.2']
   question_groups:
   - - '1.1'
     - '1.2'

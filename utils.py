@@ -87,6 +87,7 @@ class ParsingConfig(BaseModel):
 
 class GradingConfig(BaseModel):
     question_groups: list[list[str]]
+    grade_only: list[str] | None = None  # If set, only grade these question IDs; others get 0 [skipped]
 
 
 class RubricEntry(BaseModel):
