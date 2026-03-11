@@ -15,6 +15,7 @@ Built for Carnegie Mellon University in Qatar courses (15-288, 07-280).
 5. [Usage](#usage)
 6. [Web UI](#web-ui)
 7. [Testing](#testing)
+8. [Recent Changes](#recent-changes)
 
 ---
 
@@ -149,6 +150,19 @@ Steps 3 (generate-rubrics) and 5 (calibrate) are optional — the default CLI ru
 
 For each question group, sends the question text and reference solution to the LLM and asks it to produce grading criteria. The criteria are stored in `config.yaml` under `rubrics` and are injected into the grading prompt in Step 4.
 
+**Rubric generation framework:**
+
+The rubric prompt uses a **"Question text = spec, Solution = example"** principle. The question text defines what students must do; the reference solution is one correct implementation, not the specification. Four rules govern when to hardcode vs use flexible wording:
+
+1. **Explicit requirements:** If the question explicitly requires specific values (e.g. "use K=5", "10-fold CV"), the rubric must require them.
+2. **Open-ended choices:** If the question is open-ended (e.g. "try four different values"), use flexible wording — do NOT hardcode the reference solution's specific choices.
+3. **Data-dependent results:** For values that depend on preprocessing or data (dataset size n, accuracy, iterations), use "correctly computed from their data" — do NOT hardcode the reference's numbers.
+4. **Implementation details:** For incidental choices (random_state, variable names), use flexible wording like "any fixed random_state".
+
+**Rubric review pass (optional):**
+
+When `rubric_review: true` (default), a second LLM pass audits each generated rubric against the question text. It softens criteria that hardcode reference-solution-specific values when the question doesn't explicitly require them. Point values and deduction amounts are preserved; only description text may be rewritten.
+
 **Rubric format (per question in config):**
 
 ```yaml
@@ -189,9 +203,22 @@ Rubrics are optional — if absent, grading proceeds without pre-defined criteri
 
 Questions are graded in groups (e.g. `["1.1", "1.2", "1.3"]`) so the LLM sees related context. Each group is one API call.
 
+**Grading principles (system prompt):**
+
+- **PRINCIPLE 1 — Question text is authoritative:** When a rubric criterion specifies something NOT explicitly required by the question text, treat the criterion as satisfied if the student made a reasonable alternative choice and completed the task correctly.
+- **PRINCIPLE 2 — Single deduction:** Each distinct mistake is penalized once. Do not cascade penalties.
+
+**Empty submission guard:**
+
+When a question has no code, no output, and no images, the prompt includes a warning so the LLM does not award points for non-existent content.
+
+**Reference solution in grading:**
+
+By default (`include_reference_in_grading: false`), the reference solution is **not** included in the grading prompt to avoid anchoring on solution-specific values. Set to `true` to include it.
+
 **Grade only specific questions:**
 
-Set `grading.grade_only: ['1.1', '2.1', '4.2']` in config to grade only those questions. All others receive 0 and feedback `[skipped - not in grade_only]`. `total_max` still includes all questions. Omit `grade_only` to grade everything.
+Set `grading.grade_only: ['1.1', '2.1', '4.2']` in config to grade only those questions. All others receive 0 and feedback `[skipped - not in grade_only]`. When `grade_only` is set, `total_max` is the sum of graded questions only (e.g. 28/28, not 98/98). Omit `grade_only` to grade everything.
 
 **LLM prompt structure (per group):**
 
@@ -316,7 +343,7 @@ Computes the mean and standard deviation of scores per question across all stude
 
 ### Config and Path Resolution
 
-- **Output-first layout:** The root `config.yaml` holds the assignment pointer (`assignment_name`, `output_dir`) and **prompts** (grading system prompt). The assignment-specific config (rubrics, question groups, model, etc.) is stored at `output/{assignment_name}/config.yaml`. Prompts stay at the project root so they are visible and reusable across assignments.
+- **Output-first layout:** The root `config.yaml` holds the assignment pointer (`assignment_name`, `output_dir`), **prompts** (grading system prompt, rubric_system), and root-level options (`rubric_review`, `include_reference_in_grading`). The assignment-specific config (rubrics, question groups, model, rubric_model, etc.) is stored at `output/{assignment_name}/config.yaml`. Prompts and rubric options stay at the project root so they are visible and reusable across assignments.
 - **Legacy:** If `output/{assignment_name}/config.yaml` does not exist, the root config is used (full config at root). On first save, the config migrates to the output folder.
 - **Paths:** All paths in config are resolved **relative to the project root** (directory containing the root `config.yaml`).
 - **Example:** If `config.yaml` is at `/home/project/config.yaml` and `solution_notebook: "archive1/sol.ipynb"`, it resolves to `/home/project/archive1/sol.ipynb`.
@@ -372,9 +399,12 @@ To grade a different assignment, change `assignment_name` in `config.yaml` (and 
 | Key | Description |
 |-----|-------------|
 | `assignment_name` | Label for the assignment; all outputs go under `output_dir/{assignment_name}/` |
-| `model` | OpenAI model (e.g. `gpt-4o-mini`, `gpt-4o`) |
+| `model` | OpenAI model for grading (e.g. `gpt-5-mini`, `gpt-4o`) |
+| `rubric_model` | Optional model for rubric generation; uses `model` if not set |
 | `solution_notebook` | Path to reference solution `.ipynb` |
 | `output_dir` | Base directory; outputs go to `output_dir/{assignment_name}/submissions`, `parsed`, etc. |
+| `rubric_review` | If `true` (default), run a second LLM pass to soften hardcoded rubric values. Stored in root config. |
+| `include_reference_in_grading` | If `true`, include reference solution in grading prompt. Default: `false` to avoid anchoring. |
 | `max_prompt_tokens` | Max tokens for prompt (triggers truncation). Default: 80000 |
 | `max_completion_tokens` | Max tokens for LLM response. Default: 4096 |
 | `workers` | Number of parallel grading workers (default: 1). Set > 1 for faster grading of large classes. |
@@ -382,9 +412,10 @@ To grade a different assignment, change `assignment_name` in `config.yaml` (and 
 | `parsing.question_regex` | Regex to detect questions (must capture section, question number, points) |
 | `parsing.keep_images` | Whether to include Base64 images in parsed output |
 | `grading.question_groups` | List of question ID lists, e.g. `[["1.1","1.2"], ["2.1"]]` |
-| `grading.grade_only` | Optional list of question IDs to grade; others get 0 and feedback `[skipped - not in grade_only]`. Omit to grade all. |
+| `grading.grade_only` | Optional list of question IDs to grade; others get 0 and feedback `[skipped - not in grade_only]`. When set, `total_max` = sum of graded questions only. Omit to grade all. |
 | `rubrics` | Optional per-question rubrics (auto-generated or hand-edited). Dict of `{qid: {points, items: [{description, deduction}]}}`. Deductions must sum to points. |
 | `prompts.system` | System prompt for the LLM grader |
+| `prompts.rubric_system` | System prompt for rubric generation |
 | `upload_max_mb` | Max ZIP upload size in MB for Web UI gather (default: 500). |
 
 ---
@@ -470,12 +501,17 @@ Open browser to `http://localhost:8000`.
 
 **Tabs:**
 
+0. **Setup** — Assignment name, model, rubric model, solution notebook, workers, rubric review pass, include reference in grading, grade-only questions, question groups
 1. **Gather** — Upload Gradescope ZIP or specify a local folder path
 2. **Parse** — Run parse, view verification report
-3. **Rubrics** — Generate LLM rubrics from solution, edit per-question criteria, save to config
+3. **Rubrics** — Generate LLM rubrics from solution (with optional review pass), edit per-question criteria, save to config. Cost estimate includes rubric review when enabled.
 4. **Grade** — Start grading, view live progress (SSE stream)
 5. **Review** — Load results, edit scores/feedback, view confidence badges and outlier flags, save
 6. **Export** — Generate Gradescope JSON + Excel, download
+
+**Cost estimation:**
+
+Before running rubric generation or grading, the UI shows estimated tokens and cost. Rubric estimate includes the optional review pass when `rubric_review` is enabled.
 
 **API endpoints:**
 
@@ -483,10 +519,14 @@ Open browser to `http://localhost:8000`.
 |--------|------|-------------|
 | `GET` | `/config` | Read current config |
 | `PUT` | `/config` | Update config |
+| `GET` | `/estimate/rubrics` | Estimate tokens and cost for rubric generation |
+| `GET` | `/estimate/grade` | Estimate tokens and cost for grading all students |
+| `GET` | `/estimate/grade/{student}` | Estimate cost for re-grading one student |
 | `POST` | `/gather` | Upload ZIP and run gather |
 | `POST` | `/gather-from-folder` | Run gather from a local folder path |
 | `POST` | `/parse` | Run parse step |
-| `POST` | `/generate-rubrics` | Generate rubrics from solution and save to config |
+| `GET` | `/generate-rubrics` | SSE stream: generate rubrics and save to config |
+| `POST` | `/generate-rubrics` | Generate rubrics (blocking) |
 | `GET` | `/rubrics` | Read rubrics from config |
 | `PUT` | `/rubrics` | Save edited rubrics to config |
 | `GET` | `/grade` | SSE stream of grading progress |
@@ -507,3 +547,14 @@ Open browser to `http://localhost:8000`.
 ```
 
 Tests cover grading logic, JSON parsing, prompt building, notebook parsing, config loading, gather, export, and API endpoints.
+
+---
+
+## Recent Changes
+
+- **Rubric generation:** "Question text = spec, Solution = example" framework with four rules (explicit requirements, open-ended choices, data-dependent results, implementation details). Optional **rubric review pass** softens hardcoded values when the question doesn't require them.
+- **Grading:** Two principles — question text is authoritative; single deduction (no cascading penalties). **Empty submission guard** warns the LLM when a question has no code/output/images to prevent over-grading.
+- **total_max fix:** When `grade_only` is set, `total_max` is the sum of graded questions only (e.g. 28/28, not 98/98).
+- **Config:** `rubric_review` (root), `rubric_model`, `include_reference_in_grading`. Prompts and rubric options live in root config.
+- **UI:** Setup tab (0) with rubric model, rubric review checkbox, include reference in grading. Cost estimates include rubric review when enabled.
+- **Cost estimation:** `estimate_rubrics` accounts for the rubric review pass when `rubric_review` is true.
