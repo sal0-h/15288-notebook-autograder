@@ -69,6 +69,7 @@
         .mb-2 { margin-bottom: 16px; }
         .mb-1 { margin-bottom: 8px; }
     </style>
+    <script src="https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js"></script>
 </head>
 <body>
 <div class="container">
@@ -191,12 +192,12 @@
             html += "<table><tr><th>Student</th><th>Filename</th><th>Status</th><th>Note</th></tr>";
             results.forEach(x => {
                 const cls = x.status === "ok" ? "" : x.status === "duplicate" ? "warning" : "error";
-                html += `<tr class="${cls}"><td>${x.student_name}</td><td>${x.filename || "—"}</td><td>${x.status}</td><td>${x.message || ""}</td></tr>`;
+                html += `<tr class="${cls}"><td>${escHtml(x.student_name)}</td><td>${escHtml(x.filename || "—")}</td><td>${x.status}</td><td>${escHtml(x.message || "")}</td></tr>`;
             });
             html += "</table>";
             document.getElementById("gatherResults").innerHTML = html;
         } catch (e) {
-            document.getElementById("gatherResults").innerHTML = `<p class="status-error">Error: ${e.message}</p>`;
+            document.getElementById("gatherResults").innerHTML = `<p class="status-error">Error: ${escHtml(e.message)}</p>`;
         } finally {
             setLoading(btn, false, "Gather");
             btn.disabled = false;
@@ -221,7 +222,7 @@
             html += "<table><tr><th>Student</th><th>Status</th><th>Questions Found</th><th>Missing</th></tr>";
             report.forEach(x => {
                 const cls = x.status === "ok" ? "" : x.status === "error" ? "error" : "warning";
-                html += `<tr class="${cls}"><td>${x.student_name}</td><td>${x.status}</td><td>${(x.questions_found || []).length}</td><td>${(x.questions_missing || []).join(", ") || "—"}</td></tr>`;
+                html += `<tr class="${cls}"><td>${escHtml(x.student_name)}</td><td>${x.status}</td><td>${(x.questions_found || []).length}</td><td>${escHtml((x.questions_missing || []).join(", ") || "—")}</td></tr>`;
             });
             html += "</table>";
             document.getElementById("parseResults").innerHTML = html;
@@ -231,7 +232,7 @@
                 document.getElementById("parsePreviewContent").textContent = j.length > 6000 ? j.slice(0, 6000) + "\n…" : j;
             }
         } catch (e) {
-            document.getElementById("parseResults").innerHTML = `<p class="status-error">Error: ${e.message}</p>`;
+            document.getElementById("parseResults").innerHTML = `<p class="status-error">Error: ${escHtml(e.message)}</p>`;
         } finally {
             setLoading(btn, false, "Run Parse");
         }
@@ -253,10 +254,10 @@
                 if (data.status === "done" && data.result) {
                     const r = data.result;
                     div.className = "progress-item done";
-                    div.innerHTML = `<span>${r.student_name}</span><span style="font-weight:600">${r.total_score}/${r.total_max}</span>`;
+                    div.innerHTML = `<span>${escHtml(r.student_name)}</span><span style="font-weight:600">${r.total_score}/${r.total_max}</span>`;
                 } else if (data.status === "error") {
                     div.className = "progress-item error";
-                    div.innerHTML = `<span>${data.student}</span><span>Error: ${data.error}</span>`;
+                    div.innerHTML = `<span>${escHtml(data.student)}</span><span>Error: ${escHtml(data.error || "")}</span>`;
                 }
                 list.appendChild(div);
                 list.scrollTop = list.scrollHeight;
@@ -268,9 +269,12 @@
             ev.onerror = () => {
                 ev.close();
                 setLoading(btn, false, "Start Grading");
+                if (list.querySelectorAll(".progress-item").length === 0) {
+                    list.innerHTML = "<p class='status-warning'>Connection failed. Grading may already be in progress in another tab.</p>";
+                }
             };
         } catch (e) {
-            list.innerHTML = `<p class="status-error">Error: ${e.message}</p>`;
+            list.innerHTML = `<p class="status-error">Error: ${escHtml(e.message)}</p>`;
             setLoading(btn, false, "Start Grading");
         }
     };
@@ -292,7 +296,7 @@
             renderStudentList();
             if (reviewData.length) showReviewDetail(0);
         } catch (e) {
-            document.getElementById("reviewDetail").innerHTML = `<p class="status-error">Error: ${e.message}</p>`;
+            document.getElementById("reviewDetail").innerHTML = `<p class="status-error">Error: ${escHtml(e.message)}</p>`;
         } finally {
             setLoading(btn, false, "Load Results");
             btn.disabled = false;
@@ -303,7 +307,7 @@
         const list = document.getElementById("studentList");
         list.innerHTML = reviewData.map((s, i) => `
             <div class="student-item" data-idx="${i}">
-                <span class="sname">${s.student_name}</span>
+                <span class="sname">${escHtml(s.student_name)}</span>
                 <span class="sscore">${s.total_score} / ${s.total_max}</span>
             </div>`).join("");
         list.querySelectorAll(".student-item").forEach(el => {
@@ -459,7 +463,7 @@
             dl.classList.remove("hidden");
             dl.href = "/export/excel?t=" + Date.now();
         } catch (e) {
-            document.getElementById("exportResults").innerHTML = `<p class="status-error">Error: ${e.message}</p>`;
+            document.getElementById("exportResults").innerHTML = `<p class="status-error">Error: ${escHtml(e.message)}</p>`;
         } finally {
             setLoading(btn, false, "Run Export");
         }
@@ -476,11 +480,13 @@
             .replace(/"/g, "&quot;");
     }
 
-    /** Allow HTML in question markdown (e.g. <font>). Strip script tags and event handlers. */
+    /** Allow safe HTML in question markdown (e.g. <font>, <b>). Uses DOMPurify. */
     function sanitizeQuestionHtml(s) {
-        return String(s || "")
-            .replace(/<script\b[\s\S]*?<\/script>/gi, "")
-            .replace(/\s+on\w+\s*=\s*["'][^"']*["']/gi, "");
+        if (typeof DOMPurify === "undefined") return escHtml(s || "");
+        return DOMPurify.sanitize(String(s || ""), {
+            ALLOWED_TAGS: ["b", "i", "em", "strong", "font", "span", "br", "p", "ul", "ol", "li", "code", "pre", "sub", "sup"],
+            ALLOWED_ATTR: ["color", "style"],
+        });
     }
 </script>
 </body>

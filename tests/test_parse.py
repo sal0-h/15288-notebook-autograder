@@ -1,13 +1,10 @@
 """Tests for parse_notebook.py: parsing logic and helper functions."""
 
 import json
-import sys
 import textwrap
 from pathlib import Path
 
 import pytest
-
-sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from parse_notebook import (
     extract_code_outputs,
@@ -174,7 +171,8 @@ class TestGetAllQuestionIds:
     def _make_parsed(self, qids: list[str]) -> dict:
         sections: dict = {}
         for qid in qids:
-            sec, _ = qid.split(".")
+            parts = qid.split(".")
+            sec = parts[0] if parts else "0"
             sections.setdefault(sec, {"questions": {}})
             sections[sec]["questions"][qid] = {"points": 1}
         return {"sections": sections}
@@ -186,6 +184,14 @@ class TestGetAllQuestionIds:
 
     def test_empty(self):
         assert get_all_question_ids({"sections": {}}) == []
+
+    def test_non_standard_qid_no_crash(self):
+        parsed = self._make_parsed(["1.1", "foo", "2.1"])
+        ids = get_all_question_ids(parsed)
+        assert "1.1" in ids
+        assert "2.1" in ids
+        assert "foo" in ids
+        assert ids.index("1.1") < ids.index("2.1") < ids.index("foo")
 
 
 # ---------------------------------------------------------------------------

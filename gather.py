@@ -5,7 +5,7 @@ import shutil
 import zipfile
 from pathlib import Path
 
-import yaml
+import yaml  # Used for Gradescope submission_metadata.yml (Ruby-style keys)
 
 from utils import load_config as _load_config
 
@@ -48,10 +48,15 @@ def gather_submissions(
     Returns:
         List of {"student_name", "filename", "status": "ok"|"missing"|"duplicate"}
     """
+    extract_root: Path | None = None
     if from_zip:
         extract_root = source.parent / f"_extract_{source.stem}"
-        with zipfile.ZipFile(source, "r") as zf:
-            zf.extractall(extract_root)
+        try:
+            with zipfile.ZipFile(source, "r") as zf:
+                zf.extractall(extract_root)
+        except Exception:
+            shutil.rmtree(extract_root, ignore_errors=True)
+            raise
         # Find the assignment_*_export folder or folder containing submission_metadata.yml
         export_dirs = list(extract_root.glob("assignment_*_export"))
         if export_dirs:
@@ -65,7 +70,7 @@ def gather_submissions(
 
     metadata_path = base_dir / "submission_metadata.yml"
     if not metadata_path.exists():
-        if from_zip:
+        if from_zip and extract_root:
             shutil.rmtree(extract_root, ignore_errors=True)
         return []
 
@@ -122,10 +127,7 @@ def gather_submissions(
 
         nb_path = ipynb_files[0]
         new_name = f"{student_name}_{nb_path.name}"
-        dest_path = out_dir / new_name
-
-        # Sanitize filename (remove path chars from student name)
-        safe_name = "".join(c for c in new_name if c not in '/\\:*?"<>|')
+        safe_name = "".join(c for c in new_name if c not in '/\\:*?"<>|') or "unknown_student"
         dest_path = out_dir / safe_name
 
         status = "ok"
@@ -143,7 +145,7 @@ def gather_submissions(
             "message": "" if status == "ok" else f"Duplicate submitter: {student_name}",
         })
 
-    if from_zip:
+    if from_zip and extract_root:
         shutil.rmtree(extract_root, ignore_errors=True)
 
     return results

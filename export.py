@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from parse_notebook import _sort_key_qid
 from utils import load_config
 
 
@@ -33,7 +34,7 @@ def export_all(config: dict) -> dict:
     all_qids: set[str] = set()
     for r in results:
         all_qids.update(r.get("questions", {}).keys())
-    q_cols = sorted(all_qids, key=lambda x: (int(x.split(".")[0]), int(x.split(".")[1])))
+    q_cols = sorted(all_qids, key=_sort_key_qid)
 
     # Export Gradescope JSON per student
     for r in results:
@@ -48,10 +49,11 @@ def export_all(config: dict) -> dict:
                 "score": q_data.get("score", 0),
                 "max_score": q_data.get("max", 0),
                 "output": q_data.get("feedback", ""),
+                "visibility": "visible",
             })
 
         gs_data = {"tests": tests}
-        safe_name = "".join(c for c in student_name if c not in '/\\:*?"<>|')
+        safe_name = "".join(c for c in student_name if c not in '/\\:*?"<>|') or "unknown_student"
         gs_path = gradescope_dir / f"{safe_name}.json"
         gs_path.write_text(json.dumps(gs_data, indent=2), encoding="utf-8")
 

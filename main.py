@@ -8,9 +8,13 @@ Override settings via CLI flags or by editing the CONFIG dict below.
 """
 
 import argparse
+import copy
+import logging
 from pathlib import Path
 
-from utils import save_config
+from pydantic import ValidationError
+
+from utils import load_config, save_config, AppConfig
 
 # -----------------------------------------------------------------------------
 # Programmatic config — edit this to customize
@@ -19,8 +23,6 @@ CONFIG = {
     "assignment_name": "LabTest_2_S26",
     "model": "gpt-5-mini",
     "solution_notebook": "archive1/LabTest_2_S26_sol.ipynb",
-    "submissions_dir": "output/submissions",
-    "parsed_dir": "output/parsed",
     "output_dir": "output",
     "workers": 1,
     "max_prompt_tokens": 80_000,
@@ -106,9 +108,16 @@ Examples:
         type=Path,
         help="Override submissions directory",
     )
+    parser.add_argument(
+        "--no-write-config",
+        action="store_true",
+        help="Do not overwrite config.yaml (use existing file as-is)",
+    )
     args = parser.parse_args()
 
-    config = dict(CONFIG)
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+
+    config = copy.deepcopy(CONFIG)
 
     # Apply overrides
     if args.model:
@@ -118,8 +127,16 @@ Examples:
     if args.submissions_dir:
         config["submissions_dir"] = str(args.submissions_dir)
 
-    save_config(config, args.config)
-    print(f"Wrote config to {args.config}")
+    if not args.no_write_config:
+        save_config(config, args.config)
+        print(f"Wrote config to {args.config}")
+    config = load_config(args.config)  # Reload to resolve paths relative to config file
+
+    try:
+        AppConfig.model_validate(config)
+    except ValidationError as e:
+        print(f"Invalid config: {e}")
+        return 1
 
     if args.config_only:
         return 0

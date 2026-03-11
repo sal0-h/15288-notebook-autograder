@@ -1,6 +1,7 @@
 """Shared utilities for the AI Autograder pipeline."""
 
 import os
+import re
 from pathlib import Path
 
 import yaml
@@ -14,17 +15,41 @@ from pydantic import BaseModel, field_validator
 # ---------------------------------------------------------------------------
 
 def load_config(config_path: Path | None = None) -> dict:
-    """Load config.yaml."""
-    path = config_path or Path("config.yaml")
+    """Load config.yaml. Paths in config are resolved relative to the config file's directory.
+    All outputs are scoped under output_dir/{assignment_name}/ so grading multiple
+    assignments does not overwrite each other."""
+    path = (config_path or Path("config.yaml")).resolve()
     with open(path, "r", encoding="utf-8") as f:
-        return yaml.safe_load(f) or {}
+        cfg = yaml.safe_load(f) or {}
+    config_root = path.parent
+    for key in ("solution_notebook", "submissions_dir", "parsed_dir", "output_dir"):
+        if key in cfg and cfg[key] and not Path(cfg[key]).is_absolute():
+            cfg[key] = str((config_root / cfg[key]).resolve())
+
+    # Scope all outputs under output_dir/{assignment_name}/
+    base_output = Path(cfg.get("output_dir", "output"))
+    assignment_name = re.sub(r'[/\\:*?"<>|.]', "_", cfg.get("assignment_name", "default"))
+    assignment_root = base_output / assignment_name
+    cfg["output_dir"] = str(assignment_root)
+    cfg["submissions_dir"] = str(assignment_root / "submissions")
+    cfg["parsed_dir"] = str(assignment_root / "parsed")
+    return cfg
 
 
 def save_config(config: dict, config_path: Path | None = None) -> None:
-    """Write config dict to YAML file."""
+    """Write config dict to YAML file. Reverses assignment-scoped paths so the saved
+    config stores the base output_dir (not output_dir/assignment_name)."""
+    cfg = dict(config)
+    # Reverse assignment-scoping so we save base paths
+    if cfg.get("output_dir") and cfg.get("assignment_name"):
+        p = Path(cfg["output_dir"])
+        if p.name == cfg["assignment_name"]:
+            cfg["output_dir"] = str(p.parent)
+    cfg.pop("submissions_dir", None)
+    cfg.pop("parsed_dir", None)
     path = config_path or Path("config.yaml")
     with open(path, "w", encoding="utf-8") as f:
-        yaml.dump(config, f, default_flow_style=False, allow_unicode=True)
+        yaml.dump(cfg, f, default_flow_style=False, allow_unicode=True)
 
 
 # ---------------------------------------------------------------------------
@@ -48,6 +73,16 @@ class ParsingConfig(BaseModel):
     section_regex: str
     question_regex: str
     keep_images: bool = True
+
+    @field_validator("section_regex", "question_regex")
+    @classmethod
+    def validate_regex(cls, v: str) -> str:
+        import re
+        try:
+            re.compile(v)
+        except re.error as e:
+            raise ValueError(f"Invalid regex: {e}") from e
+        return v
 
 
 class GradingConfig(BaseModel):

@@ -2,10 +2,13 @@
 
 import argparse
 import json
+import logging
 import re
 from pathlib import Path
 
 from utils import load_config
+
+logger = logging.getLogger(__name__)
 
 
 def md_text(cell: dict) -> str:
@@ -154,12 +157,23 @@ def parse_notebook(nb_path: Path, config: dict) -> dict:
     return result
 
 
+def _sort_key_qid(qid: str) -> tuple[int, int] | tuple[float, str]:
+    """Sort key for question IDs. Standard X.Y format sorts numerically; others fall back to string."""
+    parts = qid.split(".")
+    if len(parts) == 2:
+        try:
+            return (int(parts[0]), int(parts[1]))
+        except ValueError:
+            pass
+    return (999_999, qid)  # non-standard IDs at end
+
+
 def get_all_question_ids(parsed: dict) -> list[str]:
     """Return sorted list of all question IDs (e.g. ['1.1', '1.2', '4.1'])."""
     ids: list[str] = []
     for sec_data in parsed.get("sections", {}).values():
         ids.extend(sec_data.get("questions", {}).keys())
-    return sorted(ids, key=lambda x: (int(x.split(".")[0]), int(x.split(".")[1])))
+    return sorted(ids, key=_sort_key_qid)
 
 
 def get_total_points(parsed: dict) -> int | float:
@@ -207,6 +221,7 @@ def parse_all_students(config: dict) -> tuple[dict | None, list[dict]]:
         try:
             parsed = parse_notebook(nb_path, config)
         except Exception as e:
+            logger.warning("Parse failed for %s: %s", student_name, e)
             report.append({
                 "student_name": student_name,
                 "status": "error",

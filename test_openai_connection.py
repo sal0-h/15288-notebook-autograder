@@ -1,26 +1,19 @@
 """Test script to verify OpenAI API connection and authentication."""
 
 import argparse
-import os
+from pathlib import Path
 
-from dotenv import load_dotenv
-from openai import OpenAI
+from utils import get_openai_client, load_config
 
 
 def test_llm_connection() -> str:
-    """Send a basic prompt to gpt-4o-mini and return the confirmation response."""
-    load_dotenv()
-    api_key = os.environ.get("key")
-
-    if not api_key:
-        raise ValueError(
-            "API key not found. Ensure your .env file contains 'key=your-api-key'"
-        )
-
-    client = OpenAI(api_key=api_key)
+    """Send a basic prompt and return the confirmation response."""
+    client = get_openai_client()
+    config = load_config(Path("config.yaml"))
+    model = config.get("model", "gpt-4o-mini")
 
     response = client.chat.completions.create(
-        model="gpt-4.1-mini",
+        model=model,
         messages=[
             {
                 "role": "system",
@@ -38,15 +31,7 @@ def test_llm_connection() -> str:
 
 def list_available_models() -> list[str]:
     """List models available to the current API key/project."""
-    load_dotenv()
-    api_key = os.environ.get("key")
-
-    if not api_key:
-        raise ValueError(
-            "API key not found. Ensure your .env file contains 'key=your-api-key'"
-        )
-
-    client = OpenAI(api_key=api_key)
+    client = get_openai_client()
     models = client.models.list()
     return [m.id for m in models.data]
 

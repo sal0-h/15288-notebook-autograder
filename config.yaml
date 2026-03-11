@@ -47,7 +47,6 @@ max_completion_tokens: 4096
 max_prompt_tokens: 80000
 model: gpt-5-mini
 output_dir: output
-parsed_dir: output/parsed
 parsing:
   keep_images: true
   question_regex: (?i)^\s*-\s*Q(\d+)\.(\d+)\s*.*?\[\s*(\d+)\s*PTS\s*\]
@@ -58,5 +57,4 @@ prompts:
     (e.g., "-1 (reason)"). Return valid JSON only, with one key per question (e.g.,
     "1.1", "4.2") mapping to {"score": N, "feedback": "..."}.'
 solution_notebook: archive1/LabTest_2_S26_sol.ipynb
-submissions_dir: output/submissions
 workers: 1

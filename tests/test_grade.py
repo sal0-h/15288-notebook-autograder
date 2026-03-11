@@ -1,13 +1,9 @@
 """Tests for grade.py: Pydantic validation, JSON parsing, and prompt building."""
 
 import json
-import sys
 from pathlib import Path
 
 import pytest
-
-# Ensure project root is on path
-sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from grade import (
     GradingResponse,
@@ -121,7 +117,8 @@ class TestParseLlmJson:
 class TestEstimateTokens:
     def test_text_only(self):
         tokens = estimate_tokens("a" * 350, 0)
-        assert tokens == 100  # 350 / 3.5
+        # With tiktoken: ~45; with chars/3.5 fallback: 100
+        assert tokens >= 40 and tokens <= 150
 
     def test_with_images(self):
         tokens = estimate_tokens("", 2)
