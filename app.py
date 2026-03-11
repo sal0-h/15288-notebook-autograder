@@ -2,8 +2,34 @@
 
 import asyncio
 import logging
+from contextlib import asynccontextmanager
 
 logger = logging.getLogger(__name__)
+
+
+def _setup_file_logging() -> None:
+    """Add a FileHandler to the root logger, writing to output_dir/autograder.log."""
+    root = logging.getLogger()
+    if any(
+        getattr(h, "baseFilename", "").endswith("autograder.log")
+        for h in root.handlers
+        if isinstance(h, logging.FileHandler)
+    ):
+        return
+    try:
+        cfg = load_config()
+        out_dir = Path(cfg.get("output_dir", "output"))
+    except Exception:
+        out_dir = Path("output")
+    out_dir.mkdir(parents=True, exist_ok=True)
+    log_path = out_dir / "autograder.log"
+    handler = logging.FileHandler(log_path, encoding="utf-8")
+    handler.setFormatter(
+        logging.Formatter("%(asctime)s %(levelname)s [%(name)s] %(message)s")
+    )
+    root.addHandler(handler)
+    root.setLevel(min(root.level, logging.INFO))
+    logger.info("Logging to %s", log_path)
 import io
 import json
 import tempfile
@@ -48,7 +74,13 @@ def _safe_path(base: Path, user_input: str) -> Path:
     return resolved
 
 
-app = FastAPI(title="AI Autograder")
+@asynccontextmanager
+async def _lifespan(app):
+    _setup_file_logging()
+    yield
+
+
+app = FastAPI(title="AI Autograder", lifespan=_lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:8000", "http://127.0.0.1:8000"],
