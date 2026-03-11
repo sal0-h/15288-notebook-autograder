@@ -7,14 +7,6 @@ from pathlib import Path
 import yaml
 from dotenv import load_dotenv
 
-# Use literal block style for multi-line strings so prompts stay readable in config
-def _yaml_str_representer(dumper, data):
-    if isinstance(data, str) and "\n" in data:
-        return dumper.represent_scalar("tag:yaml.org,2002:str", data, style="|")
-    return dumper.represent_scalar("tag:yaml.org,2002:str", data)
-
-
-yaml.add_representer(str, _yaml_str_representer)
 from openai import OpenAI
 from pydantic import BaseModel, field_validator, model_validator
 
@@ -141,15 +133,30 @@ def save_config(config: dict, config_path: Path | None = None) -> None:
     with open(assignment_config_path, "w", encoding="utf-8") as f:
         yaml.dump(assignment_cfg, f, default_flow_style=False, allow_unicode=True)
 
-    # Save root: pointer + prompts (prompts stay visible at project root)
+    # Save root: only update assignment_name and output_dir; leave prompts untouched
+    # to avoid reformatting the prompts block on every save.
     root_path = (config_path or Path("config.yaml")).resolve()
-    root_cfg = {
-        "assignment_name": assignment_name,
-        "output_dir": base_output,
-        "prompts": cfg.get("prompts", {}),
-    }
-    with open(root_path, "w", encoding="utf-8") as f:
-        yaml.dump(root_cfg, f, default_flow_style=False, allow_unicode=True)
+    root_content = root_path.read_text(encoding="utf-8") if root_path.exists() else ""
+    root_content = re.sub(
+        r"^assignment_name:\s*.+", f"assignment_name: {assignment_name}", root_content, count=1, flags=re.MULTILINE
+    )
+    root_content = re.sub(
+        r"^output_dir:\s*.+", f"output_dir: {base_output}", root_content, count=1, flags=re.MULTILINE
+    )
+    # If prompts changed (e.g. new rubric_system), do a full write.
+    existing = yaml.safe_load(root_content) if root_content.strip() else {}
+    existing_prompts = existing.get("prompts", {})
+    new_prompts = cfg.get("prompts", {})
+    if existing_prompts != new_prompts:
+        root_cfg = {
+            "assignment_name": assignment_name,
+            "output_dir": base_output,
+            "prompts": new_prompts,
+        }
+        with open(root_path, "w", encoding="utf-8") as f:
+            yaml.dump(root_cfg, f, default_flow_style=False, allow_unicode=True)
+    else:
+        root_path.write_text(root_content, encoding="utf-8")
 
 
 # ---------------------------------------------------------------------------
