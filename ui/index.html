@@ -72,6 +72,12 @@
                 <input type="range" id="setupWorkers" min="1" max="8" value="1" style="margin-left:8px;vertical-align:middle">
                 <span id="setupWorkersVal" style="margin-left:6px">1</span>
             </div>
+            <div class="mb-2">
+                <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+                    <input type="checkbox" id="setupRubricReviewCheck" checked>
+                    <strong>Run rubric review pass</strong> <span style="font-size:0.85rem;color:#64748b">(optional second LLM pass to soften hardcoded values)</span>
+                </label>
+            </div>
             <div class="mb-2" style="display:flex;gap:10px;flex-wrap:wrap">
                 <button class="btn" id="setupParseUploadBtn" disabled>Parse uploaded solution</button>
                 <button class="btn btn-secondary" id="setupParseExistingBtn">Parse existing solution</button>

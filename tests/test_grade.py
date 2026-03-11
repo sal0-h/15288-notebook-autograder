@@ -382,6 +382,6 @@ class TestGradeOnly:
         assert result["questions"]["2.1"]["score"] == 0.0
         assert "[skipped - not in grade_only]" in result["questions"]["2.1"]["feedback"]
 
-        # total_max includes all questions
-        assert result["total_max"] == 6.0  # 2+2+2
+        # total_max is sum of graded questions only (not skipped)
+        assert result["total_max"] == 2.0  # 1.1 only (2 pts)
         assert result["total_score"] == 2.0  # only 1.1 contributes

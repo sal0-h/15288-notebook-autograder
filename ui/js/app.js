@@ -56,6 +56,7 @@ async function loadSetupFromConfig() {
         } else {
             rubricModelSelect.value = "";
         }
+        document.getElementById("setupRubricReviewCheck").checked = setupConfig.rubric_review !== false;
         setupQuestionGroups = (setupConfig.grading || {}).question_groups || [];
         const gradeOnly = (setupConfig.grading || {}).grade_only;
         document.getElementById("setupGradeOnlyCheck").checked = !!gradeOnly && gradeOnly.length > 0;
@@ -231,6 +232,7 @@ document.getElementById("setupSaveBtn").onclick = async () => {
     setupConfig.assignment_name = document.getElementById("setupAssignmentName").value.trim() || setupConfig.assignment_name || "default";
     setupConfig.model = document.getElementById("setupModel").value;
     setupConfig.rubric_model = document.getElementById("setupRubricModel").value || "";
+    setupConfig.rubric_review = document.getElementById("setupRubricReviewCheck").checked;
     setupConfig.workers = parseInt(document.getElementById("setupWorkers").value, 10);
     setupConfig.grading = setupConfig.grading || {};
     setupConfig.grading.question_groups = setupQuestionGroups;

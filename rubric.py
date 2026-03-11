@@ -17,7 +17,23 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_RUBRIC_SYSTEM_PROMPT = """You are an expert instructor creating grading rubrics for student lab work.
 
-Given a question and its reference solution, produce structured grading criteria for that question.
+Given a question and its reference solution, produce structured grading criteria.
+
+CORE PRINCIPLE — QUESTION TEXT vs REFERENCE SOLUTION:
+The QUESTION TEXT defines what students must do. The REFERENCE SOLUTION is ONE correct
+implementation — it is NOT the specification. Apply this distinction carefully:
+
+1. EXPLICIT REQUIREMENTS: If the question text explicitly requires specific values, methods,
+   or parameters (e.g. "use K=5", "use 10-fold cross-validation"), the rubric MUST require them.
+2. OPEN-ENDED CHOICES: If the question is open-ended (e.g. "try four different values",
+   "choose a classifier"), use flexible wording — do NOT hardcode the reference solution's
+   specific choices. Example: "four different values" not "[1, 3, 4, inf]".
+3. DATA-DEPENDENT RESULTS: For values that depend on preprocessing or data (dataset size, n,
+   accuracy, iterations), use flexible wording like "correctly computed from their data" —
+   do NOT hardcode the reference's specific numbers.
+4. IMPLEMENTATION DETAILS: For incidental choices (random_state, variable names, print format),
+   use flexible wording like "any fixed random_state".
+
 Return valid JSON only, no prose outside JSON.
 
 For each question ID, output:
@@ -32,13 +48,37 @@ For each question ID, output:
 }
 
 Constraints:
-- The sum of all deduction values MUST equal the total points for that question exactly. This ensures a student who fails every criterion scores 0.
-- Group related minor deductions into a single item rather than creating many small sub-deductions. As a guideline, use at most 1 item per point (e.g. a 1-point question gets at most 1 item; a 4-point question gets at most 4 items). For 1-point questions, prefer a single binary item (correct/incorrect) rather than fractional sub-deductions.
-- Phrase each criterion as what the student must do (positive), not what causes deduction (negative). E.g. "Classifier uses weights='distance' and best_k" not "Did not set weights='distance'".
-- For enumerated parameters (e.g., K values, p values, test_size), use the exact values from the reference code. Do not infer or add values. The reference code is the source of truth. Example: if the code uses `for kfold in [3, 5, 15, 20]`, the rubric must say (3, 5, 15, 20)—not (3, 5, 10, 15, 20) even if the question mentions "compare with K=10" as a baseline.
-- Values that depend on dataset size (n, X.shape[0], training-set size, iterations): Do NOT hardcode the reference solution's numbers (e.g. "reporting 41789 for this dataset"). Students may have different n due to preprocessing. Use flexible wording such as "correctly computed from their n" or "accept if the formula is correct (e.g. 11*n for total iterations, n−1 for training examples per LOOCV fold)" so the grader can award points when students have different dataset sizes.
+- The sum of all deduction values MUST equal the total points for that question exactly.
+- Group related minor deductions into a single item. Use at most 1 item per point
+  (e.g. a 1-point question gets 1 item; a 4-point question gets at most 4 items).
+- Phrase each criterion as what the student must do (positive), not what causes deduction.
 
-Be specific and actionable. The criteria should help another grader (or an LLM) consistently score student submissions."""
+Be specific and actionable. The criteria should help another grader (or an LLM) consistently
+score student submissions."""
+
+
+# ---------------------------------------------------------------------------
+# Rubric review prompt (Idea #2) — optional second pass
+# ---------------------------------------------------------------------------
+
+RUBRIC_REVIEW_SYSTEM_PROMPT = """You are auditing auto-generated grading rubrics for fairness.
+
+For each rubric criterion below, determine whether the specific values or requirements it
+mentions are EXPLICITLY required by the question text, or were merely copied from the
+reference solution.
+
+Rules:
+- If the question text explicitly states a value (e.g. "use K=5"), keep the criterion as-is.
+- If the question text is open-ended (e.g. "try different values") and the criterion hardcodes
+  specific values from the reference solution, REWRITE the criterion description with flexible
+  wording (e.g. "uses at least 4 different values" instead of "uses values [1, 3, 4, inf]").
+- If the criterion tests a data-dependent result (dataset size, accuracy), ensure it says
+  "correctly computed from their data" rather than hardcoding a specific number.
+- Do NOT change criteria that are already flexible.
+- Do NOT change the number of items, point values, or deduction amounts — only rewrite
+  description text where needed.
+
+Return the revised rubrics in the EXACT same JSON structure as the input."""
 
 
 def _build_group_prompt(group: list[str], solution_parsed: dict) -> str:
@@ -130,6 +170,111 @@ def _generate_one_group(
     return (idx, group, rubrics_for_group)
 
 
+def _review_one_group(
+    args: tuple[list[str], dict, dict, str, str, int, OpenAI | None],
+) -> dict[str, dict]:
+    """Review rubrics for one group of questions against question text.
+
+    Returns revised rubrics with softened wording where the criterion
+    hardcoded reference-solution-specific values not required by the question.
+    """
+    group, rubrics, solution_parsed, review_prompt, model, max_tokens, client = args
+    if client is None:
+        client = get_openai_client()
+
+    parts: list[str] = []
+    group_rubrics: dict[str, dict] = {}
+    for qid in group:
+        if qid not in rubrics:
+            continue
+        sol_q = get_question_data(solution_parsed, qid)
+        q_md = (sol_q or {}).get("question_markdown", f"Question {qid}")
+        pts = rubrics[qid].get("points", 0)
+        parts.append(f"--- QUESTION {qid} ({pts} pts) ---")
+        parts.append(f"QUESTION TEXT:\n{q_md}\n")
+        parts.append(f"CURRENT RUBRIC:\n{json.dumps({qid: rubrics[qid]}, indent=2)}\n")
+        group_rubrics[qid] = rubrics[qid]
+
+    if not parts:
+        return {}
+
+    try:
+        temperature = temperature_for_model(model)
+        messages = [
+            {"role": "system", "content": review_prompt},
+            {"role": "user", "content": "\n".join(parts)},
+        ]
+        response = client.chat.completions.create(
+            model=model,
+            messages=messages,
+            temperature=temperature,
+            max_completion_tokens=max_tokens,
+            response_format={"type": "json_object"},
+        )
+        content = response.choices[0].message.content or "{}"
+        raw = parse_llm_json(content)
+
+        revised: dict[str, dict] = {}
+        for k, v in raw.items():
+            normalized = k.strip().lstrip("Qq").strip()
+            if normalized not in group_rubrics or not isinstance(v, dict):
+                continue
+            original = group_rubrics[normalized]
+            # Preserve original point values — don't let the review change them
+            v["points"] = original["points"]
+            # Preserve deduction amounts; only accept description rewrites
+            if "items" in v and "items" in original:
+                orig_items = original["items"]
+                new_items = v["items"]
+                if len(new_items) == len(orig_items):
+                    for oi, ni in zip(orig_items, new_items):
+                        ni["deduction"] = oi["deduction"]
+                else:
+                    # Item count changed — keep originals untouched
+                    v["items"] = orig_items
+            revised[normalized] = v
+        return revised
+    except Exception as e:
+        logger.warning("Rubric review failed for group %s: %s", group, e)
+        return {}
+
+
+def review_rubrics(
+    rubrics: dict[str, dict],
+    config: dict,
+    solution_parsed: dict,
+    client: OpenAI | None = None,
+) -> dict[str, dict]:
+    """Optional second pass: review generated rubrics against question text.
+
+    Softens criteria that hardcode reference-solution-specific values when
+    the question text doesn't explicitly require them.
+    """
+    if client is None:
+        client = get_openai_client()
+
+    model = config.get("rubric_model") or config.get("model") or DEFAULT_MODEL
+    max_tokens = config.get("max_completion_tokens", 4096)
+    grading_config = config.get("grading", {})
+    groups: list[list[str]] = grading_config.get("question_groups", [])
+    grade_only: list[str] | None = grading_config.get("grade_only")
+
+    if grade_only is not None:
+        grade_only_set = set(grade_only)
+        groups = [[q for q in group if q in grade_only_set] for group in groups]
+        groups = [g for g in groups if g]
+
+    revised = dict(rubrics)  # start with copy
+    for group in groups:
+        result = _review_one_group(
+            (group, rubrics, solution_parsed, RUBRIC_REVIEW_SYSTEM_PROMPT, model, max_tokens, client)
+        )
+        revised.update(result)
+
+    logger.info("Rubric review complete — %d questions revised", len(revised))
+    return revised
+
+
 def generate_rubrics(
     config: dict,
     client: OpenAI | None = None,
@@ -200,6 +345,11 @@ def generate_rubrics(
                     rubrics_snapshot = dict(rubrics)
                 if progress_callback:
                     progress_callback(idx + 1, total, group, rubrics_snapshot)
+
+    # Optional rubric review pass (Idea #2)
+    if config.get("rubric_review", False):
+        logger.info("Running rubric review pass...")
+        rubrics = review_rubrics(rubrics, config, solution_parsed, client)
 
     return rubrics
 

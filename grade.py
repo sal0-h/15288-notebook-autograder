@@ -318,11 +318,12 @@ def build_group_prompt(
         stu_text = "STUDENT SUBMISSION:\n<<<STUDENT_SUBMISSION>>>\n"
         stu_images: list[dict] = []
         if stu_q:
-            has_any = any([
-                stu_q.get("answer_code_concat"),
-                stu_q.get("answer_text_concat"),
-                stu_q.get("answer_markdown_concat"),
-            ])
+            has_code = bool(stu_q.get("answer_code_concat", "").strip())
+            has_output = bool(stu_q.get("answer_text_concat", "").strip())
+            has_images = any(cell.get("images") for cell in stu_q.get("answer_cells", []))
+            if not has_code and not has_output and not has_images:
+                stu_text += "WARNING: This question has NO code, NO output, and NO images — only markdown (if any). Score accordingly; do not award points for code/output that is not present.\n\n"
+            has_any = has_code or has_output or stu_q.get("answer_markdown_concat")
             if stu_q.get("answer_code_concat"):
                 stu_text += f"Code:\n{_sanitize_student_text(stu_q['answer_code_concat'])}\n\n"
             if stu_q.get("answer_text_concat"):
@@ -550,7 +551,9 @@ def grade_student(
     for qid in ungrouped:
         sol_q = get_question_data(solution_parsed, qid)
         max_pts = (sol_q or {}).get("points", 0)
-        total_max += max_pts
+        # When grade_only is set, skipped questions must not contribute to total_max (display X/28 not X/98)
+        if grade_only is None:
+            total_max += max_pts
         questions[qid] = {
             "score": 0.0,
             "max": max_pts,

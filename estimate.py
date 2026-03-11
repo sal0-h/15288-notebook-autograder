@@ -8,10 +8,11 @@ from grade import (
     build_group_prompt,
     estimate_tokens,
 )
-from rubric import _build_group_prompt
+from rubric import _build_group_prompt, RUBRIC_REVIEW_SYSTEM_PROMPT
 from utils import load_config, DEFAULT_MODEL
 
 RUBRIC_SYSTEM_LEN = 800  # approx chars
+RUBRIC_REVIEW_SYSTEM_LEN = 700  # approx chars for review pass
 OUTPUT_TOKENS_PER_GROUP = 500  # rubric output
 OUTPUT_TOKENS_PER_GRADE_GROUP = 1200  # grading output (LLM returns JSON with feedback per question; 400 was too low)
 
@@ -67,12 +68,30 @@ def estimate_rubrics(config: dict) -> dict:
         prompt_tokens += estimate_tokens(text, 0, model)
         completion_tokens += OUTPUT_TOKENS_PER_GROUP
 
+    # Rubric review pass (when enabled) adds one LLM call per group
+    rubric_review = config.get("rubric_review", False)
+    if rubric_review:
+        review_prompt = 0
+        for group in groups:
+            if not group:
+                continue
+            text = _build_group_prompt(group, solution_parsed)
+            # Review input: system + question text + rubric JSON (~output size)
+            review_prompt += (
+                estimate_tokens(" " * RUBRIC_REVIEW_SYSTEM_LEN, 0, model)
+                + estimate_tokens(text, 0, model)
+                + OUTPUT_TOKENS_PER_GROUP  # rubric JSON in input
+            )
+            completion_tokens += OUTPUT_TOKENS_PER_GROUP
+        prompt_tokens += review_prompt
+
     return {
         "prompt_tokens": prompt_tokens,
         "completion_tokens": completion_tokens,
         "cost_usd": round(_cost(prompt_tokens, completion_tokens, model), 4),
         "model": model,
         "num_groups": len([g for g in groups if g]),
+        "rubric_review": rubric_review,
     }
 
 
