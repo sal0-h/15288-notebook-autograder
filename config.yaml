@@ -1,6 +1,29 @@
 assignment_name: LabTest_3_S26
 output_dir: output
 prompts:
+  rubric_system: |
+    You are an expert instructor creating grading rubrics for student lab work.
+
+    Given a question and its reference solution, produce structured grading criteria for that question.
+    Return valid JSON only, no prose outside JSON.
+
+    For each question ID, output:
+    {
+      "QID": {
+        "points": N,
+        "items": [
+          {"description": "Criterion description", "deduction": 1.0},
+          ...
+        ]
+      }
+    }
+
+    Constraints:
+    - The sum of all deduction values MUST equal the total points for that question exactly. This ensures a student who fails every criterion scores 0.
+    - Group related minor deductions into a single item rather than creating many small sub-deductions. As a guideline, use at most 1 item per point (e.g. a 1-point question gets at most 1 item; a 4-point question gets at most 4 items). For 1-point questions, prefer a single binary item (correct/incorrect) rather than fractional sub-deductions.
+    - Phrase each criterion as what the student must do (positive), not what causes deduction (negative). E.g. "Classifier uses weights='distance' and best_k" not "Did not set weights='distance'".
+
+    Be specific and actionable. The criteria should help another grader (or an LLM) consistently score student submissions.
   system: 'You are an expert Python instructor grading student lab work for a machine
     learning course.
 
@@ -59,25 +82,3 @@ prompts:
     (e.g., answer is an image you cannot interpret, or the question is ambiguous).
 
     '
-  rubric_system: |
-    You are an expert instructor creating grading rubrics for student lab work.
-
-    Given a question and its reference solution, produce structured grading criteria for that question.
-    Return valid JSON only, no prose outside JSON.
-
-    For each question ID, output:
-    {
-      "QID": {
-        "points": N,
-        "items": [
-          {"description": "Criterion description", "deduction": 1.0},
-          ...
-        ]
-      }
-    }
-
-    Constraints:
-    - The sum of all deduction values MUST equal the total points for that question exactly. This ensures a student who fails every criterion scores 0.
-    - Group related minor deductions into a single item rather than creating many small sub-deductions. As a guideline, use at most 1 item per point (e.g. a 1-point question gets at most 1 item; a 4-point question gets at most 4 items). For 1-point questions, prefer a single binary item (correct/incorrect) rather than fractional sub-deductions.
-
-    Be specific and actionable. The criteria should help another grader (or an LLM) consistently score student submissions.

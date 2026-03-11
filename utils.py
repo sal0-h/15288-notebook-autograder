@@ -6,6 +6,15 @@ from pathlib import Path
 
 import yaml
 from dotenv import load_dotenv
+
+# Use literal block style for multi-line strings so prompts stay readable in config
+def _yaml_str_representer(dumper, data):
+    if isinstance(data, str) and "\n" in data:
+        return dumper.represent_scalar("tag:yaml.org,2002:str", data, style="|")
+    return dumper.represent_scalar("tag:yaml.org,2002:str", data)
+
+
+yaml.add_representer(str, _yaml_str_representer)
 from openai import OpenAI
 from pydantic import BaseModel, field_validator, model_validator
 

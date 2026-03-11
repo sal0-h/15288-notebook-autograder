@@ -32,6 +32,7 @@ For each question ID, output:
 Constraints:
 - The sum of all deduction values MUST equal the total points for that question exactly. This ensures a student who fails every criterion scores 0.
 - Group related minor deductions into a single item rather than creating many small sub-deductions. As a guideline, use at most 1 item per point (e.g. a 1-point question gets at most 1 item; a 4-point question gets at most 4 items). For 1-point questions, prefer a single binary item (correct/incorrect) rather than fractional sub-deductions.
+- Phrase each criterion as what the student must do (positive), not what causes deduction (negative). E.g. "Classifier uses weights='distance' and best_k" not "Did not set weights='distance'".
 
 Be specific and actionable. The criteria should help another grader (or an LLM) consistently score student submissions."""
 
