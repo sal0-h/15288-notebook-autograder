@@ -26,9 +26,9 @@ def load_config(config_path: Path | None = None) -> dict:
         if key in cfg and cfg[key] and not Path(cfg[key]).is_absolute():
             cfg[key] = str((config_root / cfg[key]).resolve())
 
-    # Scope all outputs under output_dir/{assignment_name}/
-    base_output = Path(cfg.get("output_dir", "output"))
-    assignment_name = re.sub(r'[/\\:*?"<>|.]', "_", cfg.get("assignment_name", "default"))
+    # Output dir is always output/{assignment_name}/ (automatic from assignment name)
+    assignment_name = re.sub(r'[/\\:*?"<>|.]', "_", cfg.get("assignment_name", "default")).strip("_") or "default"
+    base_output = (config_root / cfg.get("output_dir", "output")).resolve()
     assignment_root = base_output / assignment_name
     cfg["output_dir"] = str(assignment_root)
     cfg["submissions_dir"] = str(assignment_root / "submissions")
@@ -37,16 +37,12 @@ def load_config(config_path: Path | None = None) -> dict:
 
 
 def save_config(config: dict, config_path: Path | None = None) -> None:
-    """Write config dict to YAML file. Reverses assignment-scoped paths so the saved
-    config stores the base output_dir (not output_dir/assignment_name).
-    Validates config with AppConfig before persisting."""
+    """Write config dict to YAML file. Output dir is always saved as base 'output';
+    at runtime it is automatically scoped to output/{assignment_name}/."""
     AppConfig.model_validate(config)
     cfg = dict(config)
-    # Reverse assignment-scoping so we save base paths
-    if cfg.get("output_dir") and cfg.get("assignment_name"):
-        p = Path(cfg["output_dir"])
-        if p.name == cfg["assignment_name"]:
-            cfg["output_dir"] = str(p.parent)
+    # Always save base output dir; load_config derives output_dir from assignment_name
+    cfg["output_dir"] = "output"
     cfg.pop("submissions_dir", None)
     cfg.pop("parsed_dir", None)
     path = config_path or Path("config.yaml")

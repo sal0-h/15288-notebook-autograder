@@ -70,8 +70,16 @@ def generate_rubrics(config: dict, client: OpenAI | None = None) -> dict[str, di
         )
 
     solution_parsed = json.loads(solution_path.read_text(encoding="utf-8"))
-    groups: list[list[str]] = config.get("grading", {}).get("question_groups", [])
+    grading_config = config.get("grading", {})
+    groups: list[list[str]] = grading_config.get("question_groups", [])
+    grade_only: list[str] | None = grading_config.get("grade_only")
     model = config.get("model", "gpt-4o")
+
+    # When grade_only is set, only generate rubrics for those questions
+    if grade_only is not None:
+        grade_only_set = set(grade_only)
+        groups = [[q for q in group if q in grade_only_set] for group in groups]
+        groups = [g for g in groups if g]  # drop empty groups
 
     rubrics: dict[str, dict] = {}
 
@@ -90,7 +98,7 @@ def generate_rubrics(config: dict, client: OpenAI | None = None) -> dict[str, di
             response = client.chat.completions.create(
                 model=model,
                 messages=messages,
-                temperature=0,
+                temperature=1,
                 max_completion_tokens=max_completion_tokens,
                 response_format={"type": "json_object"},
             )

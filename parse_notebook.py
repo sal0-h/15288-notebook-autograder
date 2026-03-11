@@ -66,8 +66,9 @@ def parse_notebook(nb_path: Path, config: dict) -> dict:
         parsing.get("section_regex", r"(?m)^\s*#\s*<font[^>]*>\s*(\d+)\b"),
         re.IGNORECASE,
     )
+    # Dash before Q is optional: some handouts use "Q7.1" instead of "- Q7.1"
     question_re = re.compile(
-        parsing.get("question_regex", r"(?i)^\s*-\s*Q(\d+)\.(\d+)\s*.*?\[\s*(\d+)\s*PTS\s*\]"),
+        parsing.get("question_regex", r"(?i)^\s*(-\s*)?Q(\d+)\.(\d+)\s*.*?\[\s*(\d+)\s*PTS\s*\]"),
         re.MULTILINE,
     )
     keep_images = parsing.get("keep_images", True)
@@ -99,7 +100,7 @@ def parse_notebook(nb_path: Path, config: dict) -> dict:
 
         qm = match_question(cell)
         if qm:
-            sec_id, qnum, pts = qm.group(1), qm.group(2), int(qm.group(3))
+            sec_id, qnum, pts = qm.group(2), qm.group(3), int(qm.group(4))
             qid = f"{sec_id}.{qnum}"
 
             if current_section != sec_id:

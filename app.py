@@ -88,7 +88,7 @@ def _default_config() -> dict:
         "max_completion_tokens": 4_096,
         "parsing": {
             "section_regex": r"(?m)^\s*#\s*<font[^>]*>\s*(\d+)\b",
-            "question_regex": r"(?i)^\s*-\s*Q(\d+)\.(\d+)\s*.*?\[\s*(\d+)\s*PTS\s*\]",
+            "question_regex": r"(?i)^\s*(-\s*)?Q(\d+)\.(\d+)\s*.*?\[\s*(\d+)\s*PTS\s*\]",
             "keep_images": True,
         },
         "grading": {"question_groups": []},

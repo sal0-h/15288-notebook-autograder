@@ -403,7 +403,7 @@ def grade_group(
         response = client.chat.completions.create(
             model=model,
             messages=messages,
-            temperature=0,
+            temperature=1,
             max_completion_tokens=effective_max_completion,
             response_format={"type": "json_object"},
         )
