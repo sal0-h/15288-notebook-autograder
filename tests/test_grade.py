@@ -226,10 +226,21 @@ class TestBuildGroupPrompt:
         messages, _ = build_group_prompt(["4.1"], sol, stu, "You grade.")
         content = messages[1]["content"]
         all_text = " ".join(p["text"] for p in content if p["type"] == "text")
-        assert "REFERENCE SOLUTION" in all_text
+        # By default, reference solution is NOT included (rubric-only grading)
+        assert "REFERENCE SOLUTION" not in all_text
         assert "STUDENT SUBMISSION" in all_text
-        assert "solution_code" in all_text
         assert "student_code" in all_text
+
+    def test_include_reference_flag(self):
+        sol = self._minimal_parsed("4.1", "solution_code")
+        stu = self._minimal_parsed("4.1", "student_code")
+        messages, _ = build_group_prompt(
+            ["4.1"], sol, stu, "You grade.", include_reference=True
+        )
+        content = messages[1]["content"]
+        all_text = " ".join(p["text"] for p in content if p["type"] == "text")
+        assert "REFERENCE SOLUTION" in all_text
+        assert "solution_code" in all_text
 
     def test_no_answer_shows_placeholder(self):
         sol = self._minimal_parsed("4.1")

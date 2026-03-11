@@ -240,6 +240,7 @@ def build_group_prompt(
     max_prompt_tokens: int = 80_000,
     model: str | None = None,
     rubrics: dict | None = None,
+    include_reference: bool = False,
 ) -> tuple[list[dict], dict[str, int]]:
     """
     Build messages for one question group with inline image labeling.
@@ -283,36 +284,41 @@ def build_group_prompt(
             q_header += f"RUBRIC (deduct from {pts} pts):\n{rubric_lines}\nMinimum score: 0\n\n"
         content_parts.append({"type": "text", "text": q_header})
 
-        # Reference solution
-        ref_text = "REFERENCE SOLUTION:\n"
+        # Reference solution — only included when explicitly requested.
+        # By default the rubric (generated from the reference) is sufficient
+        # and including the raw reference anchors the grader to solution-specific
+        # values (dataset size, parameter choices) causing unfair deductions.
+        ref_text = ""
         ref_images: list[dict] = []
-        if sol_q:
-            if sol_q.get("answer_code_concat"):
-                ref_text += f"Code:\n{sol_q['answer_code_concat']}\n\n"
-            if sol_q.get("answer_text_concat"):
-                ref_text += f"Output:\n{truncate_output(sol_q['answer_text_concat'], max_output_chars)}\n\n"
-            if sol_q.get("answer_markdown_concat"):
-                ref_text += f"Answer:\n{sol_q['answer_markdown_concat']}\n\n"
-            for cell in sol_q.get("answer_cells", []):
-                for img in cell.get("images", []):
-                    ref_images.append(img)
-            if ref_images:
-                ref_text += f"[{len(ref_images)} reference plot(s) follow below]\n"
-        else:
-            ref_text += "(no reference)\n"
+        if include_reference:
+            ref_text = "REFERENCE SOLUTION:\n"
+            if sol_q:
+                if sol_q.get("answer_code_concat"):
+                    ref_text += f"Code:\n{sol_q['answer_code_concat']}\n\n"
+                if sol_q.get("answer_text_concat"):
+                    ref_text += f"Output:\n{truncate_output(sol_q['answer_text_concat'], max_output_chars)}\n\n"
+                if sol_q.get("answer_markdown_concat"):
+                    ref_text += f"Answer:\n{sol_q['answer_markdown_concat']}\n\n"
+                for cell in sol_q.get("answer_cells", []):
+                    for img in cell.get("images", []):
+                        ref_images.append(img)
+                if ref_images:
+                    ref_text += f"[{len(ref_images)} reference plot(s) follow below]\n"
+            else:
+                ref_text += "(no reference)\n"
 
-        content_parts.append({"type": "text", "text": ref_text})
-        for img in ref_images:
-            b64 = img.get("base64")
-            if not b64:
-                continue
-            if isinstance(b64, list):
-                b64 = "".join(b64)
-            mime = img.get("mime", "image/png")
-            content_parts.append({
-                "type": "image_url",
-                "image_url": {"url": f"data:{mime};base64,{b64}"},
-            })
+            content_parts.append({"type": "text", "text": ref_text})
+            for img in ref_images:
+                b64 = img.get("base64")
+                if not b64:
+                    continue
+                if isinstance(b64, list):
+                    b64 = "".join(b64)
+                mime = img.get("mime", "image/png")
+                content_parts.append({
+                    "type": "image_url",
+                    "image_url": {"url": f"data:{mime};base64,{b64}"},
+                })
 
         # Student submission (wrapped in delimiters for prompt injection mitigation)
         stu_text = "STUDENT SUBMISSION:\n<<<STUDENT_SUBMISSION>>>\n"
@@ -413,8 +419,10 @@ def grade_group(
     effective_max_completion = min(max_completion_tokens, max(2048, len(group) * 1024))
 
     rubrics = config.get("rubrics", {})
+    include_reference = config.get("include_reference_in_grading", False)
     messages, qid_to_max = build_group_prompt(
-        group, solution_parsed, student_parsed, system_prompt, max_prompt_tokens, model, rubrics=rubrics
+        group, solution_parsed, student_parsed, system_prompt, max_prompt_tokens, model,
+        rubrics=rubrics, include_reference=include_reference,
     )
 
     ctx = f" [{student_name}]" if student_name else ""

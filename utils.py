@@ -68,11 +68,13 @@ def load_config(config_path: Path | None = None) -> dict:
             with open(assignment_config_path, "r", encoding="utf-8") as f:
                 cfg = yaml.safe_load(f) or {}
             config_root = project_root  # paths in assignment config are relative to project root
-            # Prompts and rubric_review live in root; merge them in
+            # Prompts and root-only grading controls live in root; merge them in
             if root_cfg.get("prompts"):
                 cfg["prompts"] = root_cfg["prompts"]
             if "rubric_review" in root_cfg:
                 cfg["rubric_review"] = root_cfg["rubric_review"]
+            if "include_reference_in_grading" in root_cfg:
+                cfg["include_reference_in_grading"] = root_cfg["include_reference_in_grading"]
         else:
             cfg = dict(root_cfg)
             config_root = project_root
@@ -87,6 +89,8 @@ def load_config(config_path: Path | None = None) -> dict:
                 cfg["prompts"] = root_cfg["prompts"]
             if "rubric_review" in root_cfg:
                 cfg["rubric_review"] = root_cfg["rubric_review"]
+            if "include_reference_in_grading" in root_cfg:
+                cfg["include_reference_in_grading"] = root_cfg["include_reference_in_grading"]
         elif "prompts" not in cfg or not cfg.get("prompts"):
             cfg.setdefault("prompts", {"system": "You are an expert instructor. Return valid JSON only."})
 
@@ -131,8 +135,12 @@ def save_config(config: dict, config_path: Path | None = None) -> None:
             except ValueError:
                 pass
 
-    # Save full config to output/{assignment_name}/config.yaml (excluding prompts, rubric_review)
-    assignment_cfg = {k: v for k, v in cfg.items() if k not in ("prompts", "rubric_review")}
+    # Save full config to output/{assignment_name}/config.yaml
+    # Root-only controls are excluded to keep assignment config focused on runtime artifacts.
+    assignment_cfg = {
+        k: v for k, v in cfg.items()
+        if k not in ("prompts", "rubric_review", "include_reference_in_grading")
+    }
     assignment_config_path.parent.mkdir(parents=True, exist_ok=True)
     with open(assignment_config_path, "w", encoding="utf-8") as f:
         yaml.dump(assignment_cfg, f, default_flow_style=False, allow_unicode=True)
@@ -147,17 +155,24 @@ def save_config(config: dict, config_path: Path | None = None) -> None:
     root_content = re.sub(
         r"^output_dir:\s*.+", f"output_dir: {base_output}", root_content, count=1, flags=re.MULTILINE
     )
-    # If prompts or rubric_review changed, do a full write.
+    # If prompts or root-only controls changed, do a full write.
     existing = yaml.safe_load(root_content) if root_content.strip() else {}
     existing_prompts = existing.get("prompts", {})
     new_prompts = cfg.get("prompts", {})
     existing_review = existing.get("rubric_review", True)
     new_review = cfg.get("rubric_review", True)
-    if existing_prompts != new_prompts or existing_review != new_review:
+    existing_include_ref = existing.get("include_reference_in_grading", False)
+    new_include_ref = cfg.get("include_reference_in_grading", False)
+    if (
+        existing_prompts != new_prompts
+        or existing_review != new_review
+        or existing_include_ref != new_include_ref
+    ):
         root_cfg = {
             "assignment_name": assignment_name,
             "output_dir": base_output,
             "rubric_review": new_review,
+            "include_reference_in_grading": new_include_ref,
             "prompts": new_prompts,
         }
         with open(root_path, "w", encoding="utf-8") as f:
@@ -262,6 +277,7 @@ class AppConfig(BaseModel):
     model: str
     rubric_model: str = ""  # If set, used for rubric generation; else uses model
     rubric_review: bool = True  # If True, run optional second LLM pass to soften rubric wording
+    include_reference_in_grading: bool = False  # If True, include raw reference solution in grading prompt
     solution_notebook: str
     submissions_dir: str = "output/submissions"
     parsed_dir: str = "output/parsed"

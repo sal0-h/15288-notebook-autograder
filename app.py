@@ -121,6 +121,7 @@ def _default_config() -> dict:
         "assignment_name": "default",
         "model": DEFAULT_MODEL,
         "rubric_model": "",
+        "include_reference_in_grading": False,
         "solution_notebook": "",
         "output_dir": "output",
         "workers": 1,

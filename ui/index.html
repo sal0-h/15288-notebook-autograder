@@ -78,6 +78,12 @@
                     <strong>Run rubric review pass</strong> <span style="font-size:0.85rem;color:#64748b">(optional second LLM pass to soften hardcoded values)</span>
                 </label>
             </div>
+            <div class="mb-2">
+                <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+                    <input type="checkbox" id="setupIncludeReferenceCheck">
+                    <strong>Include reference solution during grading</strong> <span style="font-size:0.85rem;color:#64748b">(usually keep OFF to avoid anchoring on solution-specific values)</span>
+                </label>
+            </div>
             <div class="mb-2" style="display:flex;gap:10px;flex-wrap:wrap">
                 <button class="btn" id="setupParseUploadBtn" disabled>Parse uploaded solution</button>
                 <button class="btn btn-secondary" id="setupParseExistingBtn">Parse existing solution</button>

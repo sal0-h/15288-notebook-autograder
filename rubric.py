@@ -15,6 +15,34 @@ from utils import get_openai_client, load_config, temperature_for_model, DEFAULT
 
 logger = logging.getLogger(__name__)
 
+
+def _sanitize_llm_text(text: str) -> str:
+    """Normalize malformed control-char artifacts seen in some LLM outputs.
+
+    Some responses contain sequences like "\x00d7" instead of "×" or
+    stray control chars in words. We repair common patterns and drop
+    non-whitespace C0 control characters.
+    """
+    if not text:
+        return text
+
+    # Common malformed fragments observed in regenerated rubrics
+    replacements = {
+        "\x00d7": "x",   # multiplication symbol artifact
+        "\x00": "",      # strip stray nulls
+        "\x19": "'",     # apostrophe artifact
+        "\u2019": "'",   # normalize curly apostrophe to ASCII
+        "\u2212": "-",   # normalize minus sign to ASCII
+        "\u00d7": "x",   # normalize multiplication symbol to ASCII
+        "\u2248": "~",   # normalize approximately symbol to ASCII
+    }
+    for old, new in replacements.items():
+        text = text.replace(old, new)
+
+    # Drop remaining control chars except whitespace controls
+    text = "".join(c for c in text if ord(c) >= 32 or c in "\n\r\t")
+    return text
+
 DEFAULT_RUBRIC_SYSTEM_PROMPT = """You are an expert instructor creating grading rubrics for student lab work.
 
 Given a question and its reference solution, produce structured grading criteria.
@@ -149,7 +177,7 @@ def _generate_one_group(
                 for item in raw_items:
                     d = abs(float(item.get("deduction", 0)))
                     parsed_items.append({
-                        "description": str(item.get("description", "")).strip() or "[missing]",
+                        "description": _sanitize_llm_text(str(item.get("description", "")).strip()) or "[missing]",
                         "deduction": d,
                     })
                     total_deductions += d
@@ -228,6 +256,7 @@ def _review_one_group(
                 new_items = v["items"]
                 if len(new_items) == len(orig_items):
                     for oi, ni in zip(orig_items, new_items):
+                        ni["description"] = _sanitize_llm_text(str(ni.get("description", "")).strip()) or oi["description"]
                         ni["deduction"] = oi["deduction"]
                 else:
                     # Item count changed — keep originals untouched
