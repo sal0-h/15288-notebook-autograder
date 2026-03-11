@@ -16,15 +16,17 @@ _results_lock = threading.Lock()
 
 DEFAULT_UPLOAD_MB = 500
 
-from fastapi import FastAPI, File, UploadFile, HTTPException, Body
+from fastapi import FastAPI, File, Form, UploadFile, HTTPException, Body
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from sse_starlette.sse import EventSourceResponse
 
+import re
+
 from utils import load_config, save_config, AppConfig
 from gather import gather_submissions
-from parse_notebook import parse_all_students, get_all_question_ids
-from grade import grade_all_students
+from parse_notebook import parse_all_students, parse_notebook, get_all_question_ids
+from grade import grade_all_students, grade_student, validate_question_groups
 from export import export_all
 from rubric import generate_rubrics
 from calibrate import run_calibration
@@ -72,6 +74,122 @@ def api_put_config(config: dict = Body(...)):
         raise HTTPException(status_code=422, detail=f"Invalid config: {e}")
     save_config(config)
     return {"ok": True}
+
+
+def _default_config() -> dict:
+    """Return a minimal valid config for new assignments."""
+    return {
+        "assignment_name": "default",
+        "model": "gpt-4o-mini",
+        "solution_notebook": "",
+        "output_dir": "output",
+        "workers": 1,
+        "max_prompt_tokens": 80_000,
+        "max_completion_tokens": 4_096,
+        "parsing": {
+            "section_regex": r"(?m)^\s*#\s*<font[^>]*>\s*(\d+)\b",
+            "question_regex": r"(?i)^\s*-\s*Q(\d+)\.(\d+)\s*.*?\[\s*(\d+)\s*PTS\s*\]",
+            "keep_images": True,
+        },
+        "grading": {"question_groups": []},
+        "prompts": {
+            "system": "You are an expert Python instructor grading student lab work.\n\nReturn valid JSON only.",
+        },
+        "rubrics": {},
+    }
+
+
+@app.get("/config/default")
+def api_get_config_default():
+    """Return default config for new assignment setup."""
+    return _default_config()
+
+
+@app.post("/parse-solution-upload")
+async def api_parse_solution_upload(
+    assignment_name: str = Form(...),
+    solution_file: UploadFile = File(...),
+):
+    """
+    Upload solution notebook, save to {assignment_name}/{assignment_name}_sol.ipynb,
+    parse it, and return question IDs, sections, duplicate warnings, and suggested groups.
+    """
+    if not assignment_name or not assignment_name.strip():
+        raise HTTPException(status_code=400, detail="assignment_name is required")
+    safe_name = re.sub(r'[/\\:*?"<>|]', "_", assignment_name.strip()).strip("_")
+    if not safe_name:
+        raise HTTPException(status_code=400, detail="Invalid assignment name")
+    if not solution_file.filename or not solution_file.filename.lower().endswith(".ipynb"):
+        raise HTTPException(status_code=400, detail="Solution must be a .ipynb file")
+
+    content = await solution_file.read()
+    try:
+        json.loads(content)
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="Invalid notebook JSON")
+
+    save_dir = _PROJECT_ROOT / safe_name
+    save_dir.mkdir(parents=True, exist_ok=True)
+    solution_path = save_dir / f"{safe_name}_sol.ipynb"
+    solution_path.write_bytes(content)
+
+    config = load_config() if Path("config.yaml").exists() else _default_config()
+    config["assignment_name"] = safe_name
+    config["solution_notebook"] = str(solution_path.relative_to(_PROJECT_ROOT))
+    config["grading"] = config.get("grading", {})
+    config["grading"]["question_groups"] = config["grading"].get("question_groups", [])
+
+    parsed = parse_notebook(solution_path, config)
+    question_ids = get_all_question_ids(parsed)
+    duplicate_qids = parsed.get("duplicate_qids", [])
+
+    suggested_groups: list[list[str]] = []
+    for sec_id in sorted(parsed.get("sections", {}).keys(), key=lambda s: (int(s) if s.isdigit() else 999, s)):
+        sec_data = parsed["sections"][sec_id]
+        qids = sorted(sec_data.get("questions", {}).keys(), key=lambda q: (
+            int(q.split(".")[0]) if "." in q else 999,
+            int(q.split(".")[1]) if "." in q and q.split(".")[1].isdigit() else 0,
+        ))
+        if qids:
+            suggested_groups.append(qids)
+
+    return {
+        "question_ids": question_ids,
+        "sections": {k: list(v.get("questions", {}).keys()) for k, v in parsed.get("sections", {}).items()},
+        "duplicate_qids": duplicate_qids,
+        "suggested_groups": suggested_groups,
+        "solution_notebook": config["solution_notebook"],
+        "assignment_name": safe_name,
+    }
+
+
+@app.post("/parse-solution")
+async def api_parse_solution():
+    """Parse the current solution notebook from config (no upload). Returns question IDs and suggested groups."""
+    config = load_config()
+    solution_path = Path(config.get("solution_notebook", ""))
+    if not solution_path or not solution_path.is_absolute():
+        solution_path = _PROJECT_ROOT / config.get("solution_notebook", "")
+    if not solution_path.exists():
+        raise HTTPException(status_code=404, detail="Solution notebook not found. Upload one in Setup.")
+    parsed = parse_notebook(solution_path, config)
+    question_ids = get_all_question_ids(parsed)
+    duplicate_qids = parsed.get("duplicate_qids", [])
+    suggested_groups: list[list[str]] = []
+    for sec_id in sorted(parsed.get("sections", {}).keys(), key=lambda s: (int(s) if s.isdigit() else 999, s)):
+        sec_data = parsed["sections"][sec_id]
+        qids = sorted(sec_data.get("questions", {}).keys(), key=lambda q: (
+            int(q.split(".")[0]) if "." in q else 999,
+            int(q.split(".")[1]) if "." in q and q.split(".")[1].isdigit() else 0,
+        ))
+        if qids:
+            suggested_groups.append(qids)
+    return {
+        "question_ids": question_ids,
+        "sections": {k: list(v.get("questions", {}).keys()) for k, v in parsed.get("sections", {}).items()},
+        "duplicate_qids": duplicate_qids,
+        "suggested_groups": suggested_groups,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -145,11 +263,13 @@ async def api_parse():
             preview = json.loads(preview_path.read_text(encoding="utf-8"))
 
     solution_questions = get_all_question_ids(solution_parsed) if solution_parsed else []
+    solution_duplicate_qids = solution_parsed.get("duplicate_qids", []) if solution_parsed else []
 
     return {
         "report": report,
         "preview": preview,
         "solution_questions": solution_questions,
+        "solution_duplicate_qids": solution_duplicate_qids,
     }
 
 
@@ -256,6 +376,54 @@ async def api_grade():
         if not thread_started:
             _grading_lock.release()
         raise
+
+
+@app.post("/grade/{student_name:path}")
+async def api_grade_one(student_name: str):
+    """Re-grade a single student. Updates graded_results.json."""
+    student_name = unquote(student_name)
+    if "/" in student_name or "\\" in student_name or ".." in student_name:
+        raise HTTPException(status_code=400, detail="Invalid student name")
+    config = load_config()
+    output_dir = Path(config.get("output_dir", "output"))
+    parsed_dir = Path(config.get("parsed_dir", "output/parsed"))
+    solution_path = output_dir / "solution_parsed.json"
+    student_path = parsed_dir / f"{student_name}.json"
+    if not solution_path.exists():
+        raise HTTPException(status_code=404, detail="Run parse step first")
+    if not student_path.exists():
+        raise HTTPException(status_code=404, detail=f"Parsed notebook not found: {student_name}")
+
+    solution_parsed = json.loads(solution_path.read_text(encoding="utf-8"))
+    student_parsed = json.loads(student_path.read_text(encoding="utf-8"))
+    student_parsed["student_name"] = student_name
+
+    grading_config = config.get("grading", {})
+    groups = grading_config.get("question_groups", [])
+    grade_only = grading_config.get("grade_only")
+    if grade_only:
+        groups = [[q for q in g if q in set(grade_only)] for g in groups]
+        groups = [g for g in groups if g]
+    ungrouped = validate_question_groups(groups, solution_parsed)
+
+    result = await asyncio.to_thread(
+        grade_student, student_parsed, solution_parsed, config, None, ungrouped
+    )
+
+    out_path = output_dir / "graded_results.json"
+    with _results_lock:
+        raw = json.loads(out_path.read_text(encoding="utf-8")) if out_path.exists() else []
+        results = raw if isinstance(raw, list) else []
+        found = False
+        for i, r in enumerate(results):
+            if isinstance(r, dict) and r.get("student_name") == student_name:
+                results[i] = result
+                found = True
+                break
+        if not found:
+            results.append(result)
+        out_path.write_text(json.dumps(results, indent=2), encoding="utf-8")
+    return {"ok": True, "result": result}
 
 
 # ---------------------------------------------------------------------------

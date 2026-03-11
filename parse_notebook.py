@@ -82,6 +82,7 @@ def parse_notebook(nb_path: Path, config: dict) -> dict:
 
     result: dict = {"sections": {}, "source_file": str(nb_path)}
     current_section: str | None = None
+    seen_qids: dict[str, int] = {}  # qid -> cell index (for duplicate detection)
 
     i = 0
     while i < len(cells):
@@ -147,6 +148,12 @@ def parse_notebook(nb_path: Path, config: dict) -> dict:
             q_obj["answer_code_concat"] = "\n\n".join(code_parts).strip()
             q_obj["answer_text_concat"] = "\n\n".join(text_parts).strip()
             q_obj["answer_markdown_concat"] = "\n\n".join(markdown_parts).strip()
+
+            if qid in seen_qids:
+                dupes = result.setdefault("duplicate_qids", [])
+                if qid not in dupes:
+                    dupes.append(qid)
+            seen_qids[qid] = i
 
             result["sections"][sec_id]["questions"][qid] = q_obj
             i = j
