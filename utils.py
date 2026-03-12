@@ -81,6 +81,76 @@ def _is_assignment_config(path: Path) -> bool:
     return len(parts) >= 3 and "output" in parts and path.name == "config.yaml"
 
 
+def _read_yaml_dict(path: Path) -> dict:
+    if not path.exists():
+        return {}
+    with open(path, "r", encoding="utf-8") as f:
+        return yaml.safe_load(f) or {}
+
+
+def _merge_root_controls(
+    cfg: dict,
+    root_cfg: dict,
+    *,
+    ensure_default_prompts: bool = False,
+) -> dict:
+    merged = dict(cfg)
+    if root_cfg.get("prompts"):
+        merged["prompts"] = root_cfg["prompts"]
+    elif ensure_default_prompts and not merged.get("prompts"):
+        merged["prompts"] = {
+            "system": "You are an expert instructor. Return valid JSON only."
+        }
+    if "rubric_review" in root_cfg:
+        merged["rubric_review"] = root_cfg["rubric_review"]
+    if "include_reference_in_grading" in root_cfg:
+        merged["include_reference_in_grading"] = root_cfg[
+            "include_reference_in_grading"
+        ]
+    return merged
+
+
+def _load_explicit_assignment_config(
+    assignment_config_path: Path,
+) -> tuple[dict, Path, Path, str, str]:
+    project_root = assignment_config_path.parent.parent.parent
+    cfg = _read_yaml_dict(assignment_config_path)
+    assignment_name = sanitize_assignment_name(cfg.get("assignment_name", "default"))
+    base_output = cfg.get("output_dir", "output")
+    if Path(base_output).is_absolute():
+        base_output = "output"
+    root_cfg = _read_yaml_dict(project_root / "config.yaml")
+    cfg = _merge_root_controls(cfg, root_cfg, ensure_default_prompts=True)
+    return cfg, project_root, project_root, assignment_name, base_output
+
+
+def _load_root_or_assignment_config(
+    root_path: Path,
+) -> tuple[dict, Path, Path, str, str]:
+    project_root = root_path.parent
+    root_cfg = _read_yaml_dict(root_path)
+    assignment_name = sanitize_assignment_name(root_cfg.get("assignment_name", "default"))
+    base_output = root_cfg.get("output_dir", "output")
+    assignment_config_path = project_root / base_output / assignment_name / "config.yaml"
+
+    if assignment_config_path.exists():
+        cfg = _read_yaml_dict(assignment_config_path)
+        cfg = _merge_root_controls(cfg, root_cfg)
+    else:
+        cfg = dict(root_cfg)
+
+    return cfg, project_root, project_root, assignment_name, base_output
+
+
+def _resolve_config_paths(cfg: dict, config_root: Path) -> dict:
+    resolved = dict(cfg)
+    for key in ("solution_notebook", "submissions_dir", "parsed_dir", "output_dir"):
+        value = resolved.get(key)
+        if value and not Path(value).is_absolute():
+            resolved[key] = str((config_root / value).resolve())
+    return resolved
+
+
 def load_config(config_path: Path | None = None) -> dict:
     """Load config. Uses output-first layout when available:
     - Root config.yaml: minimal pointer (assignment_name, output_dir)
@@ -89,84 +159,16 @@ def load_config(config_path: Path | None = None) -> dict:
     """
     root_path = (config_path or Path("config.yaml")).resolve()
 
-    # If explicitly given an assignment config path (e.g. --config output/X/config.yaml), load it directly
-    if (
-        config_path is not None
-        and _is_assignment_config(root_path)
-        and root_path.exists()
-    ):
-        project_root = root_path.parent.parent.parent  # output/X/config.yaml -> project
-        with open(root_path, "r", encoding="utf-8") as f:
-            cfg = yaml.safe_load(f) or {}
-        config_root = project_root
-        assignment_name = sanitize_assignment_name(
-            cfg.get("assignment_name", "default")
+    if config_path is not None and _is_assignment_config(root_path) and root_path.exists():
+        cfg, project_root, config_root, assignment_name, base_output = (
+            _load_explicit_assignment_config(root_path)
         )
-        base_output = cfg.get("output_dir", "output")
-        if Path(base_output).is_absolute():
-            base_output = "output"
     else:
-        project_root = root_path.parent
-
-        # Load root config (pointer or legacy full config)
-        if root_path.exists():
-            with open(root_path, "r", encoding="utf-8") as f:
-                root_cfg = yaml.safe_load(f) or {}
-        else:
-            root_cfg = {}
-
-        assignment_name = sanitize_assignment_name(
-            root_cfg.get("assignment_name", "default")
-        )
-        base_output = root_cfg.get("output_dir", "output")
-        assignment_config_path = (
-            project_root / base_output / assignment_name / "config.yaml"
+        cfg, project_root, config_root, assignment_name, base_output = (
+            _load_root_or_assignment_config(root_path)
         )
 
-        # Prefer assignment-specific config if it exists
-        if assignment_config_path.exists():
-            with open(assignment_config_path, "r", encoding="utf-8") as f:
-                cfg = yaml.safe_load(f) or {}
-            config_root = (
-                project_root  # paths in assignment config are relative to project root
-            )
-            # Prompts and root-only grading controls live in root; merge them in
-            if root_cfg.get("prompts"):
-                cfg["prompts"] = root_cfg["prompts"]
-            if "rubric_review" in root_cfg:
-                cfg["rubric_review"] = root_cfg["rubric_review"]
-            if "include_reference_in_grading" in root_cfg:
-                cfg["include_reference_in_grading"] = root_cfg[
-                    "include_reference_in_grading"
-                ]
-        else:
-            cfg = dict(root_cfg)
-            config_root = project_root
-
-    # When loading from explicit assignment config path, merge prompts from root
-    if config_path is not None and _is_assignment_config(root_path):
-        root_config_path = project_root / "config.yaml"
-        if root_config_path.exists():
-            with open(root_config_path, "r", encoding="utf-8") as f:
-                root_cfg = yaml.safe_load(f) or {}
-            if root_cfg.get("prompts"):
-                cfg["prompts"] = root_cfg["prompts"]
-            if "rubric_review" in root_cfg:
-                cfg["rubric_review"] = root_cfg["rubric_review"]
-            if "include_reference_in_grading" in root_cfg:
-                cfg["include_reference_in_grading"] = root_cfg[
-                    "include_reference_in_grading"
-                ]
-        elif "prompts" not in cfg or not cfg.get("prompts"):
-            cfg.setdefault(
-                "prompts",
-                {"system": "You are an expert instructor. Return valid JSON only."},
-            )
-
-    # Resolve paths relative to project root
-    for key in ("solution_notebook", "submissions_dir", "parsed_dir", "output_dir"):
-        if key in cfg and cfg[key] and not Path(cfg[key]).is_absolute():
-            cfg[key] = str((config_root / cfg[key]).resolve())
+    cfg = _resolve_config_paths(cfg, config_root)
 
     # Output dir is always output/{assignment_name}/
     assignment_root = (project_root / base_output / assignment_name).resolve()

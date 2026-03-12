@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+from collections.abc import Callable
 from contextlib import asynccontextmanager
 
 logger = logging.getLogger(__name__)
@@ -94,6 +95,50 @@ def _build_suggested_groups(parsed: dict) -> list[list[str]]:
         if qids:
             suggested_groups.append(qids)
     return suggested_groups
+
+
+def _error_event(error: str) -> dict:
+    return {"status": "error", "error": error}
+
+
+async def _threaded_sse_response(
+    lock: threading.Lock,
+    worker: Callable[[Callable[[dict], None]], None],
+    on_event: Callable[[dict], None] | None = None,
+) -> EventSourceResponse:
+    queue: asyncio.Queue = asyncio.Queue()
+    loop = asyncio.get_running_loop()
+
+    def emit(event: dict) -> None:
+        loop.call_soon_threadsafe(queue.put_nowait, event)
+
+    def run_worker() -> None:
+        try:
+            worker(emit)
+        finally:
+            loop.call_soon_threadsafe(queue.put_nowait, None)
+            lock.release()
+
+    try:
+        threading.Thread(target=run_worker, daemon=True).start()
+    except Exception:
+        lock.release()
+        raise
+
+    async def event_generator():
+        try:
+            while True:
+                evt = await queue.get()
+                if evt is None:
+                    yield {"event": "done", "data": "{}"}
+                    return
+                if on_event is not None:
+                    on_event(evt)
+                yield {"event": "progress", "data": json.dumps(evt)}
+        except GeneratorExit:
+            pass
+
+    return EventSourceResponse(event_generator())
 
 
 @asynccontextmanager
@@ -396,71 +441,35 @@ async def api_generate_rubrics_stream(
             status_code=409,
             detail="Rubric generation already in progress. Wait for it to finish or refresh.",
         )
-    thread_started = False
+    config = load_config()
     group_indices = _parse_group_indices_param(groups)
-    try:
-        config = load_config()
-        queue: asyncio.Queue = asyncio.Queue()
-        loop = asyncio.get_running_loop()
 
-        def _rubric_thread():
-            try:
-
-                def progress_cb(
-                    idx: int, total: int, group: list, rubrics_so_far: dict
-                ):
-                    # If any qid from this group is in rubrics_so_far, group is done; else starting
-                    is_done = any(q in rubrics_so_far for q in group)
-                    loop.call_soon_threadsafe(
-                        queue.put_nowait,
-                        {
-                            "status": "progress",
-                            "current": idx,
-                            "total": total,
-                            "group": group,
-                            "done": is_done,
-                        },
-                    )
-
-                rubrics = generate_rubrics(
-                    config,
-                    progress_callback=progress_cb,
-                    group_indices=group_indices,
+    def worker(emit: Callable[[dict], None]) -> None:
+        try:
+            def progress_cb(idx: int, total: int, group: list, rubrics_so_far: dict):
+                is_done = any(q in rubrics_so_far for q in group)
+                emit(
+                    {
+                        "status": "progress",
+                        "current": idx,
+                        "total": total,
+                        "group": group,
+                        "done": is_done,
+                    }
                 )
-                config["rubrics"] = rubrics
-                save_config(config)
-                loop.call_soon_threadsafe(
-                    queue.put_nowait,
-                    {"status": "done", "rubrics": rubrics},
-                )
-            except Exception as e:
-                loop.call_soon_threadsafe(
-                    queue.put_nowait,
-                    {"status": "error", "error": str(e)},
-                )
-            finally:
-                loop.call_soon_threadsafe(queue.put_nowait, None)
-                _rubric_lock.release()
 
-        threading.Thread(target=_rubric_thread, daemon=True).start()
-        thread_started = True
+            rubrics = generate_rubrics(
+                config,
+                progress_callback=progress_cb,
+                group_indices=group_indices,
+            )
+            config["rubrics"] = rubrics
+            save_config(config)
+            emit({"status": "done", "rubrics": rubrics})
+        except Exception as e:
+            emit(_error_event(str(e)))
 
-        async def event_generator():
-            try:
-                while True:
-                    evt = await queue.get()
-                    if evt is None:
-                        yield {"event": "done", "data": "{}"}
-                        return
-                    yield {"event": "progress", "data": json.dumps(evt)}
-            except GeneratorExit:
-                pass
-
-        return EventSourceResponse(event_generator())
-    except Exception:
-        if not thread_started:
-            _rubric_lock.release()
-        raise
+    return await _threaded_sse_response(_rubric_lock, worker)
 
 
 @app.post("/generate-rubrics")
@@ -581,53 +590,27 @@ async def api_grade():
             status_code=409,
             detail="Grading already in progress. Wait for it to finish or refresh.",
         )
-    thread_started = False
-    try:
-        config = load_config()
-        queue: asyncio.Queue = asyncio.Queue()
-        loop = asyncio.get_running_loop()
+    config = load_config()
 
-        def _grade_thread():
-            try:
-                for evt in grade_all_students(config, results_lock=_results_lock):
-                    loop.call_soon_threadsafe(queue.put_nowait, evt)
-            except Exception as e:
-                loop.call_soon_threadsafe(
-                    queue.put_nowait,
-                    {"student": "", "status": "error", "result": None, "error": str(e)},
-                )
-            finally:
-                loop.call_soon_threadsafe(queue.put_nowait, None)
-                _grading_lock.release()
+    def worker(emit: Callable[[dict], None]) -> None:
+        try:
+            for evt in grade_all_students(config, results_lock=_results_lock):
+                emit(evt)
+        except Exception as e:
+            emit({"student": "", "status": "error", "result": None, "error": str(e)})
 
-        threading.Thread(target=_grade_thread, daemon=True).start()
-        thread_started = True
+    def on_event(evt: dict) -> None:
+        if evt.get("status") == "usage":
+            u = evt.get("usage", {})
+            cost = evt.get("cost_usd", 0)
+            logger.info(
+                "Grading token usage: %s in / %s out — ~$%.4f",
+                u.get("prompt_tokens", 0),
+                u.get("completion_tokens", 0),
+                cost,
+            )
 
-        async def event_generator():
-            try:
-                while True:
-                    evt = await queue.get()
-                    if evt is None:
-                        yield {"event": "done", "data": "{}"}
-                        return
-                    if evt.get("status") == "usage":
-                        u = evt.get("usage", {})
-                        cost = evt.get("cost_usd", 0)
-                        logger.info(
-                            "Grading token usage: %s in / %s out — ~$%.4f",
-                            u.get("prompt_tokens", 0),
-                            u.get("completion_tokens", 0),
-                            cost,
-                        )
-                    yield {"event": "progress", "data": json.dumps(evt)}
-            except GeneratorExit:
-                pass  # client disconnected; lock released in thread
-
-        return EventSourceResponse(event_generator())
-    except Exception:
-        if not thread_started:
-            _grading_lock.release()
-        raise
+    return await _threaded_sse_response(_grading_lock, worker, on_event=on_event)
 
 
 @app.post("/grade/{student_name:path}")
