@@ -19,7 +19,9 @@ def run_calibration(config: dict) -> list[dict[str, str | float]]:
     graded_path = output_dir / "graded_results.json"
 
     if not graded_path.exists():
-        raise FileNotFoundError(f"Graded results not found: {graded_path}. Run grading first.")
+        raise FileNotFoundError(
+            f"Graded results not found: {graded_path}. Run grading first."
+        )
 
     results = json.loads(graded_path.read_text(encoding="utf-8"))
     if not results:
@@ -51,16 +53,18 @@ def run_calibration(config: dict) -> list[dict[str, str | float]]:
             z = (score - mean) / std
             if abs(z) > 2:
                 flag_reason = "low" if z < 0 else "high"
-                flagged.append({
-                    "student_name": student_name,
-                    "qid": qid,
-                    "score": score,
-                    "max": max_pts,
-                    "mean": round(mean, 2),
-                    "std": round(std, 2),
-                    "z_score": round(z, 2),
-                    "flag_reason": flag_reason,
-                })
+                flagged.append(
+                    {
+                        "student_name": student_name,
+                        "qid": qid,
+                        "score": score,
+                        "max": max_pts,
+                        "mean": round(mean, 2),
+                        "std": round(std, 2),
+                        "z_score": round(z, 2),
+                        "flag_reason": flag_reason,
+                    }
+                )
 
     # Save report
     report_path = output_dir / "calibration_report.json"
@@ -72,7 +76,9 @@ def run_calibration(config: dict) -> list[dict[str, str | float]]:
 def main():
     import argparse
 
-    parser = argparse.ArgumentParser(description="Run calibration (outlier detection) on graded results")
+    parser = argparse.ArgumentParser(
+        description="Run calibration (outlier detection) on graded results"
+    )
     parser.add_argument("--config", type=Path, default=Path("config.yaml"))
     args = parser.parse_args()
 
@@ -80,7 +86,9 @@ def main():
     flagged = run_calibration(config)
     print(f"Calibration: {len(flagged)} outlier(s) flagged")
     for f in flagged[:20]:
-        print(f"  {f['student_name']} Q{f['qid']}: score={f['score']}, mean={f['mean']}±{f['std']}, z={f['z_score']}")
+        print(
+            f"  {f['student_name']} Q{f['qid']}: score={f['score']}, mean={f['mean']}±{f['std']}, z={f['z_score']}"
+        )
     if len(flagged) > 20:
         print(f"  ... and {len(flagged) - 20} more")
 

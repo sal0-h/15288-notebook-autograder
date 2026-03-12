@@ -32,6 +32,8 @@ def _setup_file_logging() -> None:
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("httpcore").setLevel(logging.WARNING)
     logger.info("Logging to %s", log_path)
+
+
 import io
 import json
 import tempfile
@@ -94,6 +96,7 @@ app.add_middleware(
 # ---------------------------------------------------------------------------
 # Config endpoints
 # ---------------------------------------------------------------------------
+
 
 @app.get("/config")
 def api_get_config():
@@ -160,7 +163,9 @@ async def api_parse_solution_upload(
     safe_name = re.sub(r'[/\\:*?"<>|]', "_", assignment_name.strip()).strip("_")
     if not safe_name:
         raise HTTPException(status_code=400, detail="Invalid assignment name")
-    if not solution_file.filename or not solution_file.filename.lower().endswith(".ipynb"):
+    if not solution_file.filename or not solution_file.filename.lower().endswith(
+        ".ipynb"
+    ):
         raise HTTPException(status_code=400, detail="Solution must be a .ipynb file")
 
     content = await solution_file.read()
@@ -185,18 +190,27 @@ async def api_parse_solution_upload(
     duplicate_qids = parsed.get("duplicate_qids", [])
 
     suggested_groups: list[list[str]] = []
-    for sec_id in sorted(parsed.get("sections", {}).keys(), key=lambda s: (int(s) if s.isdigit() else 999, s)):
+    for sec_id in sorted(
+        parsed.get("sections", {}).keys(),
+        key=lambda s: (int(s) if s.isdigit() else 999, s),
+    ):
         sec_data = parsed["sections"][sec_id]
-        qids = sorted(sec_data.get("questions", {}).keys(), key=lambda q: (
-            int(q.split(".")[0]) if "." in q else 999,
-            int(q.split(".")[1]) if "." in q and q.split(".")[1].isdigit() else 0,
-        ))
+        qids = sorted(
+            sec_data.get("questions", {}).keys(),
+            key=lambda q: (
+                int(q.split(".")[0]) if "." in q else 999,
+                int(q.split(".")[1]) if "." in q and q.split(".")[1].isdigit() else 0,
+            ),
+        )
         if qids:
             suggested_groups.append(qids)
 
     return {
         "question_ids": question_ids,
-        "sections": {k: list(v.get("questions", {}).keys()) for k, v in parsed.get("sections", {}).items()},
+        "sections": {
+            k: list(v.get("questions", {}).keys())
+            for k, v in parsed.get("sections", {}).items()
+        },
         "duplicate_qids": duplicate_qids,
         "suggested_groups": suggested_groups,
         "solution_notebook": config["solution_notebook"],
@@ -212,22 +226,33 @@ async def api_parse_solution():
     if not solution_path or not solution_path.is_absolute():
         solution_path = _PROJECT_ROOT / config.get("solution_notebook", "")
     if not solution_path.exists():
-        raise HTTPException(status_code=404, detail="Solution notebook not found. Upload one in Setup.")
+        raise HTTPException(
+            status_code=404, detail="Solution notebook not found. Upload one in Setup."
+        )
     parsed = parse_notebook(solution_path, config)
     question_ids = get_all_question_ids(parsed)
     duplicate_qids = parsed.get("duplicate_qids", [])
     suggested_groups: list[list[str]] = []
-    for sec_id in sorted(parsed.get("sections", {}).keys(), key=lambda s: (int(s) if s.isdigit() else 999, s)):
+    for sec_id in sorted(
+        parsed.get("sections", {}).keys(),
+        key=lambda s: (int(s) if s.isdigit() else 999, s),
+    ):
         sec_data = parsed["sections"][sec_id]
-        qids = sorted(sec_data.get("questions", {}).keys(), key=lambda q: (
-            int(q.split(".")[0]) if "." in q else 999,
-            int(q.split(".")[1]) if "." in q and q.split(".")[1].isdigit() else 0,
-        ))
+        qids = sorted(
+            sec_data.get("questions", {}).keys(),
+            key=lambda q: (
+                int(q.split(".")[0]) if "." in q else 999,
+                int(q.split(".")[1]) if "." in q and q.split(".")[1].isdigit() else 0,
+            ),
+        )
         if qids:
             suggested_groups.append(qids)
     return {
         "question_ids": question_ids,
-        "sections": {k: list(v.get("questions", {}).keys()) for k, v in parsed.get("sections", {}).items()},
+        "sections": {
+            k: list(v.get("questions", {}).keys())
+            for k, v in parsed.get("sections", {}).items()
+        },
         "duplicate_qids": duplicate_qids,
         "suggested_groups": suggested_groups,
     }
@@ -236,6 +261,7 @@ async def api_parse_solution():
 # ---------------------------------------------------------------------------
 # Pipeline endpoints
 # ---------------------------------------------------------------------------
+
 
 @app.post("/gather")
 async def api_gather(zip_file: UploadFile = File(...)):
@@ -303,8 +329,12 @@ async def api_parse():
         if preview_path.exists():
             preview = json.loads(preview_path.read_text(encoding="utf-8"))
 
-    solution_questions = get_all_question_ids(solution_parsed) if solution_parsed else []
-    solution_duplicate_qids = solution_parsed.get("duplicate_qids", []) if solution_parsed else []
+    solution_questions = (
+        get_all_question_ids(solution_parsed) if solution_parsed else []
+    )
+    solution_duplicate_qids = (
+        solution_parsed.get("duplicate_qids", []) if solution_parsed else []
+    )
 
     return {
         "report": report,
@@ -317,6 +347,7 @@ async def api_parse():
 # ---------------------------------------------------------------------------
 # Rubric endpoints
 # ---------------------------------------------------------------------------
+
 
 @app.get("/generate-rubrics")
 async def api_generate_rubrics_stream():
@@ -334,12 +365,21 @@ async def api_generate_rubrics_stream():
 
         def _rubric_thread():
             try:
-                def progress_cb(idx: int, total: int, group: list, rubrics_so_far: dict):
+
+                def progress_cb(
+                    idx: int, total: int, group: list, rubrics_so_far: dict
+                ):
                     # If any qid from this group is in rubrics_so_far, group is done; else starting
                     is_done = any(q in rubrics_so_far for q in group)
                     loop.call_soon_threadsafe(
                         queue.put_nowait,
-                        {"status": "progress", "current": idx, "total": total, "group": group, "done": is_done},
+                        {
+                            "status": "progress",
+                            "current": idx,
+                            "total": total,
+                            "group": group,
+                            "done": is_done,
+                        },
                     )
 
                 rubrics = generate_rubrics(config, progress_callback=progress_cb)
@@ -421,6 +461,7 @@ def api_put_rubrics(rubrics: dict = Body(...)):
 # Estimate endpoints (cost/token preview before API calls)
 # ---------------------------------------------------------------------------
 
+
 @app.get("/estimate/rubrics")
 def api_estimate_rubrics():
     """Estimate tokens and cost for rubric generation."""
@@ -448,6 +489,7 @@ def api_estimate_grade_one(student_name: str):
 # ---------------------------------------------------------------------------
 # Calibration endpoints
 # ---------------------------------------------------------------------------
+
 
 @app.post("/calibrate")
 async def api_calibrate():
@@ -548,7 +590,9 @@ async def api_grade_one(student_name: str):
     if not solution_path.exists():
         raise HTTPException(status_code=404, detail="Run parse step first")
     if not student_path.exists():
-        raise HTTPException(status_code=404, detail=f"Parsed notebook not found: {student_name}")
+        raise HTTPException(
+            status_code=404, detail=f"Parsed notebook not found: {student_name}"
+        )
 
     solution_parsed = json.loads(solution_path.read_text(encoding="utf-8"))
     student_parsed = json.loads(student_path.read_text(encoding="utf-8"))
@@ -568,7 +612,11 @@ async def api_grade_one(student_name: str):
 
     out_path = output_dir / "graded_results.json"
     with _results_lock:
-        raw = json.loads(out_path.read_text(encoding="utf-8")) if out_path.exists() else []
+        raw = (
+            json.loads(out_path.read_text(encoding="utf-8"))
+            if out_path.exists()
+            else []
+        )
         results = raw if isinstance(raw, list) else []
         found = False
         for i, r in enumerate(results):
@@ -585,6 +633,7 @@ async def api_grade_one(student_name: str):
 # ---------------------------------------------------------------------------
 # Results endpoints
 # ---------------------------------------------------------------------------
+
 
 @app.get("/results")
 def api_get_results():
@@ -635,6 +684,7 @@ def api_put_results(student_name: str, result: dict = Body(...)):
 # Parsed notebook endpoint (for review UI)
 # ---------------------------------------------------------------------------
 
+
 @app.get("/parsed/{student_name:path}")
 def api_get_parsed(student_name: str):
     """Return parsed JSON for a specific student."""
@@ -643,13 +693,16 @@ def api_get_parsed(student_name: str):
     parsed_dir = Path(config.get("parsed_dir", "output/parsed"))
     path = _safe_path(parsed_dir, f"{student_name}.json")
     if not path.exists():
-        raise HTTPException(status_code=404, detail=f"Parsed notebook not found for: {student_name}")
+        raise HTTPException(
+            status_code=404, detail=f"Parsed notebook not found for: {student_name}"
+        )
     return json.loads(path.read_text(encoding="utf-8"))
 
 
 # ---------------------------------------------------------------------------
 # Export endpoints
 # ---------------------------------------------------------------------------
+
 
 @app.post("/export")
 async def api_export():
@@ -666,7 +719,9 @@ def api_download_excel():
     output_dir = Path(config.get("output_dir", "output"))
     path = output_dir / "Final_Grades.xlsx"
     if not path.exists():
-        raise HTTPException(status_code=404, detail="Excel not generated yet. Run export first.")
+        raise HTTPException(
+            status_code=404, detail="Excel not generated yet. Run export first."
+        )
     return FileResponse(path, filename="Final_Grades.xlsx")
 
 
@@ -674,13 +729,16 @@ def api_download_excel():
 # Static UI
 # ---------------------------------------------------------------------------
 
+
 @app.get("/")
 def root():
     """Serve the UI."""
     ui_path = Path(__file__).parent / "ui" / "index.html"
     if ui_path.exists():
         return FileResponse(ui_path)
-    return {"message": "AI Autograder API. Open /ui/index.html or use the API endpoints."}
+    return {
+        "message": "AI Autograder API. Open /ui/index.html or use the API endpoints."
+    }
 
 
 @app.get("/ui/{path:path}")

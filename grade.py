@@ -13,6 +13,7 @@ from openai import OpenAI
 
 try:
     import tiktoken
+
     _TIKTOKEN_AVAILABLE = True
 except ImportError:
     _TIKTOKEN_AVAILABLE = False
@@ -26,14 +27,15 @@ logger = logging.getLogger(__name__)
 # Constants
 # ---------------------------------------------------------------------------
 
-CHARS_PER_TOKEN = 3.5       # conservative estimate for token counting
-TOKENS_PER_IMAGE = 1_000    # typical matplotlib plot at high detail
+CHARS_PER_TOKEN = 3.5  # conservative estimate for token counting
+TOKENS_PER_IMAGE = 1_000  # typical matplotlib plot at high detail
 MAX_VALIDATION_RETRIES = 2  # application-level retries if Pydantic parse fails
 
 
 # ---------------------------------------------------------------------------
 # Pydantic models for LLM response validation
 # ---------------------------------------------------------------------------
+
 
 class QuestionGrade(BaseModel):
     score: float
@@ -88,8 +90,10 @@ class GradingResponse(BaseModel):
                     grades[normalized] = QuestionGrade.model_validate(v)
                 except Exception:
                     grades[normalized] = QuestionGrade(
-                        score=0.0, feedback="[parse error in LLM response]",
-                        confidence="low", requires_review=True,
+                        score=0.0,
+                        feedback="[parse error in LLM response]",
+                        confidence="low",
+                        requires_review=True,
                     )
             elif isinstance(v, (int, float)):
                 grades[normalized] = QuestionGrade(score=float(v))
@@ -97,8 +101,10 @@ class GradingResponse(BaseModel):
         for qid in expected_qids:
             if qid not in grades:
                 grades[qid] = QuestionGrade(
-                    score=0.0, feedback="[not returned by LLM]",
-                    confidence="low", requires_review=True,
+                    score=0.0,
+                    feedback="[not returned by LLM]",
+                    confidence="low",
+                    requires_review=True,
                 )
         return cls(grades=grades)
 
@@ -106,6 +112,7 @@ class GradingResponse(BaseModel):
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def get_question_data(parsed: dict, qid: str) -> dict | None:
     for sec_data in parsed.get("sections", {}).values():
@@ -135,12 +142,17 @@ def truncate_output(text: str, max_chars: int) -> str:
     if len(text) <= max_chars:
         return text
     half = max_chars // 2
-    return text[:half] + f"\n... [truncated {len(text) - max_chars} chars] ...\n" + text[-half:]
+    return (
+        text[:half]
+        + f"\n... [truncated {len(text) - max_chars} chars] ...\n"
+        + text[-half:]
+    )
 
 
 def _extract_first_json_object(text: str) -> str | None:
     """Extract the first complete {...} JSON object using bracket matching.
-    Avoids greedy regex that can capture from first { to last } across multiple objects."""
+    Avoids greedy regex that can capture from first { to last } across multiple objects.
+    """
     start = text.find("{")
     if start < 0:
         return None
@@ -203,9 +215,9 @@ def parse_llm_json(response_text: str) -> dict:
 
 _DELIMITER_REPLACEMENTS = [
     ("<<<END_STUDENT_SUBMISSION>>>", "«END_STUDENT_SUBMISSION»"),
-    ("<<<STUDENT_SUBMISSION>>>",     "«STUDENT_SUBMISSION»"),
-    ("<<<",                          "«"),
-    (">>>",                          "»"),
+    ("<<<STUDENT_SUBMISSION>>>", "«STUDENT_SUBMISSION»"),
+    ("<<<", "«"),
+    (">>>", "»"),
 ]
 
 
@@ -219,7 +231,9 @@ def _sanitize_student_text(text: str) -> str:
     return text
 
 
-def validate_question_groups(groups: list[list[str]], solution_parsed: dict) -> list[str]:
+def validate_question_groups(
+    groups: list[list[str]], solution_parsed: dict
+) -> list[str]:
     """Return list of solution question IDs not covered by any group."""
     grouped: set[str] = {qid for group in groups for qid in group}
     all_sol_qids: list[str] = []
@@ -231,6 +245,7 @@ def validate_question_groups(groups: list[list[str]], solution_parsed: dict) -> 
 # ---------------------------------------------------------------------------
 # Prompt builder
 # ---------------------------------------------------------------------------
+
 
 def build_group_prompt(
     group: list[str],
@@ -272,16 +287,26 @@ def build_group_prompt(
 
         # Per-question budget: distribute remaining tokens evenly across questions left
         remaining_questions = len(group) - i
-        per_q_token_budget = max(2_000, (max_prompt_tokens - total_estimated_tokens) // remaining_questions)
+        per_q_token_budget = max(
+            2_000, (max_prompt_tokens - total_estimated_tokens) // remaining_questions
+        )
         max_output_chars = int(per_q_token_budget * CHARS_PER_TOKEN * 0.5)
 
         q_md = (sol_q or stu_q or {}).get("question_markdown", f"Question {qid}")
         q_header = f"--- QUESTION {qid} ({pts} pts) ---\n{q_md}\n\n"
         rubric_entry = rubrics.get(qid)
-        items = (rubric_entry or {}).get("items", []) if isinstance(rubric_entry, dict) else []
+        items = (
+            (rubric_entry or {}).get("items", [])
+            if isinstance(rubric_entry, dict)
+            else []
+        )
         if items:
-            rubric_lines = "\n".join(f"  - {item['description']}: -{item['deduction']} pts" for item in items)
-            q_header += f"RUBRIC (deduct from {pts} pts):\n{rubric_lines}\nMinimum score: 0\n\n"
+            rubric_lines = "\n".join(
+                f"  - {item['description']}: -{item['deduction']} pts" for item in items
+            )
+            q_header += (
+                f"RUBRIC (deduct from {pts} pts):\n{rubric_lines}\nMinimum score: 0\n\n"
+            )
         content_parts.append({"type": "text", "text": q_header})
 
         # Reference solution — only included when explicitly requested.
@@ -315,10 +340,12 @@ def build_group_prompt(
                 if isinstance(b64, list):
                     b64 = "".join(b64)
                 mime = img.get("mime", "image/png")
-                content_parts.append({
-                    "type": "image_url",
-                    "image_url": {"url": f"data:{mime};base64,{b64}"},
-                })
+                content_parts.append(
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:{mime};base64,{b64}"},
+                    }
+                )
 
         # Student submission (wrapped in delimiters for prompt injection mitigation)
         stu_text = "STUDENT SUBMISSION:\n<<<STUDENT_SUBMISSION>>>\n"
@@ -326,12 +353,16 @@ def build_group_prompt(
         if stu_q:
             has_code = bool(stu_q.get("answer_code_concat", "").strip())
             has_output = bool(stu_q.get("answer_text_concat", "").strip())
-            has_images = any(cell.get("images") for cell in stu_q.get("answer_cells", []))
+            has_images = any(
+                cell.get("images") for cell in stu_q.get("answer_cells", [])
+            )
             if not has_code and not has_output and not has_images:
                 stu_text += "WARNING: This question has NO code, NO output, and NO images — only markdown (if any). Score accordingly; do not award points for code/output that is not present.\n\n"
             has_any = has_code or has_output or stu_q.get("answer_markdown_concat")
             if stu_q.get("answer_code_concat"):
-                stu_text += f"Code:\n{_sanitize_student_text(stu_q['answer_code_concat'])}\n\n"
+                stu_text += (
+                    f"Code:\n{_sanitize_student_text(stu_q['answer_code_concat'])}\n\n"
+                )
             if stu_q.get("answer_text_concat"):
                 stu_text += f"Output:\n{_sanitize_student_text(truncate_output(stu_q['answer_text_concat'], max_output_chars))}\n\n"
             if stu_q.get("answer_markdown_concat"):
@@ -355,10 +386,12 @@ def build_group_prompt(
             if isinstance(b64, list):
                 b64 = "".join(b64)
             mime = img.get("mime", "image/png")
-            content_parts.append({
-                "type": "image_url",
-                "image_url": {"url": f"data:{mime};base64,{b64}"},
-            })
+            content_parts.append(
+                {
+                    "type": "image_url",
+                    "image_url": {"url": f"data:{mime};base64,{b64}"},
+                }
+            )
 
         # Update token estimate
         total_estimated_tokens += estimate_tokens(
@@ -368,7 +401,9 @@ def build_group_prompt(
     if total_estimated_tokens > max_prompt_tokens:
         logger.warning(
             "Group %s estimated ~%d tokens (limit %d). Outputs were truncated.",
-            group, total_estimated_tokens, max_prompt_tokens,
+            group,
+            total_estimated_tokens,
+            max_prompt_tokens,
         )
 
     messages = [
@@ -413,7 +448,9 @@ def grade_group(
     if the LLM response fails Pydantic validation.
     """
     model = config.get("model") or DEFAULT_MODEL
-    system_prompt = config.get("prompts", {}).get("system", "You are a grading assistant.")
+    system_prompt = config.get("prompts", {}).get(
+        "system", "You are a grading assistant."
+    )
     max_prompt_tokens = config.get("max_prompt_tokens", 80_000)
     max_completion_tokens = config.get("max_completion_tokens", 4_096)
     effective_max_completion = min(max_completion_tokens, max(2048, len(group) * 1024))
@@ -421,16 +458,24 @@ def grade_group(
     rubrics = config.get("rubrics", {})
     include_reference = config.get("include_reference_in_grading", False)
     messages, qid_to_max = build_group_prompt(
-        group, solution_parsed, student_parsed, system_prompt, max_prompt_tokens, model,
-        rubrics=rubrics, include_reference=include_reference,
+        group,
+        solution_parsed,
+        student_parsed,
+        system_prompt,
+        max_prompt_tokens,
+        model,
+        rubrics=rubrics,
+        include_reference=include_reference,
     )
 
     ctx = f" [{student_name}]" if student_name else ""
     last_error: Exception | None = None
     for attempt in range(MAX_VALIDATION_RETRIES + 1):
         if attempt > 0:
-            wait = 2 ** attempt
-            logger.warning("Retry %d for group %s%s after %ds", attempt, group, ctx, wait)
+            wait = 2**attempt
+            logger.warning(
+                "Retry %d for group %s%s after %ds", attempt, group, ctx, wait
+            )
             time.sleep(wait)
 
         temperature = temperature_for_model(model)
@@ -448,20 +493,28 @@ def grade_group(
         if getattr(response, "usage", None):
             usage = {
                 "prompt_tokens": getattr(response.usage, "prompt_tokens", 0) or 0,
-                "completion_tokens": getattr(response.usage, "completion_tokens", 0) or 0,
+                "completion_tokens": getattr(response.usage, "completion_tokens", 0)
+                or 0,
             }
 
         try:
             grading_response = GradingResponse.from_raw(raw, group)
             # Retry if LLM returned any placeholder (partial response = missing data)
-            placeholder_feedback = ("[not returned by LLM]", "[parse error in LLM response]")
+            placeholder_feedback = (
+                "[not returned by LLM]",
+                "[parse error in LLM response]",
+            )
             missing = [
-                qid for qid, g in grading_response.grades.items()
+                qid
+                for qid, g in grading_response.grades.items()
                 if g.feedback.strip() in placeholder_feedback
             ]
             total_max = sum(qid_to_max.get(q, 0) for q in group)
             if total_max > 0 and missing:
-                reasons = {qid: grading_response.grades[qid].feedback.strip() for qid in missing}
+                reasons = {
+                    qid: grading_response.grades[qid].feedback.strip()
+                    for qid in missing
+                }
                 raise ValueError(
                     f"LLM returned partial or malformed response — missing/invalid for: {missing} "
                     f"({reasons})"
@@ -469,27 +522,48 @@ def grade_group(
             return grading_response, qid_to_max, usage
         except Exception as e:
             last_error = e
-            logger.warning("Validation failed on attempt %d for group %s%s: %s", attempt, group, ctx, e)
+            logger.warning(
+                "Validation failed on attempt %d for group %s%s: %s",
+                attempt,
+                group,
+                ctx,
+                e,
+            )
             finish_reason = getattr(response.choices[0], "finish_reason", "?")
             if raw_content:
                 preview = raw_content[:600] + ("..." if len(raw_content) > 600 else "")
-                logger.info("LLM response (len=%d, finish_reason=%s): %r", len(raw_content), finish_reason, preview)
+                logger.info(
+                    "LLM response (len=%d, finish_reason=%s): %r",
+                    len(raw_content),
+                    finish_reason,
+                    preview,
+                )
             else:
                 logger.info("LLM returned None/empty. finish_reason=%s", finish_reason)
 
     # All retries exhausted — return zeros
-    logger.error("Giving up on group %s%s after %d attempts: %s", group, ctx, MAX_VALIDATION_RETRIES + 1, last_error)
-    return GradingResponse(
-        grades={
-            qid: QuestionGrade(
-                score=0.0,
-                feedback="[grading failed after retries]",
-                confidence="low",
-                requires_review=True,
-            )
-            for qid in group
-        }
-    ), qid_to_max, {}
+    logger.error(
+        "Giving up on group %s%s after %d attempts: %s",
+        group,
+        ctx,
+        MAX_VALIDATION_RETRIES + 1,
+        last_error,
+    )
+    return (
+        GradingResponse(
+            grades={
+                qid: QuestionGrade(
+                    score=0.0,
+                    feedback="[grading failed after retries]",
+                    confidence="low",
+                    requires_review=True,
+                )
+                for qid in group
+            }
+        ),
+        qid_to_max,
+        {},
+    )
 
 
 def grade_student(
@@ -528,7 +602,12 @@ def grade_student(
         if not group:
             continue
         grading_response, qid_to_max, usage = grade_group(
-            group, solution_parsed, student_parsed, config, client, student_name=student_name
+            group,
+            solution_parsed,
+            student_parsed,
+            config,
+            client,
+            student_name=student_name,
         )
         usage_total["prompt_tokens"] += usage.get("prompt_tokens", 0)
         usage_total["completion_tokens"] += usage.get("completion_tokens", 0)
@@ -537,7 +616,9 @@ def grade_student(
             max_pts = qid_to_max.get(qid, 0)
             total_max += max_pts
 
-            q_grade = grading_response.grades.get(qid, QuestionGrade(score=0.0, feedback="[missing]"))
+            q_grade = grading_response.grades.get(
+                qid, QuestionGrade(score=0.0, feedback="[missing]")
+            )
             score = max(0.0, min(float(max_pts), q_grade.score))
             feedback = q_grade.feedback.strip()
 
@@ -555,7 +636,11 @@ def grade_student(
                 feedback_parts.append(f"Q{qid}: {feedback}")
 
     # Zero-score ungrouped or skipped questions
-    skip_msg = "[skipped - not in grade_only]" if grade_only else "[not included in grading groups]"
+    skip_msg = (
+        "[skipped - not in grade_only]"
+        if grade_only
+        else "[not included in grading groups]"
+    )
     for qid in ungrouped:
         sol_q = get_question_data(solution_parsed, qid)
         max_pts = (sol_q or {}).get("points", 0)
@@ -576,12 +661,20 @@ def grade_student(
         "questions": questions,
         "total_score": round(total_score, 2),
         "total_max": round(total_max, 2),
-        "summary_feedback": ". ".join(feedback_parts) if feedback_parts else "Full marks.",
+        "summary_feedback": (
+            ". ".join(feedback_parts) if feedback_parts else "Full marks."
+        ),
     }
     if usage_total["prompt_tokens"] or usage_total["completion_tokens"]:
         result["_usage"] = usage_total
-    logger.info("Graded %s: %.1f/%.1f (tokens: %d in / %d out)", student_name, total_score, total_max,
-                usage_total.get("prompt_tokens", 0), usage_total.get("completion_tokens", 0))
+    logger.info(
+        "Graded %s: %.1f/%.1f (tokens: %d in / %d out)",
+        student_name,
+        total_score,
+        total_max,
+        usage_total.get("prompt_tokens", 0),
+        usage_total.get("completion_tokens", 0),
+    )
     return result
 
 
@@ -626,7 +719,9 @@ def grade_all_students(
                         backup_path,
                         exc_info=True,
                     )
-                    print(f"Error: graded_results.json is corrupted. Backed up to {backup_path}. Re-grading all students.")
+                    print(
+                        f"Error: graded_results.json is corrupted. Backed up to {backup_path}. Re-grading all students."
+                    )
                 except OSError:
                     logger.exception("Failed to backup corrupted graded_results.json")
                 return []
@@ -644,12 +739,20 @@ def grade_all_students(
 
     if isinstance(raw, list):
         results: list[dict] = raw
-        already_graded = {r["student_name"] for r in raw if isinstance(r, dict) and "student_name" in r}
+        already_graded = {
+            r["student_name"]
+            for r in raw
+            if isinstance(r, dict) and "student_name" in r
+        }
     else:
         results = []
         already_graded = set()
 
-    to_grade = [(i, path) for i, path in enumerate(student_files) if path.stem not in already_graded]
+    to_grade = [
+        (i, path)
+        for i, path in enumerate(student_files)
+        if path.stem not in already_graded
+    ]
 
     # Validate question groups once (not per student)
     grading_config = config.get("grading", {})
@@ -660,7 +763,12 @@ def grade_all_students(
         groups_filtered = [g for g in groups_filtered if g]
         ungrouped = validate_question_groups(groups_filtered, solution_parsed)
         print(f"Grade only: {grade_only} — skipping {len(ungrouped)} other questions")
-        logger.info("grade_only=%s, skipping %d questions, grading %d students", grade_only, len(ungrouped), len(to_grade))
+        logger.info(
+            "grade_only=%s, skipping %d questions, grading %d students",
+            grade_only,
+            len(ungrouped),
+            len(to_grade),
+        )
     else:
         ungrouped = validate_question_groups(groups, solution_parsed)
         if ungrouped:
@@ -677,10 +785,19 @@ def grade_all_students(
         graded_count = 0
         for i, path in to_grade:
             student_name = path.stem
-            yield {"student": student_name, "status": "working", "result": None, "error": None, "index": i + 1, "total": len(student_files)}
+            yield {
+                "student": student_name,
+                "status": "working",
+                "result": None,
+                "error": None,
+                "index": i + 1,
+                "total": len(student_files),
+            }
             try:
                 student_parsed = json.loads(path.read_text(encoding="utf-8"))
-                result = grade_student(student_parsed, solution_parsed, config, client, ungrouped=ungrouped)
+                result = grade_student(
+                    student_parsed, solution_parsed, config, client, ungrouped=ungrouped
+                )
                 u = result.pop("_usage", None)
                 if u:
                     usage_total["prompt_tokens"] += u.get("prompt_tokens", 0)
@@ -714,10 +831,17 @@ def grade_all_students(
         # Final usage summary
         if usage_total["prompt_tokens"] or usage_total["completion_tokens"]:
             inp, out = MODEL_PRICING.get(model, MODEL_PRICING[DEFAULT_MODEL])
-            cost = (usage_total["prompt_tokens"] / 1e6 * inp) + (usage_total["completion_tokens"] / 1e6 * out)
-            logger.info("Grading complete: %d students, %d tokens (%.0f in / %.0f out), ~$%.4f",
-                        graded_count, usage_total["prompt_tokens"] + usage_total["completion_tokens"],
-                        usage_total["prompt_tokens"], usage_total["completion_tokens"], cost)
+            cost = (usage_total["prompt_tokens"] / 1e6 * inp) + (
+                usage_total["completion_tokens"] / 1e6 * out
+            )
+            logger.info(
+                "Grading complete: %d students, %d tokens (%.0f in / %.0f out), ~$%.4f",
+                graded_count,
+                usage_total["prompt_tokens"] + usage_total["completion_tokens"],
+                usage_total["prompt_tokens"],
+                usage_total["completion_tokens"],
+                cost,
+            )
             yield {
                 "student": "",
                 "status": "usage",
@@ -734,7 +858,9 @@ def grade_all_students(
             student_name = path.stem
             try:
                 student_parsed = json.loads(path.read_text(encoding="utf-8"))
-                result = grade_student(student_parsed, solution_parsed, config, client, ungrouped=ungrouped)
+                result = grade_student(
+                    student_parsed, solution_parsed, config, client, ungrouped=ungrouped
+                )
                 return (i, student_name, "done", result, None)
             except Exception as e:
                 logger.exception("Failed to grade %s", student_name)
@@ -742,7 +868,14 @@ def grade_all_students(
 
         graded_count = 0
         for i, path in to_grade:
-            yield {"student": path.stem, "status": "working", "result": None, "error": None, "index": i + 1, "total": len(student_files)}
+            yield {
+                "student": path.stem,
+                "status": "working",
+                "result": None,
+                "error": None,
+                "index": i + 1,
+                "total": len(student_files),
+            }
         with ThreadPoolExecutor(max_workers=workers) as pool:
             futures = {pool.submit(_grade_one, item): item for item in to_grade}
             for future in as_completed(futures):
@@ -751,7 +884,9 @@ def grade_all_students(
                     u = result.pop("_usage", None)
                     if u:
                         usage_total["prompt_tokens"] += u.get("prompt_tokens", 0)
-                        usage_total["completion_tokens"] += u.get("completion_tokens", 0)
+                        usage_total["completion_tokens"] += u.get(
+                            "completion_tokens", 0
+                        )
                     results.append(result)
                     graded_count += 1
                     if results_lock:
@@ -770,10 +905,17 @@ def grade_all_students(
 
         if usage_total["prompt_tokens"] or usage_total["completion_tokens"]:
             inp, out = MODEL_PRICING.get(model, MODEL_PRICING[DEFAULT_MODEL])
-            cost = (usage_total["prompt_tokens"] / 1e6 * inp) + (usage_total["completion_tokens"] / 1e6 * out)
-            logger.info("Grading complete: %d students, %d tokens (%.0f in / %.0f out), ~$%.4f",
-                        graded_count, usage_total["prompt_tokens"] + usage_total["completion_tokens"],
-                        usage_total["prompt_tokens"], usage_total["completion_tokens"], cost)
+            cost = (usage_total["prompt_tokens"] / 1e6 * inp) + (
+                usage_total["completion_tokens"] / 1e6 * out
+            )
+            logger.info(
+                "Grading complete: %d students, %d tokens (%.0f in / %.0f out), ~$%.4f",
+                graded_count,
+                usage_total["prompt_tokens"] + usage_total["completion_tokens"],
+                usage_total["prompt_tokens"],
+                usage_total["completion_tokens"],
+                cost,
+            )
             yield {
                 "student": "",
                 "status": "usage",
@@ -787,6 +929,7 @@ def grade_all_students(
 
 def main():
     import argparse
+
     logging.basicConfig(level=logging.INFO)
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=Path, default=Path("config.yaml"))
@@ -800,7 +943,9 @@ def main():
         elif evt["status"] == "usage":
             u = evt.get("usage", {})
             cost = evt.get("cost_usd", 0)
-            print(f"Token usage: {u.get('prompt_tokens', 0):,} in / {u.get('completion_tokens', 0):,} out — ~${cost:.4f}")
+            print(
+                f"Token usage: {u.get('prompt_tokens', 0):,} in / {u.get('completion_tokens', 0):,} out — ~${cost:.4f}"
+            )
         else:
             print(f"✗ {evt['student']}: {evt['error']}")
     print("Done.")

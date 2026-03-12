@@ -25,11 +25,13 @@ def _code_cell(source: str) -> dict:
 
 
 def _minimal_notebook_with_question() -> dict:
-    return _make_notebook([
-        _md_cell("# <font color='red'>1 Section</font>"),
-        _md_cell("- Q1.1 <font color='blue'>[2 PTS] Write code</font>"),
-        _code_cell("x = 42"),
-    ])
+    return _make_notebook(
+        [
+            _md_cell("# <font color='red'>1 Section</font>"),
+            _md_cell("- Q1.1 <font color='blue'>[2 PTS] Write code</font>"),
+            _code_cell("x = 42"),
+        ]
+    )
 
 
 class TestIntegrationPipeline:
@@ -79,13 +81,17 @@ class TestIntegrationPipeline:
         student_parsed["student_name"] = "Alice"
         mock_response = MagicMock()
         mock_response.choices = [MagicMock()]
-        mock_response.choices[0].message.content = '{"1.1": {"score": 2, "feedback": "ok"}}'
+        mock_response.choices[0].message.content = (
+            '{"1.1": {"score": 2, "feedback": "ok"}}'
+        )
         mock_response.usage = MagicMock(prompt_tokens=100, completion_tokens=50)
         with patch("grade.get_openai_client") as mock_get_client:
             mock_client = MagicMock()
             mock_client.chat.completions.create.return_value = mock_response
             mock_get_client.return_value = mock_client
-            result = grade_student(student_parsed, solution_parsed, config, client=mock_client)
+            result = grade_student(
+                student_parsed, solution_parsed, config, client=mock_client
+            )
         assert result["total_score"] == 2
         assert result["total_max"] == 2
 

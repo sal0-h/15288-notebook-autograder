@@ -14,10 +14,10 @@ from parse_notebook import (
     parse_notebook,
 )
 
-
 # ---------------------------------------------------------------------------
 # Helper: build minimal notebook dict
 # ---------------------------------------------------------------------------
+
 
 def make_notebook(cells: list[dict]) -> dict:
     return {"cells": cells, "nbformat": 4, "metadata": {}}
@@ -28,12 +28,18 @@ def make_md_cell(source: str) -> dict:
 
 
 def make_code_cell(source: str, outputs: list[dict] | None = None) -> dict:
-    return {"cell_type": "code", "source": [source], "outputs": outputs or [], "metadata": {}}
+    return {
+        "cell_type": "code",
+        "source": [source],
+        "outputs": outputs or [],
+        "metadata": {},
+    }
 
 
 # ---------------------------------------------------------------------------
 # md_text
 # ---------------------------------------------------------------------------
+
 
 class TestMdText:
     def test_plain(self):
@@ -48,42 +54,65 @@ class TestMdText:
 # extract_code_outputs
 # ---------------------------------------------------------------------------
 
+
 class TestExtractCodeOutputs:
     def test_stream_output(self):
-        cell = make_code_cell("print('hi')", [{"output_type": "stream", "text": ["hi\n"]}])
+        cell = make_code_cell(
+            "print('hi')", [{"output_type": "stream", "text": ["hi\n"]}]
+        )
         out = extract_code_outputs(cell)
         assert "hi" in out["output_text"]
 
     def test_execute_result_text(self):
-        cell = make_code_cell("42", [{
-            "output_type": "execute_result",
-            "data": {"text/plain": ["42"]},
-        }])
+        cell = make_code_cell(
+            "42",
+            [
+                {
+                    "output_type": "execute_result",
+                    "data": {"text/plain": ["42"]},
+                }
+            ],
+        )
         out = extract_code_outputs(cell)
         assert "42" in out["output_text"]
 
     def test_image_captured(self):
-        cell = make_code_cell("plt.show()", [{
-            "output_type": "display_data",
-            "data": {"image/png": "abc123=="},
-        }])
+        cell = make_code_cell(
+            "plt.show()",
+            [
+                {
+                    "output_type": "display_data",
+                    "data": {"image/png": "abc123=="},
+                }
+            ],
+        )
         out = extract_code_outputs(cell, keep_images_base64=True)
         assert len(out["images"]) == 1
         assert out["images"][0]["base64"] == "abc123=="
 
     def test_image_suppressed_when_disabled(self):
-        cell = make_code_cell("plt.show()", [{
-            "output_type": "display_data",
-            "data": {"image/png": "abc123=="},
-        }])
+        cell = make_code_cell(
+            "plt.show()",
+            [
+                {
+                    "output_type": "display_data",
+                    "data": {"image/png": "abc123=="},
+                }
+            ],
+        )
         out = extract_code_outputs(cell, keep_images_base64=False)
         assert out["images"] == []
 
     def test_error_output(self):
-        cell = make_code_cell("1/0", [{
-            "output_type": "error",
-            "traceback": ["ZeroDivisionError: division by zero"],
-        }])
+        cell = make_code_cell(
+            "1/0",
+            [
+                {
+                    "output_type": "error",
+                    "traceback": ["ZeroDivisionError: division by zero"],
+                }
+            ],
+        )
         out = extract_code_outputs(cell)
         assert "ZeroDivisionError" in out["output_text"]
 
@@ -128,7 +157,9 @@ class TestParseNotebook:
     def test_markdown_answer_captured(self, tmp_path):
         cells = [
             make_md_cell("# <font color='red'>2 Theory</font>"),
-            make_md_cell("- Q2.1 <font color='blue'>[1 PTS] Explain gradient descent</font>"),
+            make_md_cell(
+                "- Q2.1 <font color='blue'>[1 PTS] Explain gradient descent</font>"
+            ),
             make_md_cell("Gradient descent minimizes loss iteratively."),
         ]
         result = self._write_and_parse(cells, tmp_path)
@@ -167,6 +198,7 @@ class TestParseNotebook:
 # get_all_question_ids
 # ---------------------------------------------------------------------------
 
+
 class TestGetAllQuestionIds:
     def _make_parsed(self, qids: list[str]) -> dict:
         sections: dict = {}
@@ -197,6 +229,7 @@ class TestGetAllQuestionIds:
 # ---------------------------------------------------------------------------
 # get_total_points
 # ---------------------------------------------------------------------------
+
 
 class TestGetTotalPoints:
     def test_sum(self):

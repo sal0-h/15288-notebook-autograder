@@ -17,6 +17,7 @@ DEFAULT_MODEL = "gpt-5-mini"
 # Config I/O
 # ---------------------------------------------------------------------------
 
+
 def _project_root(config_path: Path | None) -> Path:
     """Project root = directory containing the root config.yaml."""
     return (config_path or Path("config.yaml")).resolve().parent
@@ -32,18 +33,26 @@ def load_config(config_path: Path | None = None) -> dict:
     """Load config. Uses output-first layout when available:
     - Root config.yaml: minimal pointer (assignment_name, output_dir)
     - Primary config: output/{assignment_name}/config.yaml (full config)
-    Paths are resolved relative to project root. Outputs scoped under output/{assignment_name}/."""
+    Paths are resolved relative to project root. Outputs scoped under output/{assignment_name}/.
+    """
     root_path = (config_path or Path("config.yaml")).resolve()
 
     # If explicitly given an assignment config path (e.g. --config output/X/config.yaml), load it directly
-    if config_path is not None and _is_assignment_config(root_path) and root_path.exists():
+    if (
+        config_path is not None
+        and _is_assignment_config(root_path)
+        and root_path.exists()
+    ):
         project_root = root_path.parent.parent.parent  # output/X/config.yaml -> project
         with open(root_path, "r", encoding="utf-8") as f:
             cfg = yaml.safe_load(f) or {}
         config_root = project_root
-        assignment_name = re.sub(
-            r'[/\\:*?"<>|.]', "_", cfg.get("assignment_name", "default")
-        ).strip("_") or "default"
+        assignment_name = (
+            re.sub(r'[/\\:*?"<>|.]', "_", cfg.get("assignment_name", "default")).strip(
+                "_"
+            )
+            or "default"
+        )
         base_output = cfg.get("output_dir", "output")
         if Path(base_output).is_absolute():
             base_output = "output"
@@ -57,24 +66,33 @@ def load_config(config_path: Path | None = None) -> dict:
         else:
             root_cfg = {}
 
-        assignment_name = re.sub(
-            r'[/\\:*?"<>|.]', "_", root_cfg.get("assignment_name", "default")
-        ).strip("_") or "default"
+        assignment_name = (
+            re.sub(
+                r'[/\\:*?"<>|.]', "_", root_cfg.get("assignment_name", "default")
+            ).strip("_")
+            or "default"
+        )
         base_output = root_cfg.get("output_dir", "output")
-        assignment_config_path = project_root / base_output / assignment_name / "config.yaml"
+        assignment_config_path = (
+            project_root / base_output / assignment_name / "config.yaml"
+        )
 
         # Prefer assignment-specific config if it exists
         if assignment_config_path.exists():
             with open(assignment_config_path, "r", encoding="utf-8") as f:
                 cfg = yaml.safe_load(f) or {}
-            config_root = project_root  # paths in assignment config are relative to project root
+            config_root = (
+                project_root  # paths in assignment config are relative to project root
+            )
             # Prompts and root-only grading controls live in root; merge them in
             if root_cfg.get("prompts"):
                 cfg["prompts"] = root_cfg["prompts"]
             if "rubric_review" in root_cfg:
                 cfg["rubric_review"] = root_cfg["rubric_review"]
             if "include_reference_in_grading" in root_cfg:
-                cfg["include_reference_in_grading"] = root_cfg["include_reference_in_grading"]
+                cfg["include_reference_in_grading"] = root_cfg[
+                    "include_reference_in_grading"
+                ]
         else:
             cfg = dict(root_cfg)
             config_root = project_root
@@ -90,9 +108,14 @@ def load_config(config_path: Path | None = None) -> dict:
             if "rubric_review" in root_cfg:
                 cfg["rubric_review"] = root_cfg["rubric_review"]
             if "include_reference_in_grading" in root_cfg:
-                cfg["include_reference_in_grading"] = root_cfg["include_reference_in_grading"]
+                cfg["include_reference_in_grading"] = root_cfg[
+                    "include_reference_in_grading"
+                ]
         elif "prompts" not in cfg or not cfg.get("prompts"):
-            cfg.setdefault("prompts", {"system": "You are an expert instructor. Return valid JSON only."})
+            cfg.setdefault(
+                "prompts",
+                {"system": "You are an expert instructor. Return valid JSON only."},
+            )
 
     # Resolve paths relative to project root
     for key in ("solution_notebook", "submissions_dir", "parsed_dir", "output_dir"):
@@ -119,11 +142,14 @@ def save_config(config: dict, config_path: Path | None = None) -> None:
     cfg.pop("parsed_dir", None)
 
     project_root = _project_root(config_path)
-    assignment_name = re.sub(
-        r'[/\\:*?"<>|.]', "_", cfg.get("assignment_name", "default")
-    ).strip("_") or "default"
+    assignment_name = (
+        re.sub(r'[/\\:*?"<>|.]', "_", cfg.get("assignment_name", "default")).strip("_")
+        or "default"
+    )
     base_output = cfg.get("output_dir", "output")
-    assignment_config_path = project_root / base_output / assignment_name / "config.yaml"
+    assignment_config_path = (
+        project_root / base_output / assignment_name / "config.yaml"
+    )
 
     # Relativize solution_notebook for portability (relative to project root)
     sol = cfg.get("solution_notebook", "")
@@ -138,7 +164,8 @@ def save_config(config: dict, config_path: Path | None = None) -> None:
     # Save full config to output/{assignment_name}/config.yaml
     # Root-only controls are excluded to keep assignment config focused on runtime artifacts.
     assignment_cfg = {
-        k: v for k, v in cfg.items()
+        k: v
+        for k, v in cfg.items()
         if k not in ("prompts", "rubric_review", "include_reference_in_grading")
     }
     assignment_config_path.parent.mkdir(parents=True, exist_ok=True)
@@ -150,10 +177,18 @@ def save_config(config: dict, config_path: Path | None = None) -> None:
     root_path = (config_path or Path("config.yaml")).resolve()
     root_content = root_path.read_text(encoding="utf-8") if root_path.exists() else ""
     root_content = re.sub(
-        r"^assignment_name:\s*.+", f"assignment_name: {assignment_name}", root_content, count=1, flags=re.MULTILINE
+        r"^assignment_name:\s*.+",
+        f"assignment_name: {assignment_name}",
+        root_content,
+        count=1,
+        flags=re.MULTILINE,
     )
     root_content = re.sub(
-        r"^output_dir:\s*.+", f"output_dir: {base_output}", root_content, count=1, flags=re.MULTILINE
+        r"^output_dir:\s*.+",
+        f"output_dir: {base_output}",
+        root_content,
+        count=1,
+        flags=re.MULTILINE,
     )
     # If prompts or root-only controls changed, do a full write.
     existing = yaml.safe_load(root_content) if root_content.strip() else {}
@@ -185,6 +220,7 @@ def save_config(config: dict, config_path: Path | None = None) -> None:
 # OpenAI client
 # ---------------------------------------------------------------------------
 
+
 # GPT-5 reasoning models only support temperature=1. Others can use 0 for deterministic output.
 def temperature_for_model(model: str) -> float:
     """Use 0 when model supports it (deterministic); else 1. GPT-5 family only supports 1."""
@@ -209,6 +245,7 @@ def get_openai_client(max_retries: int = 5) -> OpenAI:
 # Pydantic config validation models
 # ---------------------------------------------------------------------------
 
+
 class ParsingConfig(BaseModel):
     section_regex: str
     question_regex: str
@@ -218,6 +255,7 @@ class ParsingConfig(BaseModel):
     @classmethod
     def validate_regex(cls, v: str) -> str:
         import re
+
         try:
             re.compile(v)
         except re.error as e:
@@ -227,7 +265,9 @@ class ParsingConfig(BaseModel):
 
 class GradingConfig(BaseModel):
     question_groups: list[list[str]]
-    grade_only: list[str] | None = None  # If set, only grade these question IDs; others get 0 [skipped]
+    grade_only: list[str] | None = (
+        None  # If set, only grade these question IDs; others get 0 [skipped]
+    )
 
 
 class RubricItem(BaseModel):
@@ -276,8 +316,12 @@ class AppConfig(BaseModel):
     assignment_name: str
     model: str
     rubric_model: str = ""  # If set, used for rubric generation; else uses model
-    rubric_review: bool = True  # If True, run optional second LLM pass to soften rubric wording
-    include_reference_in_grading: bool = False  # If True, include raw reference solution in grading prompt
+    rubric_review: bool = (
+        True  # If True, run optional second LLM pass to soften rubric wording
+    )
+    include_reference_in_grading: bool = (
+        False  # If True, include raw reference solution in grading prompt
+    )
     solution_notebook: str
     submissions_dir: str = "output/submissions"
     parsed_dir: str = "output/parsed"

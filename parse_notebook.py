@@ -68,13 +68,18 @@ def parse_notebook(nb_path: Path, config: dict) -> dict:
     )
     # Dash before Q is optional: some handouts use "Q7.1" instead of "- Q7.1"
     question_re = re.compile(
-        parsing.get("question_regex", r"(?i)^\s*(-\s*)?Q(\d+)\.(\d+)\s*.*?\[\s*(\d+)\s*PTS\s*\]"),
+        parsing.get(
+            "question_regex", r"(?i)^\s*(-\s*)?Q(\d+)\.(\d+)\s*.*?\[\s*(\d+)\s*PTS\s*\]"
+        ),
         re.MULTILINE,
     )
     keep_images = parsing.get("keep_images", True)
 
     def is_section(cell: dict) -> bool:
-        return cell.get("cell_type") == "markdown" and section_re.search(md_text(cell)) is not None
+        return (
+            cell.get("cell_type") == "markdown"
+            and section_re.search(md_text(cell)) is not None
+        )
 
     def match_question(cell: dict) -> re.Match | None:
         if cell.get("cell_type") != "markdown":
@@ -93,7 +98,9 @@ def parse_notebook(nb_path: Path, config: dict) -> dict:
             md = md_text(cell)
             sec_id = section_re.search(md).group(1)
             current_section = sec_id
-            result["sections"].setdefault(sec_id, {"overview_markdown": "", "questions": {}})
+            result["sections"].setdefault(
+                sec_id, {"overview_markdown": "", "questions": {}}
+            )
             result["sections"][sec_id]["overview_markdown"] = md
             i += 1
             continue
@@ -111,7 +118,9 @@ def parse_notebook(nb_path: Path, config: dict) -> dict:
 
             if current_section != sec_id:
                 current_section = sec_id
-                result["sections"].setdefault(sec_id, {"overview_markdown": "", "questions": {}})
+                result["sections"].setdefault(
+                    sec_id, {"overview_markdown": "", "questions": {}}
+                )
 
             q_md = md_text(cell)
 
@@ -136,7 +145,9 @@ def parse_notebook(nb_path: Path, config: dict) -> dict:
                     break
 
                 if nxt.get("cell_type") == "code":
-                    artifacts = extract_code_outputs(nxt, keep_images_base64=keep_images)
+                    artifacts = extract_code_outputs(
+                        nxt, keep_images_base64=keep_images
+                    )
                     artifacts["cell_index"] = j
                     q_obj["answer_cells"].append(artifacts)
 
@@ -228,7 +239,9 @@ def parse_all_students(config: dict) -> tuple[dict | None, list[dict]]:
         out_path.write_text(json.dumps(solution_parsed, indent=2), encoding="utf-8")
 
     report: list[dict] = []
-    student_files = list(submissions_dir.glob("*.ipynb")) if submissions_dir.exists() else []
+    student_files = (
+        list(submissions_dir.glob("*.ipynb")) if submissions_dir.exists() else []
+    )
 
     for nb_path in student_files:
         student_name = nb_path.stem
@@ -236,14 +249,16 @@ def parse_all_students(config: dict) -> tuple[dict | None, list[dict]]:
             parsed = parse_notebook(nb_path, config)
         except Exception as e:
             logger.warning("Parse failed for %s: %s", student_name, e)
-            report.append({
-                "student_name": student_name,
-                "status": "error",
-                "questions_found": [],
-                "questions_missing": solution_question_ids,
-                "total_points_possible": solution_total_pts,
-                "message": str(e),
-            })
+            report.append(
+                {
+                    "student_name": student_name,
+                    "status": "error",
+                    "questions_found": [],
+                    "questions_missing": solution_question_ids,
+                    "total_points_possible": solution_total_pts,
+                    "message": str(e),
+                }
+            )
             continue
 
         parsed["student_name"] = student_name
@@ -254,14 +269,16 @@ def parse_all_students(config: dict) -> tuple[dict | None, list[dict]]:
         missing = [q for q in solution_question_ids if q not in found]
         status = "ok" if not missing else "warning"
 
-        report.append({
-            "student_name": student_name,
-            "status": status,
-            "questions_found": found,
-            "questions_missing": missing,
-            "total_points_possible": get_total_points(parsed),
-            "message": "",
-        })
+        report.append(
+            {
+                "student_name": student_name,
+                "status": status,
+                "questions_found": found,
+                "questions_missing": missing,
+                "total_points_possible": get_total_points(parsed),
+                "message": "",
+            }
+        )
 
     return solution_parsed, report
 
@@ -276,13 +293,17 @@ def main():
 
     if solution_parsed:
         qids = get_all_question_ids(solution_parsed)
-        print(f"Solution: {len(qids)} questions, {get_total_points(solution_parsed)} pts")
+        print(
+            f"Solution: {len(qids)} questions, {get_total_points(solution_parsed)} pts"
+        )
     else:
         print("Solution notebook not found or not parsed.")
 
     for r in report:
         icon = "✓" if r["status"] == "ok" else "⚠"
-        print(f"{icon} {r['student_name']}: {len(r['questions_found'])} questions, missing {r['questions_missing']}")
+        print(
+            f"{icon} {r['student_name']}: {len(r['questions_found'])} questions, missing {r['questions_missing']}"
+        )
 
     return 0
 

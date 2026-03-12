@@ -47,7 +47,12 @@ def estimate_rubrics(config: dict) -> dict:
     output_dir = Path(config.get("output_dir", "output"))
     solution_path = output_dir / "solution_parsed.json"
     if not solution_path.exists():
-        return {"error": "Run parse first", "prompt_tokens": 0, "completion_tokens": 0, "cost_usd": 0}
+        return {
+            "error": "Run parse first",
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "cost_usd": 0,
+        }
 
     solution_parsed = json.loads(solution_path.read_text(encoding="utf-8"))
     grading_config = config.get("grading", {})
@@ -101,9 +106,19 @@ def estimate_grade(config: dict, student_name: str | None = None) -> dict:
     parsed_dir = Path(config.get("parsed_dir", output_dir / "parsed"))
     solution_path = output_dir / "solution_parsed.json"
     if not solution_path.exists():
-        return {"error": "Run parse first", "prompt_tokens": 0, "completion_tokens": 0, "cost_usd": 0}
+        return {
+            "error": "Run parse first",
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "cost_usd": 0,
+        }
     if not parsed_dir.exists():
-        return {"error": "No parsed files. Run parse first.", "prompt_tokens": 0, "completion_tokens": 0, "cost_usd": 0}
+        return {
+            "error": "No parsed files. Run parse first.",
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "cost_usd": 0,
+        }
 
     solution_parsed = json.loads(solution_path.read_text(encoding="utf-8"))
     grading_config = config.get("grading", {})
@@ -118,7 +133,12 @@ def estimate_grade(config: dict, student_name: str | None = None) -> dict:
     if student_name:
         student_files = [p for p in student_files if p.stem == student_name]
     if not student_files:
-        return {"error": "No students to grade", "prompt_tokens": 0, "completion_tokens": 0, "cost_usd": 0}
+        return {
+            "error": "No students to grade",
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "cost_usd": 0,
+        }
 
     model = config.get("model") or DEFAULT_MODEL
     system_prompt = config.get("prompts", {}).get("system", "Grade.")
@@ -135,7 +155,13 @@ def estimate_grade(config: dict, student_name: str | None = None) -> dict:
             if not group:
                 continue
             messages, _ = build_group_prompt(
-                group, solution_parsed, sample, system_prompt, max_prompt_tokens, model, rubrics=rubrics
+                group,
+                solution_parsed,
+                sample,
+                system_prompt,
+                max_prompt_tokens,
+                model,
+                rubrics=rubrics,
             )
             tok += _tokens_from_messages(messages, model)
         prompt_tokens_one = max(prompt_tokens_one, tok)

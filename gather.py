@@ -86,12 +86,14 @@ def gather_submissions(
             continue
         student_name = get_student_name(sub_data)
         if not student_name:
-            results.append({
-                "student_name": sub_key,
-                "filename": "",
-                "status": "missing",
-                "message": "No submitter name in metadata",
-            })
+            results.append(
+                {
+                    "student_name": sub_key,
+                    "filename": "",
+                    "status": "missing",
+                    "message": "No submitter name in metadata",
+                }
+            )
             continue
 
         # Folder: submission_381579075 -> submission_381579075
@@ -99,35 +101,43 @@ def gather_submissions(
         submission_folder = base_dir / folder_name
 
         if not submission_folder.exists():
-            results.append({
-                "student_name": student_name,
-                "filename": "",
-                "status": "missing",
-                "message": f"Folder {folder_name} not found",
-            })
+            results.append(
+                {
+                    "student_name": student_name,
+                    "filename": "",
+                    "status": "missing",
+                    "message": f"Folder {folder_name} not found",
+                }
+            )
             continue
 
         ipynb_files = list(submission_folder.glob("*.ipynb"))
         if len(ipynb_files) == 0:
-            results.append({
-                "student_name": student_name,
-                "filename": "",
-                "status": "missing",
-                "message": f"No .ipynb in {folder_name}",
-            })
+            results.append(
+                {
+                    "student_name": student_name,
+                    "filename": "",
+                    "status": "missing",
+                    "message": f"No .ipynb in {folder_name}",
+                }
+            )
             continue
         if len(ipynb_files) > 1:
-            results.append({
-                "student_name": student_name,
-                "filename": "",
-                "status": "duplicate",
-                "message": f"Multiple .ipynb files in {folder_name}",
-            })
+            results.append(
+                {
+                    "student_name": student_name,
+                    "filename": "",
+                    "status": "duplicate",
+                    "message": f"Multiple .ipynb files in {folder_name}",
+                }
+            )
             continue
 
         nb_path = ipynb_files[0]
         new_name = f"{student_name}_{nb_path.name}"
-        safe_name = "".join(c for c in new_name if c not in '/\\:*?"<>|') or "unknown_student"
+        safe_name = (
+            "".join(c for c in new_name if c not in '/\\:*?"<>|') or "unknown_student"
+        )
         dest_path = out_dir / safe_name
 
         status = "ok"
@@ -138,12 +148,16 @@ def gather_submissions(
         if status == "ok":
             shutil.copy2(nb_path, dest_path)
 
-        results.append({
-            "student_name": student_name,
-            "filename": safe_name,
-            "status": status,
-            "message": "" if status == "ok" else f"Duplicate submitter: {student_name}",
-        })
+        results.append(
+            {
+                "student_name": student_name,
+                "filename": safe_name,
+                "status": status,
+                "message": (
+                    "" if status == "ok" else f"Duplicate submitter: {student_name}"
+                ),
+            }
+        )
 
     if from_zip and extract_root:
         shutil.rmtree(extract_root, ignore_errors=True)
@@ -152,11 +166,20 @@ def gather_submissions(
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Gather student notebooks from Gradescope export")
+    parser = argparse.ArgumentParser(
+        description="Gather student notebooks from Gradescope export"
+    )
     parser.add_argument("--zip", type=Path, help="Path to Gradescope export ZIP")
     parser.add_argument("--folder", type=Path, help="Path to extracted export folder")
-    parser.add_argument("--out", type=Path, default=Path("output/submissions"), help="Output directory")
-    parser.add_argument("--config", type=Path, default=Path("config.yaml"), help="Config file for output path")
+    parser.add_argument(
+        "--out", type=Path, default=Path("output/submissions"), help="Output directory"
+    )
+    parser.add_argument(
+        "--config",
+        type=Path,
+        default=Path("config.yaml"),
+        help="Config file for output path",
+    )
     args = parser.parse_args()
 
     # Override out_dir from config if available
@@ -177,7 +200,9 @@ def main():
     for r in results:
         status_icon = "✓" if r["status"] == "ok" else "✗"
         print(f"{status_icon} {r['student_name']}: {r['filename']} ({r['status']})")
-    print(f"\nGathered {sum(1 for r in results if r['status'] == 'ok')} notebooks to {out_dir}")
+    print(
+        f"\nGathered {sum(1 for r in results if r['status'] == 'ok')} notebooks to {out_dir}"
+    )
     return 0
 
 

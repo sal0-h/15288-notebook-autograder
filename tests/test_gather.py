@@ -11,10 +11,10 @@ from gather import (
     load_submission_metadata,
 )
 
-
 # ---------------------------------------------------------------------------
 # get_student_name
 # ---------------------------------------------------------------------------
+
 
 class TestGetStudentName:
     def test_plain_submitters(self):
@@ -38,10 +38,12 @@ class TestGetStudentName:
 # load_submission_metadata
 # ---------------------------------------------------------------------------
 
+
 class TestLoadSubmissionMetadata:
     def test_load_valid_yml(self, tmp_path):
         meta = {"submission_123": {"submitters": [{"name": "Alice"}]}}
         import yaml
+
         path = tmp_path / "submission_metadata.yml"
         path.write_text(yaml.dump(meta), encoding="utf-8")
         result = load_submission_metadata(path)
@@ -59,10 +61,14 @@ class TestLoadSubmissionMetadata:
 # gather_submissions (from folder)
 # ---------------------------------------------------------------------------
 
+
 class TestGatherFromFolder:
-    def _make_export_folder(self, tmp_path, metadata: dict, submissions: list[tuple[str, str]]) -> Path:
+    def _make_export_folder(
+        self, tmp_path, metadata: dict, submissions: list[tuple[str, str]]
+    ) -> Path:
         """Create a Gradescope-style export folder. submissions: [(folder_name, notebook_content)]"""
         import yaml
+
         meta_path = tmp_path / "submission_metadata.yml"
         meta_path.write_text(yaml.dump(metadata), encoding="utf-8")
         for folder_name, nb_content in submissions:
@@ -93,7 +99,9 @@ class TestGatherFromFolder:
             "submission_1": {"submitters": [{"name": "Alice"}]},
             "submission_2": {"submitters": [{"name": "Alice"}]},
         }
-        self._make_export_folder(tmp_path, meta, [("submission_1", "{}"), ("submission_2", "{}")])
+        self._make_export_folder(
+            tmp_path, meta, [("submission_1", "{}"), ("submission_2", "{}")]
+        )
         out = tmp_path / "out"
         result = gather_submissions(tmp_path, out, from_zip=False)
         ok = [r for r in result if r["status"] == "ok"]
@@ -112,6 +120,7 @@ class TestGatherFromFolder:
 
     def test_missing_folder(self, tmp_path):
         import yaml
+
         meta = {"submission_999": {"submitters": [{"name": "Bob"}]}}
         meta_path = tmp_path / "submission_metadata.yml"
         meta_path.write_text(yaml.dump(meta), encoding="utf-8")

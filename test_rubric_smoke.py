@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Smoke test for parallel rubric generation."""
+
 import json
 import sys
 from pathlib import Path
@@ -47,10 +48,12 @@ config = {
 
 mock_response = MagicMock()
 mock_response.choices = [MagicMock()]
-mock_response.choices[0].message.content = json.dumps({
-    "4.1": {"points": 2, "items": [{"description": "a", "deduction": 2.0}]},
-    "5.1": {"points": 2, "items": [{"description": "b", "deduction": 2.0}]},
-})
+mock_response.choices[0].message.content = json.dumps(
+    {
+        "4.1": {"points": 2, "items": [{"description": "a", "deduction": 2.0}]},
+        "5.1": {"points": 2, "items": [{"description": "b", "deduction": 2.0}]},
+    }
+)
 
 mock_client = MagicMock()
 mock_client.chat.completions.create.return_value = mock_response

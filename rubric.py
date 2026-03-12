@@ -28,13 +28,13 @@ def _sanitize_llm_text(text: str) -> str:
 
     # Common malformed fragments observed in regenerated rubrics
     replacements = {
-        "\x00d7": "x",   # multiplication symbol artifact
-        "\x00": "",      # strip stray nulls
-        "\x19": "'",     # apostrophe artifact
-        "\u2019": "'",   # normalize curly apostrophe to ASCII
-        "\u2212": "-",   # normalize minus sign to ASCII
-        "\u00d7": "x",   # normalize multiplication symbol to ASCII
-        "\u2248": "~",   # normalize approximately symbol to ASCII
+        "\x00d7": "x",  # multiplication symbol artifact
+        "\x00": "",  # strip stray nulls
+        "\x19": "'",  # apostrophe artifact
+        "\u2019": "'",  # normalize curly apostrophe to ASCII
+        "\u2212": "-",  # normalize minus sign to ASCII
+        "\u00d7": "x",  # normalize multiplication symbol to ASCII
+        "\u2248": "~",  # normalize approximately symbol to ASCII
     }
     for old, new in replacements.items():
         text = text.replace(old, new)
@@ -42,6 +42,7 @@ def _sanitize_llm_text(text: str) -> str:
     # Drop remaining control chars except whitespace controls
     text = "".join(c for c in text if ord(c) >= 32 or c in "\n\r\t")
     return text
+
 
 DEFAULT_RUBRIC_SYSTEM_PROMPT = """You are an expert instructor creating grading rubrics for student lab work.
 
@@ -136,7 +137,16 @@ def _generate_one_group(
     args: tuple[int, list[str], dict, dict, str, str, int, OpenAI | None],
 ) -> tuple[int, list[str], dict[str, dict]]:
     """Generate rubric for one group. Returns (group_idx, group, rubrics_for_group)."""
-    idx, group, solution_parsed, config, rubric_prompt, model, max_completion_tokens, client = args
+    (
+        idx,
+        group,
+        solution_parsed,
+        config,
+        rubric_prompt,
+        model,
+        max_completion_tokens,
+        client,
+    ) = args
     if client is None:
         client = get_openai_client()
     rubrics_for_group: dict[str, dict] = {}
@@ -176,24 +186,34 @@ def _generate_one_group(
                 total_deductions = 0.0
                 for item in raw_items:
                     d = abs(float(item.get("deduction", 0)))
-                    parsed_items.append({
-                        "description": _sanitize_llm_text(str(item.get("description", "")).strip()) or "[missing]",
-                        "deduction": d,
-                    })
+                    parsed_items.append(
+                        {
+                            "description": _sanitize_llm_text(
+                                str(item.get("description", "")).strip()
+                            )
+                            or "[missing]",
+                            "deduction": d,
+                        }
+                    )
                     total_deductions += d
                 if parsed_items and abs(total_deductions - pts) > 0.01:
                     scale = pts / total_deductions if total_deductions else 1.0
                     for item in parsed_items:
                         item["deduction"] = round(item["deduction"] * scale, 2)
                     diff = pts - sum(i["deduction"] for i in parsed_items)
-                    parsed_items[-1]["deduction"] = round(parsed_items[-1]["deduction"] + diff, 2)
+                    parsed_items[-1]["deduction"] = round(
+                        parsed_items[-1]["deduction"] + diff, 2
+                    )
                 rubrics_for_group[normalized] = {"points": pts, "items": parsed_items}
     except Exception as e:
         logger.exception("Rubric generation failed for group %s: %s", group, e)
         for qid in group:
             sol_q = get_question_data(solution_parsed, qid)
             pts = (sol_q or {}).get("points", 0)
-            rubrics_for_group[qid] = {"points": pts, "items": [{"description": "[generation failed]", "deduction": pts}]}
+            rubrics_for_group[qid] = {
+                "points": pts,
+                "items": [{"description": "[generation failed]", "deduction": pts}],
+            }
 
     return (idx, group, rubrics_for_group)
 
@@ -256,7 +276,10 @@ def _review_one_group(
                 new_items = v["items"]
                 if len(new_items) == len(orig_items):
                     for oi, ni in zip(orig_items, new_items):
-                        ni["description"] = _sanitize_llm_text(str(ni.get("description", "")).strip()) or oi["description"]
+                        ni["description"] = (
+                            _sanitize_llm_text(str(ni.get("description", "")).strip())
+                            or oi["description"]
+                        )
                         ni["deduction"] = oi["deduction"]
                 else:
                     # Item count changed — keep originals untouched
@@ -296,7 +319,15 @@ def review_rubrics(
     revised = dict(rubrics)  # start with copy
     for group in groups:
         result = _review_one_group(
-            (group, rubrics, solution_parsed, RUBRIC_REVIEW_SYSTEM_PROMPT, model, max_tokens, client)
+            (
+                group,
+                rubrics,
+                solution_parsed,
+                RUBRIC_REVIEW_SYSTEM_PROMPT,
+                model,
+                max_tokens,
+                client,
+            )
         )
         revised.update(result)
 
@@ -336,7 +367,9 @@ def generate_rubrics(
     model = config.get("rubric_model") or config.get("model") or DEFAULT_MODEL
     workers = config.get("workers", 1)
     max_completion_tokens = config.get("max_completion_tokens", 4096)
-    rubric_prompt = config.get("prompts", {}).get("rubric_system") or DEFAULT_RUBRIC_SYSTEM_PROMPT
+    rubric_prompt = (
+        config.get("prompts", {}).get("rubric_system") or DEFAULT_RUBRIC_SYSTEM_PROMPT
+    )
 
     if grade_only is not None:
         grade_only_set = set(grade_only)
@@ -346,8 +379,20 @@ def generate_rubrics(
     rubrics: dict[str, dict] = {}
     rubrics_lock = threading.Lock()
     total = len(groups)
-    to_process = [(idx, group, solution_parsed, config, rubric_prompt, model, max_completion_tokens, client)
-                  for idx, group in enumerate(groups) if group]
+    to_process = [
+        (
+            idx,
+            group,
+            solution_parsed,
+            config,
+            rubric_prompt,
+            model,
+            max_completion_tokens,
+            client,
+        )
+        for idx, group in enumerate(groups)
+        if group
+    ]
 
     if workers <= 1 or len(to_process) <= 1:
         # Sequential
@@ -366,7 +411,9 @@ def generate_rubrics(
                 if group:
                     progress_callback(idx + 1, total, group, {})
         with ThreadPoolExecutor(max_workers=workers) as pool:
-            futures = {pool.submit(_generate_one_group, item): item for item in to_process}
+            futures = {
+                pool.submit(_generate_one_group, item): item for item in to_process
+            }
             for future in as_completed(futures):
                 idx, group, rubrics_for_group = future.result()
                 with rubrics_lock:
@@ -387,7 +434,9 @@ def main():
     import argparse
 
     logging.basicConfig(level=logging.INFO)
-    parser = argparse.ArgumentParser(description="Generate rubrics from solution notebook")
+    parser = argparse.ArgumentParser(
+        description="Generate rubrics from solution notebook"
+    )
     parser.add_argument("--config", type=Path, default=Path("config.yaml"))
     args = parser.parse_args()
 

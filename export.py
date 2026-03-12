@@ -44,16 +44,21 @@ def export_all(config: dict) -> dict[str, str | int]:
         tests = []
         for qid in q_cols:
             q_data = questions.get(qid, {"score": 0, "max": 0, "feedback": ""})
-            tests.append({
-                "name": f"Q{qid}",
-                "score": q_data.get("score", 0),
-                "max_score": q_data.get("max", 0),
-                "output": q_data.get("feedback", ""),
-                "visibility": "visible",
-            })
+            tests.append(
+                {
+                    "name": f"Q{qid}",
+                    "score": q_data.get("score", 0),
+                    "max_score": q_data.get("max", 0),
+                    "output": q_data.get("feedback", ""),
+                    "visibility": "visible",
+                }
+            )
 
         gs_data = {"tests": tests}
-        safe_name = "".join(c for c in student_name if c not in '/\\:*?"<>|') or "unknown_student"
+        safe_name = (
+            "".join(c for c in student_name if c not in '/\\:*?"<>|')
+            or "unknown_student"
+        )
         gs_path = gradescope_dir / f"{safe_name}.json"
         gs_path.write_text(json.dumps(gs_data, indent=2), encoding="utf-8")
 
@@ -70,7 +75,11 @@ def export_all(config: dict) -> dict[str, str | int]:
         row["summary_feedback"] = r.get("summary_feedback", "")
         rows.append(row)
 
-    cols = ["student_name", "total_score"] + [f"Q{q}" for q in q_cols] + ["summary_feedback"]
+    cols = (
+        ["student_name", "total_score"]
+        + [f"Q{q}" for q in q_cols]
+        + ["summary_feedback"]
+    )
     df = pd.DataFrame(rows)
     for c in cols:
         if c not in df.columns:
@@ -90,6 +99,7 @@ def export_all(config: dict) -> dict[str, str | int]:
 
 def main():
     import argparse
+
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=Path, default=Path("config.yaml"))
     args = parser.parse_args()
