@@ -1,184 +1,130 @@
-# AI Autograder for Gradescope
+# Gradescope Notebook Autograder
 
-AI-assisted grading pipeline for Jupyter notebook assignments.
+LLM-assisted grading pipeline for Jupyter notebook assignments submitted through Gradescope.
 
-It parses solution and student notebooks, grades with an OpenAI model, and exports:
-- Gradescope JSON results
-- Excel gradebook
-- Optional Gradescope autograder ZIP
+This repository is built for course staff who need a practical workflow to:
+- ingest a Gradescope export,
+- parse notebook answers by question,
+- generate or refine rubrics from a reference solution,
+- grade at scale with OpenAI models,
+- review edge cases, and
+- export final results back to Gradescope and Excel.
 
-Built for CMU Qatar courses (15-288).
+The codebase currently targets Python notebook assignments and is organized around assignment-scoped outputs so each run is reproducible, resumable, and easy to inspect.
 
-## Table of Contents
+## Why this exists
 
-1. Overview
-2. Architecture
-3. Pipeline
-4. Configuration
-5. CLI Usage
-6. Web UI and API
-7. Testing
-8. Notes and Guardrails
+Manual notebook grading is slow, inconsistent, and difficult to scale once classes get large. This project automates the repetitive parts of the grading loop while still keeping humans in control of:
+- prompt design,
+- rubric quality,
+- review of low-confidence cases,
+- calibration, and
+- final export.
 
-## Overview
+It is especially useful for courses where students submit notebooks containing a mix of code, markdown explanations, outputs, and plots.
 
-Core capabilities:
-- Gather student notebooks from a Gradescope export (ZIP or extracted folder)
-- Parse notebooks into structured JSON per question
-- Optionally generate rubrics from the solution notebook
-- Grade by question groups with retry + validation
-- Optionally calibrate (z-score outlier detection)
-- Export grades to Gradescope JSON and Excel
+## Core capabilities
 
-Default pipeline from `main.py` is:
-- `parse -> grade -> export`
+- Gather notebook submissions from a Gradescope ZIP export or extracted folder.
+- Parse solution and student notebooks into normalized per-question JSON.
+- Generate rubrics from the reference solution, with an optional rubric review pass.
+- Grade question groups with structured JSON validation and retry logic.
+- Resume grading from saved results instead of starting over.
+- Regrade a subset of questions with grade_only and merge results back in.
+- Flag score outliers through a calibration pass.
+- Export Gradescope JSON, Excel gradebooks, and optional autograder ZIP artifacts.
+- Run either from the CLI or through a FastAPI web interface.
 
-Optional steps:
-- `gather`
-- `generate-rubrics`
-- `calibrate`
+## End-to-end workflow
 
-## Architecture
+The default grading path is:
 
-Current grading stack is split into focused modules:
-- `grading_models.py`: Pydantic grading models and shared constants
-- `prompt_builder.py`: token estimation, JSON extraction, sanitization, prompt construction
-- `grade.py`: per-group and per-student grading logic
-- `batch_grader.py`: batch orchestration (sequential/parallel, resume support)
+parse -> grade -> export
 
-Main project files:
-- `main.py`: CLI pipeline entrypoint
-- `app.py`: FastAPI backend + static UI serving
-- `gather.py`: submission extraction and normalization
-- `parse_notebook.py`: notebook parser
-- `rubric.py`: rubric generation and optional rubric review pass
-- `calibrate.py`: outlier detection
-- `export.py`: Gradescope + Excel export, autograder ZIP build
-- `estimate.py`: cost and token estimates
-- `linter_export.py`: linter autograder ZIP
-- `utils.py`: config loading/saving, assignment-scoped logging, shared grade_only helpers, OpenAI client, shared validation models
+Optional steps can be added before or after that path:
 
-Output layout is assignment-scoped:
-- `output/{assignment_name}/submissions/`
-- `output/{assignment_name}/parsed/`
-- `output/{assignment_name}/solution_parsed.json`
-- `output/{assignment_name}/graded_results.json`
-- `output/{assignment_name}/calibration_report.json`
-- `output/{assignment_name}/gradescope/*.json`
-- `output/{assignment_name}/Final_Grades.xlsx`
-- `output/{assignment_name}/autograder.log`
+gather -> parse -> generate-rubrics -> grade -> calibrate -> export
 
-## Pipeline
+### 1. Gather
 
-### 1) Gather
+Reads a Gradescope export and copies student notebooks into a normalized submissions directory.
 
-Input:
-- Gradescope export ZIP, or extracted export folder
+### 2. Parse
 
-Output:
-- Notebook files in `submissions_dir`
+Parses the reference notebook and each student notebook into structured question-level data using configurable section and question regex patterns.
 
-What it does:
-- Reads Gradescope metadata
-- Finds each student notebook
-- Copies with normalized names
+### 3. Generate rubrics
 
-### 2) Parse
+Builds question rubrics from the reference solution. An optional review pass can make the rubric less brittle when the original solution contains incidental implementation choices.
 
-Input:
-- Solution notebook (`solution_notebook`)
-- Student notebooks from `submissions_dir`
+### 4. Grade
 
-Output:
-- `solution_parsed.json`
-- Per-student JSON files in `parsed_dir`
+Sends grouped questions to the model, validates the returned JSON, retries malformed responses, and incrementally writes results so interrupted runs can resume.
 
-What it does:
-- Detects sections/questions via regex from config
-- Extracts code, markdown, text outputs, and images
-- Produces normalized per-question payloads used by grading
+### 5. Calibrate
 
-### 3) Generate Rubrics (optional)
+Computes simple score distribution statistics and flags outliers for manual review.
 
-Input:
-- `solution_parsed.json`
+### 6. Export
 
-Output:
-- `rubrics` saved in assignment config
+Writes final artifacts for Gradescope and staff workflows, including JSON, Excel, and optional autograder packaging.
 
-What it does:
-- Generates rubric items per question via LLM
-- Optional review pass (`rubric_review`) can soften over-specific criteria while preserving deductions/points
+## Repository layout
 
-### 4) Grade
+Main pipeline modules:
 
-Input:
-- Parsed solution + parsed student files
-- Question groups from `grading.question_groups`
+- main.py: CLI entrypoint that writes config and runs selected pipeline stages.
+- app.py: FastAPI backend plus static UI serving.
+- gather.py: submission extraction and normalization.
+- parse_notebook.py: notebook parser for solution and student files.
+- rubric.py: rubric generation and rubric review flow.
+- grade.py: single-student grading logic.
+- batch_grader.py: sequential and parallel batch orchestration.
+- calibrate.py: outlier detection on graded results.
+- export.py: Gradescope and Excel export, plus autograder ZIP creation.
+- linter_export.py: packaging for a notebook-format linter autograder.
+- estimate.py: token and cost estimation helpers.
+- prompt_builder.py: prompt construction, sanitization, and JSON extraction.
+- grading_models.py: shared grading schemas and validation models.
+- utils.py: config I/O, assignment-scoped logging, OpenAI client setup, and shared helpers.
 
-Output:
-- `graded_results.json` (incrementally updated)
+Supporting directories:
 
-What it does:
-- Grades per group with validated JSON responses
-- Retries malformed/partial LLM responses
-- Supports `grade_only` filtering
-- Supports resume (already graded students are skipped)
-- Supports optional `grade_only_merge` behavior used by API regrading paths
+- tests/: unit and integration tests.
+- ui/: browser-based setup, grading, and export interface.
+- docs/: supporting documentation.
+- output/: assignment-scoped runtime artifacts.
 
-### 5) Calibrate (optional)
+## Output model
 
-Input:
-- `graded_results.json`
+The project uses an output-first assignment layout.
 
-Output:
-- `calibration_report.json`
+Root-level config:
+- config.yaml stores the active assignment pointer and root-level controls such as prompts, rubric review, and whether the reference solution is included during grading.
 
-What it does:
-- Computes per-question score distribution
-- Flags outliers by z-score
+Assignment runtime data:
+- output/{assignment_name}/config.yaml
+- output/{assignment_name}/submissions/
+- output/{assignment_name}/parsed/
+- output/{assignment_name}/solution_parsed.json
+- output/{assignment_name}/graded_results.json
+- output/{assignment_name}/calibration_report.json
+- output/{assignment_name}/gradescope/
+- output/{assignment_name}/Final_Grades.xlsx
+- output/{assignment_name}/autograder.log
 
-### 6) Export
+This separation matters because switching assignments should move both artifacts and logs with the active assignment.
 
-Input:
-- `graded_results.json`
+## Requirements
 
-Output:
-- `gradescope/*.json`
-- `Final_Grades.xlsx`
-- Optional `gradescope_autograder.zip`
-- Optional `linter_autograder.zip`
+- Python 3.10 or newer is recommended.
+- Access to an OpenAI Developer Platform project and an API key.
+- A reference notebook for the assignment.
+- A Gradescope ZIP export or an already extracted submissions folder.
 
-## Configuration
+Dependencies are listed in requirements.txt and include FastAPI, Pydantic, pandas, openpyxl, tiktoken, and the OpenAI Python SDK.
 
-The project uses an output-first config layout:
-- Root `config.yaml` keeps assignment pointer + root-level controls (`prompts`, `rubric_review`, `include_reference_in_grading`)
-- Assignment runtime config is stored at `output/{assignment_name}/config.yaml`
-
-Key fields:
-- `assignment_name`: assignment identifier; output is scoped under this name
-- `model`: grading model
-- `rubric_model`: rubric generation model (falls back to `model` when empty)
-- `solution_notebook`: path to solution notebook
-- `workers`: grading worker count
-- `max_prompt_tokens`: prompt token budget
-- `max_completion_tokens`: completion token budget
-- `rubric_review`: enable rubric review pass
-- `include_reference_in_grading`: include reference solution in grading prompts
-- `parsing.section_regex`: section matcher
-- `parsing.question_regex`: question matcher
-- `parsing.keep_images`: include parsed image payloads
-- `grading.question_groups`: grouped question IDs for each grading call
-- `grading.grade_only`: optional subset of question IDs to grade
-- `grading.grade_only_merge`: when true, grade only the selected questions and merge those results into existing saved grades
-- `rubrics`: optional per-question rubric map
-- `prompts.system`: grading system prompt
-- `prompts.rubric_system`: rubric generation system prompt
-- `upload_max_mb`: max ZIP upload size for `/gather` (default 500)
-
-## CLI Usage
-
-### Setup
+## Installation
 
 ```bash
 python -m venv .venv
@@ -186,39 +132,92 @@ python -m venv .venv
 echo "key=sk-..." > .env
 ```
 
-### Main pipeline (`main.py`)
+API key lookup order:
+
+- .env entry named key
+- OPENAI_API_KEY environment variable
+
+## Quick start
+
+### Option A: run the CLI pipeline
+
+The default main.py flow writes config and runs:
+
+parse -> grade -> export
+
+Example commands:
 
 ```bash
-# Default: parse + grade + export
 python main.py
-
-# Add gather by supplying a Gradescope ZIP
 python main.py --zip gradescope_export.zip
-
-# Only write config
+python main.py --steps parse generate-rubrics grade export
 python main.py --config-only
-
-# Explicit steps
-python main.py --steps parse
-python main.py --steps parse generate-rubrics grade calibrate export
-
-# Overrides
 python main.py --model gpt-5-mini
 python main.py --solution path/to/solution.ipynb
 python main.py --submissions-dir path/to/submissions
-python main.py --no-write-config
 python main.py --config my_config.yaml
+python main.py --no-write-config
 ```
 
-Available `--steps` values:
-- `gather`
-- `parse`
-- `generate-rubrics`
-- `grade`
-- `calibrate`
-- `export`
+Supported pipeline step names:
 
-### Module entrypoints
+- gather
+- parse
+- generate-rubrics
+- grade
+- calibrate
+- export
+
+### Option B: run the web app
+
+```bash
+uvicorn app:app --reload
+```
+
+Then open http://127.0.0.1:8000.
+
+The UI is organized around the same staff workflow:
+
+1. Setup
+2. Gather
+3. Parse
+4. Rubrics
+5. Grade
+6. Review
+7. Export
+
+## Configuration guide
+
+Important fields in config.yaml:
+
+- assignment_name: the assignment identifier used to scope output.
+- model: grading model.
+- rubric_model: optional rubric-generation model; falls back to model when empty.
+- solution_notebook: path to the reference notebook.
+- workers: parallel grading worker count.
+- max_prompt_tokens: prompt budget.
+- max_completion_tokens: completion budget.
+- include_reference_in_grading: whether to embed the reference solution in grading prompts.
+- rubric_review: whether to run the rubric review pass.
+- parsing.section_regex: regex used to identify sections.
+- parsing.question_regex: regex used to identify question IDs and points.
+- parsing.keep_images: whether image payloads are preserved during parsing.
+- grading.question_groups: question groupings for each grading call.
+- grading.grade_only: optional subset of questions for partial regrading.
+- grading.grade_only_merge: whether partial grading should merge into saved results.
+- prompts.system: grading system prompt.
+- prompts.rubric_system: rubric-generation prompt.
+- rubrics: optional question rubric map.
+
+In practice, the most important configuration work is getting three things right:
+
+- notebook question regexes,
+- grading question groups, and
+- prompt wording that is strict enough to be consistent but flexible enough to accept equivalent student solutions.
+
+## Direct module entrypoints
+
+Each stage can also be run independently.
 
 ```bash
 python gather.py --zip gradescope_export.zip
@@ -231,86 +230,89 @@ python export.py --config config.yaml
 python export.py --config config.yaml --autograder-zip
 ```
 
-## Web UI and API
+## Web API summary
 
-Run server:
+Configuration:
 
-```bash
-uvicorn app:app --reload
-```
-
-Open `http://127.0.0.1:8000`.
-
-### UI tabs
-
-1. Setup
-2. Gather
-3. Parse
-4. Rubrics
-5. Grade
-6. Review
-7. Export
-
-### API endpoints
-
-Config:
-- `GET /config`
-- `PUT /config`
-- `GET /config/default`
+- GET /config
+- PUT /config
+- GET /config/default
 
 Setup helpers:
-- `POST /parse-solution-upload`
-- `POST /parse-solution`
+
+- POST /parse-solution-upload
+- POST /parse-solution
 
 Pipeline:
-- `POST /gather`
-- `POST /gather-from-folder`
-- `POST /parse`
-- `GET /generate-rubrics` (SSE stream)
-- `POST /generate-rubrics` (blocking)
-- `GET /grade/status`
-- `GET /grade` (SSE stream)
-- `POST /grade/{student_name}` (single student regrade)
-- `POST /calibrate`
-- `POST /export`
+
+- POST /gather
+- POST /gather-from-folder
+- POST /parse
+- GET /generate-rubrics
+- POST /generate-rubrics
+- GET /grade/status
+- GET /grade
+- POST /grade/{student_name}
+- POST /calibrate
+- POST /export
 
 Rubrics and estimates:
-- `GET /rubrics`
-- `PUT /rubrics`
-- `GET /estimate/rubrics`
-- `GET /estimate/grade`
-- `GET /estimate/grade/{student_name}`
+
+- GET /rubrics
+- PUT /rubrics
+- GET /estimate/rubrics
+- GET /estimate/grade
+- GET /estimate/grade/{student_name}
 
 Results and parsed data:
-- `GET /results`
-- `PUT /results/{student_name}`
-- `GET /parsed/{student_name}`
-- `GET /calibration`
+
+- GET /results
+- PUT /results/{student_name}
+- GET /parsed/{student_name}
+- GET /calibration
 
 Downloads:
-- `GET /export/excel`
-- `GET /export/autograder-zip`
-- `GET /export/linter-zip`
+
+- GET /export/excel
+- GET /export/autograder-zip
+- GET /export/linter-zip
 
 Static UI:
-- `GET /`
-- `GET /ui/{path}`
+
+- GET /
+- GET /ui/{path}
 
 ## Testing
+
+Run the full test suite with:
 
 ```bash
 .venv/bin/python -m pytest tests/ -q
 ```
 
-Test suite covers parsing, grading, rubric generation, API behavior, export paths, and utilities.
+Useful focused runs while editing:
 
-## Notes and Guardrails
+```bash
+.venv/bin/python -m pytest tests/test_app.py -q
+.venv/bin/python -m pytest tests/test_grade.py -q
+```
 
-- API key lookup order:
-  - `.env` key: `key=...`
-  - fallback: `OPENAI_API_KEY`
-- Both the CLI and web app write logs to the active assignment's `output/{assignment_name}/autograder.log`.
-- Student submission content is treated as untrusted input and sanitized before prompt injection into model messages.
-- Grading responses are JSON-validated; malformed responses trigger retries.
-- Empty/missing submissions are normalized to `[no submission]`.
-- Re-running grading resumes from existing `graded_results.json` unless regrade endpoints are used.
+The test suite covers parsing, grading, rubric generation, export paths, utilities, and the FastAPI app.
+
+## Safety and grading guardrails
+
+- Student notebook content is treated as untrusted input.
+- Prompt-injection boundaries and sanitizer behavior should remain intact.
+- Grading responses are JSON-validated before use.
+- Malformed or partial model output is retried.
+- Empty submissions are normalized to a no-submission state.
+- Re-running grading resumes from the saved graded_results.json unless an explicit regrade path is used.
+- Logs are written to the active assignment's output directory, not a shared global log.
+
+## Current scope and limitations
+
+- The project is designed around Python notebook grading, not arbitrary programming languages.
+- Parsing quality depends on the assignment's section and question regex patterns.
+- Rubric quality depends on both the reference notebook and the rubric-generation prompt.
+- Calibration is meant for review support, not as a replacement for grader judgment.
+- For high-stakes use, teams should still spot-check graded results before release.
