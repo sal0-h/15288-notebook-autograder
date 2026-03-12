@@ -155,6 +155,23 @@ Examples:
         print(f"Invalid config: {e}")
         return 1
 
+    # Set up file logging to output_dir/autograder.log (same as web app)
+    out_dir = Path(config.get("output_dir", "output"))
+    out_dir.mkdir(parents=True, exist_ok=True)
+    log_path = out_dir / "autograder.log"
+    root = logging.getLogger()
+    if not any(
+        getattr(h, "baseFilename", "").endswith("autograder.log")
+        for h in root.handlers
+        if isinstance(h, logging.FileHandler)
+    ):
+        handler = logging.FileHandler(log_path, encoding="utf-8")
+        handler.setFormatter(
+            logging.Formatter("%(asctime)s %(levelname)s [%(name)s] %(message)s")
+        )
+        root.addHandler(handler)
+        logging.info("Logging to %s", log_path)
+
     if args.config_only:
         return 0
 

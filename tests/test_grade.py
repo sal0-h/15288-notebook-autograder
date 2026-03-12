@@ -265,7 +265,7 @@ class TestBuildGroupPrompt:
         messages, _ = build_group_prompt(["4.1"], sol, stu, "You grade.")
         content = messages[1]["content"]
         all_text = " ".join(p["text"] for p in content if p["type"] == "text")
-        assert "not found in student submission" in all_text
+        assert "no submission" in all_text
 
     def test_rubric_items_rendered_in_prompt(self):
         sol = self._minimal_parsed("1.1")

@@ -121,6 +121,25 @@ def get_question_data(parsed: dict, qid: str) -> dict | None:
     return None
 
 
+NO_SUBMISSION = "[no submission]"
+
+
+def _normalize_no_submission_feedback(feedback: str) -> str:
+    """If feedback indicates no submission, return only '[no submission]' (no extra text)."""
+    if not feedback or not feedback.strip():
+        return feedback
+    s = feedback.strip().lower()
+    if "[no submission]" in s:
+        return NO_SUBMISSION
+    if "no submission" in s:
+        return NO_SUBMISSION
+    if "not found in the student submission" in s:
+        return NO_SUBMISSION
+    if "question was not found" in s:
+        return NO_SUBMISSION
+    return feedback
+
+
 _enc_cache = None
 
 
@@ -368,14 +387,14 @@ def build_group_prompt(
             if stu_q.get("answer_markdown_concat"):
                 stu_text += f"Answer:\n{_sanitize_student_text(stu_q['answer_markdown_concat'])}\n\n"
             if not has_any:
-                stu_text += "(no answer submitted)\n"
+                stu_text += "(no submission)\n"
             for cell in stu_q.get("answer_cells", []):
                 for img in cell.get("images", []):
                     stu_images.append(img)
             if stu_images:
                 stu_text += f"[{len(stu_images)} student plot(s) follow below]\n"
         else:
-            stu_text += "(question not found in student submission)\n"
+            stu_text += "(no submission)\n"
         stu_text += "<<<END_STUDENT_SUBMISSION>>>\n\n"
 
         content_parts.append({"type": "text", "text": stu_text})
@@ -598,17 +617,44 @@ def grade_student(
     usage_total = {"prompt_tokens": 0, "completion_tokens": 0}
 
     logger.info("Grading %s (%d groups)", student_name, len(groups))
-    for group in groups:
+    for group_idx, group in enumerate(groups):
         if not group:
             continue
-        grading_response, qid_to_max, usage = grade_group(
+        logger.info(
+            "Grading %s — group %d/%d: %s",
+            student_name,
+            group_idx + 1,
+            len(groups),
             group,
-            solution_parsed,
-            student_parsed,
-            config,
-            client,
-            student_name=student_name,
         )
+        all_missing = all(
+            get_question_data(student_parsed, qid) is None for qid in group
+        )
+        if all_missing:
+            logger.info(
+                "Skipping group %s for %s (all questions missing)",
+                group,
+                student_name,
+            )
+            qid_to_max = {}
+            for qid in group:
+                sol_q = get_question_data(solution_parsed, qid)
+                qid_to_max[qid] = (sol_q or {}).get("points", 0)
+            grades = {
+                qid: QuestionGrade(score=0.0, feedback="[no submission]")
+                for qid in group
+            }
+            grading_response = GradingResponse(grades=grades)
+            usage = {}
+        else:
+            grading_response, qid_to_max, usage = grade_group(
+                group,
+                solution_parsed,
+                student_parsed,
+                config,
+                client,
+                student_name=student_name,
+            )
         usage_total["prompt_tokens"] += usage.get("prompt_tokens", 0)
         usage_total["completion_tokens"] += usage.get("completion_tokens", 0)
 
@@ -620,7 +666,7 @@ def grade_student(
                 qid, QuestionGrade(score=0.0, feedback="[missing]")
             )
             score = max(0.0, min(float(max_pts), q_grade.score))
-            feedback = q_grade.feedback.strip()
+            feedback = _normalize_no_submission_feedback(q_grade.feedback.strip())
 
             questions[qid] = {
                 "score": score,
@@ -925,6 +971,21 @@ def grade_all_students(
                 "cost_usd": round(cost, 4),
                 "model": model,
             }
+
+
+def cleanup_graded_results(path: Path) -> int:
+    """Normalize [no submission] feedback in graded_results.json. Returns count of cleaned entries."""
+    data = json.loads(path.read_text())
+    count = 0
+    for result in data:
+        for qid, q in result.get("questions", {}).items():
+            fb = q.get("feedback", "")
+            normalized = _normalize_no_submission_feedback(fb)
+            if normalized != fb:
+                q["feedback"] = normalized
+                count += 1
+    path.write_text(json.dumps(data, indent=2))
+    return count
 
 
 def main():

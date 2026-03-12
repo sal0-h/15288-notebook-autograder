@@ -112,7 +112,7 @@ def export_all(config: dict) -> dict[str, str | int]:
                 "score": q_data.get("score", 0),
                 "max_score": q_data.get("max", 0),
                 "output": q_data.get("feedback", ""),
-                "output_format": "markdown",
+                "output_format": "md",
                 "visibility": "visible",
             })
 
