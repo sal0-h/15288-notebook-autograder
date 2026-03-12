@@ -296,11 +296,13 @@ def review_rubrics(
     config: dict,
     solution_parsed: dict,
     client: OpenAI | None = None,
+    groups_to_review: list[list[str]] | None = None,
 ) -> dict[str, dict]:
     """Optional second pass: review generated rubrics against question text.
 
     Softens criteria that hardcode reference-solution-specific values when
     the question text doesn't explicitly require them.
+    When groups_to_review is set, only reviews those groups (for partial generation).
     """
     if client is None:
         client = get_openai_client()
@@ -308,10 +310,10 @@ def review_rubrics(
     model = config.get("rubric_model") or config.get("model") or DEFAULT_MODEL
     max_tokens = config.get("max_completion_tokens", 4096)
     grading_config = config.get("grading", {})
-    groups: list[list[str]] = grading_config.get("question_groups", [])
+    groups: list[list[str]] = groups_to_review or grading_config.get("question_groups", [])
     grade_only: list[str] | None = grading_config.get("grade_only")
 
-    if grade_only is not None:
+    if groups_to_review is None and grade_only is not None:
         grade_only_set = set(grade_only)
         groups = [[q for q in group if q in grade_only_set] for group in groups]
         groups = [g for g in groups if g]
@@ -339,12 +341,15 @@ def generate_rubrics(
     config: dict,
     client: OpenAI | None = None,
     progress_callback: Callable[[int, int, list, dict], None] | None = None,
+    group_indices: list[int] | None = None,
 ) -> dict[str, dict[str, int | str]]:
     """
     Generate grading rubrics from solution_parsed.json using the LLM.
 
     Uses question_groups from config. One LLM call per group.
     When grade_only is set, only generates for those questions.
+    When group_indices is set, only generates for those groups (0-based) and merges
+    into existing rubrics (does not overwrite others).
     Uses config.workers (default 1) for parallel generation.
     progress_callback(group_index, total_groups, group, rubrics_so_far) is called after each group.
     Returns a dict: { "qid": {"points": N, "items": [{"description": "...", "deduction": ...}], ...} }
@@ -376,7 +381,17 @@ def generate_rubrics(
         groups = [[q for q in group if q in grade_only_set] for group in groups]
         groups = [g for g in groups if g]
 
-    rubrics: dict[str, dict] = {}
+    # When group_indices: only process those groups; merge with existing
+    partial = group_indices is not None
+    if group_indices is not None:
+        valid = [i for i in group_indices if 0 <= i < len(groups)]
+        if not valid:
+            raise ValueError(
+                f"Invalid group_indices {group_indices}. Valid range: 0–{len(groups) - 1}."
+            )
+        groups = [groups[i] for i in sorted(set(valid))]
+
+    rubrics: dict[str, dict] = dict(config.get("rubrics", {})) if partial else {}
     rubrics_lock = threading.Lock()
     total = len(groups)
     to_process = [
@@ -425,7 +440,10 @@ def generate_rubrics(
     # Optional rubric review pass (Idea #2)
     if config.get("rubric_review", False):
         logger.info("Running rubric review pass...")
-        rubrics = review_rubrics(rubrics, config, solution_parsed, client)
+        rubrics = review_rubrics(
+            rubrics, config, solution_parsed, client,
+            groups_to_review=groups if partial else None,
+        )
 
     return rubrics
 

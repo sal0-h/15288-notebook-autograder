@@ -140,6 +140,11 @@
     <div id="panel-rubrics" class="panel">
         <h2>Rubrics</h2>
         <p class="mb-2">Generate grading criteria from the solution notebook, then review and edit before grading.</p>
+        <div class="mb-2">
+            <div class="mb-1" style="font-size:0.9rem;font-weight:500">Generate for:</div>
+            <div id="rubricGroupCheckboxes" style="display:flex;flex-wrap:wrap;gap:12px 20px;margin-bottom:10px"></div>
+            <p class="text-muted" style="font-size:0.85rem;margin:0">Leave all unchecked to generate for every group. Check specific groups to generate only those (merges into existing, does not overwrite others).</p>
+        </div>
         <div class="mb-2" style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
             <button class="btn" id="rubricGenerateBtn">Generate Rubrics</button>
             <span id="rubricEstimate" class="status-ok" style="font-size:0.85rem"></span>
@@ -190,9 +195,10 @@
         <div id="exportResults" style="margin-top:8px"></div>
         <div class="mt-2" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
             <a id="excelDownload" class="btn btn-secondary hidden" href="/export/excel" download="Final_Grades.xlsx">Download Excel</a>
+            <a id="linterZipDownload" class="btn btn-secondary" href="/export/linter-zip" download="linter_autograder.zip">Download Linter Autograder ZIP</a>
             <a id="autograderZipDownload" class="btn btn-secondary" href="/export/autograder-zip" download="gradescope_autograder.zip">Download Gradescope Autograder ZIP</a>
         </div>
-        <p class="mt-2 text-muted" style="font-size:0.9em">Upload the ZIP in Gradescope: Configure Autograder → Upload. Then run Manage Submissions → Rerun Autograders.</p>
+        <p class="mt-2 text-muted" style="font-size:0.9em">Linter ZIP: pre-deadline format check (0 pts). Gradescope ZIP: post-deadline, uses pre-computed grades. Upload in Gradescope: Configure Autograder → Upload. Then run Manage Submissions → Rerun Autograders.</p>
     </div>
 </div>
 

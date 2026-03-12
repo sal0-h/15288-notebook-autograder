@@ -50,7 +50,7 @@ _rubric_lock = threading.Lock()
 
 DEFAULT_UPLOAD_MB = 500
 
-from fastapi import FastAPI, File, Form, UploadFile, HTTPException, Body
+from fastapi import FastAPI, File, Form, UploadFile, HTTPException, Body, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from sse_starlette.sse import EventSourceResponse
@@ -62,6 +62,7 @@ from gather import gather_submissions
 from parse_notebook import parse_all_students, parse_notebook, get_all_question_ids
 from grade import grade_all_students, grade_student, validate_question_groups
 from export import export_all, export_autograder_zip
+from linter_export import export_linter_zip
 from rubric import generate_rubrics
 from calibrate import run_calibration
 from estimate import estimate_rubrics, estimate_grade
@@ -349,8 +350,25 @@ async def api_parse():
 # ---------------------------------------------------------------------------
 
 
+def _parse_group_indices_param(groups: str | None) -> list[int] | None:
+    """Parse ?groups=0,2,4 into list of ints or None."""
+    if not groups or not groups.strip():
+        return None
+    out = []
+    for s in groups.split(","):
+        s = s.strip()
+        if s.isdigit():
+            out.append(int(s))
+    return out if out else None
+
+
 @app.get("/generate-rubrics")
-async def api_generate_rubrics_stream():
+async def api_generate_rubrics_stream(
+    groups: str | None = Query(
+        None,
+        description="Generate only for these group indices (0-based, e.g. 8 or 0,2,4). Merges into existing rubrics.",
+    ),
+):
     """SSE stream: generates rubrics from solution notebook, emits progress, saves to config when done."""
     if not _rubric_lock.acquire(blocking=False):
         raise HTTPException(
@@ -358,6 +376,7 @@ async def api_generate_rubrics_stream():
             detail="Rubric generation already in progress. Wait for it to finish or refresh.",
         )
     thread_started = False
+    group_indices = _parse_group_indices_param(groups)
     try:
         config = load_config()
         queue: asyncio.Queue = asyncio.Queue()
@@ -382,7 +401,11 @@ async def api_generate_rubrics_stream():
                         },
                     )
 
-                rubrics = generate_rubrics(config, progress_callback=progress_cb)
+                rubrics = generate_rubrics(
+                    config,
+                    progress_callback=progress_cb,
+                    group_indices=group_indices,
+                )
                 config["rubrics"] = rubrics
                 save_config(config)
                 loop.call_soon_threadsafe(
@@ -420,16 +443,25 @@ async def api_generate_rubrics_stream():
 
 
 @app.post("/generate-rubrics")
-async def api_generate_rubrics_post():
-    """Generate rubrics (blocking). Saves to config. Use GET /generate-rubrics for progress stream."""
+async def api_generate_rubrics_post(
+    body: dict | None = Body(None),
+):
+    """Generate rubrics (blocking). Saves to config. Use GET /generate-rubrics for progress stream.
+    Body: {"group_indices": [8]} to generate only for those groups (merges, does not overwrite)."""
     if not _rubric_lock.acquire(blocking=False):
         raise HTTPException(
             status_code=409,
             detail="Rubric generation already in progress. Wait for it to finish or refresh.",
         )
+    group_indices = None
+    if body and body.get("group_indices") is not None:
+        gi = body["group_indices"]
+        group_indices = gi if isinstance(gi, list) else [int(gi)]
     try:
         config = load_config()
-        rubrics = await asyncio.to_thread(generate_rubrics, config)
+        rubrics = await asyncio.to_thread(
+            generate_rubrics, config, group_indices=group_indices
+        )
         config["rubrics"] = rubrics
         save_config(config)
         return {"rubrics": rubrics}
@@ -732,6 +764,13 @@ def api_download_autograder_zip():
     export_all(config)  # Ensure gradescope/*.json exist
     zip_path = export_autograder_zip(config)
     return FileResponse(zip_path, filename="gradescope_autograder.zip")
+
+
+@app.get("/export/linter-zip")
+def api_download_linter_zip():
+    """Create linter autograder zip (Phase 1, pre-deadline). No grading required."""
+    zip_path = export_linter_zip(None)
+    return FileResponse(zip_path, filename="linter_autograder.zip")
 
 
 # ---------------------------------------------------------------------------

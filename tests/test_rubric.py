@@ -182,3 +182,42 @@ class TestGenerateRubrics:
         }
         with pytest.raises(FileNotFoundError, match="Solution parsed not found"):
             generate_rubrics(config)
+
+    def test_group_indices_merges_into_existing(self, tmp_path):
+        """When group_indices is set, only generates for those groups and merges into existing."""
+        sol = _solution_parsed(["4.1", "4.2", "5.1"])
+        (tmp_path / "solution_parsed.json").write_text(
+            json.dumps(sol), encoding="utf-8"
+        )
+
+        existing_rubrics = {
+            "4.1": {"points": 2, "items": [{"description": "Existing 4.1", "deduction": 2.0}]},
+            "4.2": {"points": 2, "items": [{"description": "Existing 4.2", "deduction": 2.0}]},
+        }
+
+        config = {
+            "output_dir": str(tmp_path),
+            "grading": {"question_groups": [["4.1", "4.2"], ["5.1"]]},
+            "model": "gpt-4o",
+            "max_completion_tokens": 4096,
+            "rubrics": existing_rubrics,
+        }
+
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message.content = json.dumps(
+            {"5.1": {"points": 2, "items": [{"description": "New 5.1", "deduction": 2.0}]}}
+        )
+
+        with patch("rubric.get_openai_client") as mock_get_client:
+            mock_client = MagicMock()
+            mock_client.chat.completions.create.return_value = mock_response
+            mock_get_client.return_value = mock_client
+
+            rubrics = generate_rubrics(config, client=mock_client, group_indices=[1])
+
+        # Existing rubrics preserved (group 0 not processed)
+        assert rubrics["4.1"]["items"][0]["description"] == "Existing 4.1"
+        assert rubrics["4.2"]["items"][0]["description"] == "Existing 4.2"
+        # Group 1 (5.1) generated
+        assert rubrics["5.1"]["items"][0]["description"] == "New 5.1"

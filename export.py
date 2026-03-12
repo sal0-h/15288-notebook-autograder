@@ -112,6 +112,7 @@ def export_all(config: dict) -> dict[str, str | int]:
                 "score": q_data.get("score", 0),
                 "max_score": q_data.get("max", 0),
                 "output": q_data.get("feedback", ""),
+                "output_format": "markdown",
                 "visibility": "visible",
             })
 
@@ -184,14 +185,17 @@ def export_autograder_zip(config: dict) -> Path:
             f"No JSON files in {gradescope_dir}. Run export first."
         )
 
-    # Gradescope requires setup.sh and run_autograder to be executable
+    # Gradescope requires setup.sh and run_autograder to be executable (Unix)
     exec_attr = 0o755 << 16  # Unix executable bits in zip external_attr
+    create_system = 3  # Unix
 
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
         zi = zipfile.ZipInfo("setup.sh")
+        zi.create_system = create_system
         zi.external_attr = exec_attr
         zf.writestr(zi, SETUP_SH)
         zi = zipfile.ZipInfo("run_autograder")
+        zi.create_system = create_system
         zi.external_attr = exec_attr
         zf.writestr(zi, RUN_AUTOGRADER)
         for jf in json_files:

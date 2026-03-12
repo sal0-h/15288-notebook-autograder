@@ -347,6 +347,26 @@ document.getElementById("parseBtn").onclick = async () => {
 let rubricQuestionGroups = [];
 let fullRubricsCache = {};
 
+async function loadRubricGroups() {
+    try {
+        const r = await fetch(API + "/config");
+        const config = await r.json();
+        let groups = (config.grading || {}).question_groups || [];
+        const gradeOnly = (config.grading || {}).grade_only;
+        if (gradeOnly && Array.isArray(gradeOnly)) {
+            const set = new Set(gradeOnly);
+            groups = groups.map(g => g.filter(q => set.has(q))).filter(g => g.length);
+        }
+        rubricQuestionGroups = groups;
+        renderRubricGroupCheckboxes(groups);
+        return groups;
+    } catch (_) {
+        rubricQuestionGroups = [];
+        renderRubricGroupCheckboxes([]);
+        return [];
+    }
+}
+
 async function loadRubricsForEdit() {
     try {
         const [configRes, rubricsRes] = await Promise.all([fetch(API + "/config"), fetch(API + "/rubrics")]);
@@ -360,11 +380,39 @@ async function loadRubricsForEdit() {
             groups = groups.map(g => g.filter(q => set.has(q))).filter(g => g.length);
         }
         rubricQuestionGroups = groups;
+        renderRubricGroupCheckboxes(groups);
         const toShow = gradeOnly && gradeOnly.length ? Object.fromEntries(Object.entries(rubrics).filter(([k]) => new Set(gradeOnly).has(k))) : rubrics;
         renderRubricForm(toShow);
     } catch (e) {
         document.getElementById("rubricResults").innerHTML = `<p class="status-error">Error: ${escHtml(e.message)}</p>`;
     }
+}
+
+function renderRubricGroupCheckboxes(groups) {
+    const container = document.getElementById("rubricGroupCheckboxes");
+    if (!container) return;
+    container.innerHTML = "";
+    if (!groups || groups.length === 0) {
+        container.appendChild(Object.assign(document.createElement("span"), {
+            className: "text-muted",
+            style: "font-size:0.9rem",
+            textContent: "No question groups (configure in Setup).",
+        }));
+        return;
+    }
+    groups.forEach((group, idx) => {
+        const label = document.createElement("label");
+        label.style.cssText = "display:flex;align-items:center;gap:6px;cursor:pointer;font-size:0.9rem";
+        const cb = document.createElement("input");
+        cb.type = "checkbox";
+        cb.className = "rubric-group-cb";
+        cb.dataset.groupIdx = String(idx);
+        cb.title = "Generate rubric for this group only (merges, does not overwrite others)";
+        label.appendChild(cb);
+        label.appendChild(document.createTextNode(`Group ${idx}: ${group.join(", ")}`));
+        label.onclick = (e) => { if (e.target === cb) return; cb.checked = !cb.checked; };
+        container.appendChild(label);
+    });
 }
 
 function renderRubricItemRow(desc, ded) {
@@ -465,13 +513,15 @@ document.getElementById("rubricGenerateBtn").onclick = async () => {
     const btn = document.getElementById("rubricGenerateBtn");
     const progressDiv = document.getElementById("rubricProgress");
     const resultsDiv = document.getElementById("rubricResults");
+    const checked = Array.from(document.querySelectorAll(".rubric-group-cb:checked")).map(cb => parseInt(cb.dataset.groupIdx, 10));
+    const groupsParam = checked.length ? "?groups=" + checked.join(",") : "";
     setLoading(btn, true, "Generating…");
     resultsDiv.innerHTML = "";
     progressDiv.innerHTML = "";
     progressDiv.classList.remove("hidden");
     progressDiv.appendChild(Object.assign(document.createElement("div"), { className: "progress-item", innerHTML: "<span>Connecting…</span>" }));
     try {
-        const ev = new EventSource(API + "/generate-rubrics");
+        const ev = new EventSource(API + "/generate-rubrics" + groupsParam);
         let gotResult = false;
         ev.addEventListener("progress", (e) => {
             const data = JSON.parse(e.data || "{}");
@@ -519,7 +569,12 @@ document.getElementById("rubricGenerateBtn").onclick = async () => {
                 progressDiv.classList.add("hidden");
                 resultsDiv.innerHTML = "<p class='status-warning'>Stream unavailable. Using POST…</p>";
                 try {
-                    const r = await fetch(API + "/generate-rubrics", { method: "POST" });
+                    const body = checked.length ? { group_indices: checked } : {};
+                    const r = await fetch(API + "/generate-rubrics", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify(body),
+                    });
                     const data = await r.json();
                     if (data.detail) throw new Error(data.detail);
                     fullRubricsCache = data.rubrics || {};
@@ -957,3 +1012,4 @@ document.getElementById("exportBtn").onclick = async () => {
 
 // Init
 loadSetupFromConfig();
+loadRubricGroups();

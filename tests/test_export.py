@@ -170,10 +170,11 @@ class TestExportAutograderZip:
             assert "setup.sh" in names
             assert "run_autograder" in names
             assert "results/Alice.json" in names
-            # setup.sh and run_autograder should be executable
+            # setup.sh and run_autograder should be executable (Unix)
             for name in ("setup.sh", "run_autograder"):
                 info = zf.getinfo(name)
                 assert (info.external_attr >> 16) & 0o111  # executable bit
+                assert info.create_system == 3  # Unix
 
     def test_raises_if_gradescope_dir_missing(self, tmp_path):
         config = _make_config(tmp_path, tmp_path)

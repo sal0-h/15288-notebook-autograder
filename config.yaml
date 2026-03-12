@@ -92,6 +92,10 @@ prompts:
     - Use deduction-style feedback: start from full marks and subtract. E.g. "-1:
     missing axis label".
 
+    - Format feedback as markdown bullet points for readability in Gradescope.
+    Example: "- **Correct:** Total iterations computed.\n- **-1:** Missing training
+    examples per iteration." Avoid raw "Start 2/2. -2.0: You used..." format.
+
     - Completely blank or missing answers score 0 with feedback "[no submission]".
 
 
