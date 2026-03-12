@@ -188,7 +188,11 @@
         <p class="mb-2">Generate Gradescope autograder JSONs and an Excel spreadsheet.</p>
         <button class="btn mb-2" id="exportBtn">Run Export</button>
         <div id="exportResults" style="margin-top:8px"></div>
-        <a id="excelDownload" class="btn btn-secondary mt-2 hidden" href="/export/excel" download="Final_Grades.xlsx" style="margin-top:10px">Download Excel</a>
+        <div class="mt-2" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+            <a id="excelDownload" class="btn btn-secondary hidden" href="/export/excel" download="Final_Grades.xlsx">Download Excel</a>
+            <a id="autograderZipDownload" class="btn btn-secondary" href="/export/autograder-zip" download="gradescope_autograder.zip">Download Gradescope Autograder ZIP</a>
+        </div>
+        <p class="mt-2 text-muted" style="font-size:0.9em">Upload the ZIP in Gradescope: Configure Autograder → Upload. Then run Manage Submissions → Rerun Autograders.</p>
     </div>
 </div>
 

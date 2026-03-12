@@ -108,5 +108,5 @@ class TestIntegrationPipeline:
         gs = json.loads((output_dir / "gradescope" / "Alice.json").read_text())
         assert "tests" in gs
         assert len(gs["tests"]) >= 1
-        assert gs["tests"][0]["name"] == "Q1.1"
+        assert gs["tests"][0]["name"] == "1.1"  # qid as-is for Gradescope outline
         assert gs["tests"][0]["score"] == 2

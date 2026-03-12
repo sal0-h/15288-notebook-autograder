@@ -413,6 +413,8 @@ To grade a different assignment, change `assignment_name` in `config.yaml` (and 
 | `parsing.keep_images` | Whether to include Base64 images in parsed output |
 | `grading.question_groups` | List of question ID lists, e.g. `[["1.1","1.2"], ["2.1"]]` |
 | `grading.grade_only` | Optional list of question IDs to grade; others get 0 and feedback `[skipped - not in grade_only]`. When set, `total_max` = sum of graded questions only. Omit to grade all. |
+| `gradescope_title_mapping` | Optional dict mapping internal qid to Gradescope outline title, e.g. `{"8.1": "5.1", "8.2": "6.1"}`. When set, Gradescope export uses these names. Omit to use qid as-is. |
+| `gradescope_outline_order` | Optional list of `{name, max}` in exact Gradescope outline order. When set, export outputs tests in this order so position-based matching works. Items not graded get score 0. |
 | `rubrics` | Optional per-question rubrics (auto-generated or hand-edited). Dict of `{qid: {points, items: [{description, deduction}]}}`. Deductions must sum to points. |
 | `prompts.system` | System prompt for the LLM grader |
 | `prompts.rubric_system` | System prompt for rubric generation |

@@ -61,7 +61,7 @@ from utils import load_config, save_config, AppConfig, DEFAULT_MODEL
 from gather import gather_submissions
 from parse_notebook import parse_all_students, parse_notebook, get_all_question_ids
 from grade import grade_all_students, grade_student, validate_question_groups
-from export import export_all
+from export import export_all, export_autograder_zip
 from rubric import generate_rubrics
 from calibrate import run_calibration
 from estimate import estimate_rubrics, estimate_grade
@@ -723,6 +723,15 @@ def api_download_excel():
             status_code=404, detail="Excel not generated yet. Run export first."
         )
     return FileResponse(path, filename="Final_Grades.xlsx")
+
+
+@app.get("/export/autograder-zip")
+def api_download_autograder_zip():
+    """Create Gradescope autograder zip and return it for download."""
+    config = load_config()
+    export_all(config)  # Ensure gradescope/*.json exist
+    zip_path = export_autograder_zip(config)
+    return FileResponse(zip_path, filename="gradescope_autograder.zip")
 
 
 # ---------------------------------------------------------------------------
