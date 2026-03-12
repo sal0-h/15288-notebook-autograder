@@ -56,7 +56,7 @@ Main project files:
 - `export.py`: Gradescope + Excel export, autograder ZIP build
 - `estimate.py`: cost and token estimates
 - `linter_export.py`: linter autograder ZIP
-- `utils.py`: config loading/saving, OpenAI client, shared validation models
+- `utils.py`: config loading/saving, assignment-scoped logging, shared grade_only helpers, OpenAI client, shared validation models
 
 Output layout is assignment-scoped:
 - `output/{assignment_name}/submissions/`
@@ -66,6 +66,7 @@ Output layout is assignment-scoped:
 - `output/{assignment_name}/calibration_report.json`
 - `output/{assignment_name}/gradescope/*.json`
 - `output/{assignment_name}/Final_Grades.xlsx`
+- `output/{assignment_name}/autograder.log`
 
 ## Pipeline
 
@@ -169,6 +170,7 @@ Key fields:
 - `parsing.keep_images`: include parsed image payloads
 - `grading.question_groups`: grouped question IDs for each grading call
 - `grading.grade_only`: optional subset of question IDs to grade
+- `grading.grade_only_merge`: when true, grade only the selected questions and merge those results into existing saved grades
 - `rubrics`: optional per-question rubric map
 - `prompts.system`: grading system prompt
 - `prompts.rubric_system`: rubric generation system prompt
@@ -307,6 +309,7 @@ Test suite covers parsing, grading, rubric generation, API behavior, export path
 - API key lookup order:
   - `.env` key: `key=...`
   - fallback: `OPENAI_API_KEY`
+- Both the CLI and web app write logs to the active assignment's `output/{assignment_name}/autograder.log`.
 - Student submission content is treated as untrusted input and sanitized before prompt injection into model messages.
 - Grading responses are JSON-validated; malformed responses trigger retries.
 - Empty/missing submissions are normalized to `[no submission]`.
