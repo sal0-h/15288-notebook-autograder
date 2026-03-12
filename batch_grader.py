@@ -12,7 +12,14 @@ from openai import OpenAI
 
 from grading_models import MODEL_PRICING
 from prompt_builder import validate_question_groups
-from utils import DEFAULT_MODEL, filter_groups_by_grade_only, get_openai_client
+from utils import (
+    DEFAULT_MODEL,
+    get_active_grade_only,
+    get_effective_question_groups,
+    get_openai_client,
+    is_grade_only_merge_enabled,
+    needs_grade_only_merge,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -107,34 +114,21 @@ def grade_all_students(
         already_graded = set()
         results_by_name = {}
 
-    grade_only_merge = grading_config.get("grade_only_merge", False) and bool(
-        grading_config.get("grade_only")
-    )
-    grade_only_set = set(grading_config.get("grade_only") or [])
-
-    def _needs_grade_only_merge(student_name: str) -> bool:
-        """True if student needs grading for grade_only (new, or grade_only questions missing/placeholder)."""
-        if student_name not in results_by_name:
-            return True
-        r = results[results_by_name[student_name]]
-        qs = r.get("questions", {})
-        skip_feedback = (
-            "[skipped - not in grade_only]",
-            "[grading failed after retries]",
-        )
-        for qid in grade_only_set:
-            if qid not in qs:
-                return True
-            fb = (qs[qid].get("feedback") or "").strip()
-            if fb in skip_feedback:
-                return True
-        return False
+    grade_only_merge = is_grade_only_merge_enabled(grading_config)
+    grade_only = get_active_grade_only(grading_config)
 
     if grade_only_merge:
         to_grade = [
             (i, path)
             for i, path in enumerate(student_files)
-            if _needs_grade_only_merge(path.stem)
+            if needs_grade_only_merge(
+                (
+                    results[results_by_name[path.stem]]
+                    if path.stem in results_by_name
+                    else None
+                ),
+                grade_only,
+            )
         ]
         skipped = len(student_files) - len(to_grade)
         print(
@@ -148,11 +142,9 @@ def grade_all_students(
         ]
 
     # Validate question groups once (not per student)
-    groups = grading_config.get("question_groups", [])
-    grade_only = grading_config.get("grade_only")
+    groups = get_effective_question_groups(grading_config)
     if grade_only:
-        groups_filtered = filter_groups_by_grade_only(groups, grade_only)
-        ungrouped = validate_question_groups(groups_filtered, solution_parsed)
+        ungrouped = validate_question_groups(groups, solution_parsed)
         print(f"Grade only: {grade_only} — skipping {len(ungrouped)} other questions")
         logger.info(
             "grade_only=%s, skipping %d questions, grading %d students",

@@ -446,6 +446,7 @@ async def api_generate_rubrics_stream(
 
     def worker(emit: Callable[[dict], None]) -> None:
         try:
+
             def progress_cb(idx: int, total: int, group: list, rubrics_so_far: dict):
                 is_done = any(q in rubrics_so_far for q in group)
                 emit(

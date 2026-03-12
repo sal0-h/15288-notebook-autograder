@@ -16,8 +16,10 @@ from prompt_builder import (
 )
 from utils import (
     DEFAULT_MODEL,
-    filter_groups_by_grade_only,
+    get_active_grade_only,
     get_openai_client,
+    get_effective_question_groups,
+    get_skipped_feedback,
     load_config,
     temperature_for_model,
 )
@@ -220,14 +222,10 @@ def grade_student(
         client = get_openai_client()
 
     grading_config = config.get("grading", {})
-    groups: list[list[str]] = grading_config.get("question_groups", [])
-    grade_only: list[str] | None = grading_config.get("grade_only")
+    groups = get_effective_question_groups(grading_config)
+    grade_only = get_active_grade_only(grading_config)
     student_name = student_parsed.get("student_name", "Unknown")
     is_merge = merge_into is not None and grade_only is not None
-
-    # When grade_only is set, only grade those questions; filter groups accordingly
-    if grade_only is not None:
-        groups = filter_groups_by_grade_only(groups, grade_only)
 
     if ungrouped is None:
         ungrouped = validate_question_groups(groups, solution_parsed)
@@ -307,7 +305,7 @@ def grade_student(
 
     # Zero-score ungrouped or skipped questions (skip when merging — already in existing)
     if not is_merge:
-        skip_msg = SKIP_FEEDBACKS[0] if grade_only else SKIP_FEEDBACKS[1]
+        skip_msg = get_skipped_feedback(grade_only)
         for qid in ungrouped:
             sol_q = get_question_data(solution_parsed, qid)
             max_pts = (sol_q or {}).get("points", 0)

@@ -8,6 +8,7 @@ from pathlib import Path
 import yaml
 from dotenv import load_dotenv
 
+from grading_models import SKIP_FEEDBACKS
 from openai import OpenAI
 from pydantic import BaseModel, field_validator, model_validator
 
@@ -32,6 +33,46 @@ def filter_groups_by_grade_only(
         for group in groups
         if group and any(q in grade_only_set for q in group)
     ]
+
+
+def get_active_grade_only(grading_config: dict) -> list[str] | None:
+    grade_only = grading_config.get("grade_only")
+    return grade_only if grade_only else None
+
+
+def get_effective_question_groups(grading_config: dict) -> list[list[str]]:
+    groups = grading_config.get("question_groups", [])
+    grade_only = get_active_grade_only(grading_config)
+    return filter_groups_by_grade_only(groups, grade_only)
+
+
+def is_grade_only_merge_enabled(grading_config: dict) -> bool:
+    return bool(
+        grading_config.get("grade_only_merge") and get_active_grade_only(grading_config)
+    )
+
+
+def needs_grade_only_merge(
+    existing_result: dict | None, grade_only: list[str] | None
+) -> bool:
+    if not grade_only:
+        return False
+    if not existing_result:
+        return True
+
+    questions = existing_result.get("questions", {})
+    retryable_feedback = {SKIP_FEEDBACKS[0], "[grading failed after retries]"}
+    for qid in set(grade_only):
+        if qid not in questions:
+            return True
+        feedback = (questions[qid].get("feedback") or "").strip()
+        if feedback in retryable_feedback:
+            return True
+    return False
+
+
+def get_skipped_feedback(grade_only: list[str] | None) -> str:
+    return SKIP_FEEDBACKS[0] if grade_only else SKIP_FEEDBACKS[1]
 
 
 def setup_assignment_logging(output_dir: str | Path) -> Path:
@@ -129,9 +170,13 @@ def _load_root_or_assignment_config(
 ) -> tuple[dict, Path, Path, str, str]:
     project_root = root_path.parent
     root_cfg = _read_yaml_dict(root_path)
-    assignment_name = sanitize_assignment_name(root_cfg.get("assignment_name", "default"))
+    assignment_name = sanitize_assignment_name(
+        root_cfg.get("assignment_name", "default")
+    )
     base_output = root_cfg.get("output_dir", "output")
-    assignment_config_path = project_root / base_output / assignment_name / "config.yaml"
+    assignment_config_path = (
+        project_root / base_output / assignment_name / "config.yaml"
+    )
 
     if assignment_config_path.exists():
         cfg = _read_yaml_dict(assignment_config_path)
@@ -159,7 +204,11 @@ def load_config(config_path: Path | None = None) -> dict:
     """
     root_path = (config_path or Path("config.yaml")).resolve()
 
-    if config_path is not None and _is_assignment_config(root_path) and root_path.exists():
+    if (
+        config_path is not None
+        and _is_assignment_config(root_path)
+        and root_path.exists()
+    ):
         cfg, project_root, config_root, assignment_name, base_output = (
             _load_explicit_assignment_config(root_path)
         )
@@ -223,9 +272,7 @@ def save_config(config: dict, config_path: Path | None = None) -> None:
         "assignment_name": assignment_name,
         "output_dir": base_output,
         "rubric_review": cfg.get("rubric_review", True),
-        "include_reference_in_grading": cfg.get(
-            "include_reference_in_grading", False
-        ),
+        "include_reference_in_grading": cfg.get("include_reference_in_grading", False),
         "prompts": cfg.get("prompts", {}),
     }
     with open(root_path, "w", encoding="utf-8") as f:
