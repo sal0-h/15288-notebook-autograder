@@ -5,14 +5,9 @@ import logging
 import re
 import threading
 
+import tiktoken
+
 from utils import DEFAULT_MODEL
-
-try:
-    import tiktoken
-
-    _TIKTOKEN_AVAILABLE = True
-except ImportError:
-    _TIKTOKEN_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +15,6 @@ logger = logging.getLogger(__name__)
 # Constants
 # ---------------------------------------------------------------------------
 
-CHARS_PER_TOKEN = 3.5  # conservative estimate for token counting
 TOKENS_PER_IMAGE = 1_000  # typical matplotlib plot at high detail
 
 _enc_cache: dict[str, object] = {}
@@ -32,21 +26,19 @@ _enc_lock = threading.Lock()
 
 
 def estimate_tokens(text: str, n_images: int, model: str | None = None) -> int:
-    """Estimate token count. Uses tiktoken when available, else chars/3.5."""
+    """Estimate token count using tiktoken plus a fixed image token estimate."""
     model = model or DEFAULT_MODEL
-    if _TIKTOKEN_AVAILABLE:
-        enc = _enc_cache.get(model)
-        if enc is None:
-            with _enc_lock:
-                enc = _enc_cache.get(model)
-                if enc is None:
-                    try:
-                        enc = tiktoken.encoding_for_model(model)
-                    except KeyError:
-                        enc = tiktoken.get_encoding("cl100k_base")
-                    _enc_cache[model] = enc
-        return len(enc.encode(text)) + n_images * TOKENS_PER_IMAGE
-    return int(len(text) / CHARS_PER_TOKEN) + n_images * TOKENS_PER_IMAGE
+    enc = _enc_cache.get(model)
+    if enc is None:
+        with _enc_lock:
+            enc = _enc_cache.get(model)
+            if enc is None:
+                try:
+                    enc = tiktoken.encoding_for_model(model)
+                except KeyError:
+                    enc = tiktoken.get_encoding("cl100k_base")
+                _enc_cache[model] = enc
+    return len(enc.encode(text)) + n_images * TOKENS_PER_IMAGE
 
 
 def truncate_output(text: str, max_chars: int) -> str:

@@ -24,7 +24,6 @@ class _FakeTikToken:
 
 
 def test_estimate_tokens_caches_per_model(monkeypatch):
-    monkeypatch.setattr(prompt_builder, "_TIKTOKEN_AVAILABLE", True)
     monkeypatch.setattr(prompt_builder, "_enc_cache", {})
     monkeypatch.setattr(prompt_builder, "tiktoken", _FakeTikToken())
 
