@@ -14,7 +14,13 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
-from utils import load_config, save_config, AppConfig, DEFAULT_MODEL
+from utils import (
+    load_config,
+    save_config,
+    AppConfig,
+    DEFAULT_MODEL,
+    setup_assignment_logging,
+)
 
 # -----------------------------------------------------------------------------
 # Programmatic config — edit this to customize
@@ -157,25 +163,8 @@ Examples:
 
     # Set up file logging to output_dir/autograder.log (same as web app)
     out_dir = Path(config.get("output_dir", "output"))
-    out_dir.mkdir(parents=True, exist_ok=True)
-    log_path = (out_dir / "autograder.log").resolve()
-    root = logging.getLogger()
-    current_handlers = [
-        h
-        for h in root.handlers
-        if isinstance(h, logging.FileHandler)
-        and getattr(h, "baseFilename", "").endswith("autograder.log")
-    ]
-    if not any(Path(h.baseFilename).resolve() == log_path for h in current_handlers):
-        for handler in current_handlers:
-            root.removeHandler(handler)
-            handler.close()
-        handler = logging.FileHandler(log_path, encoding="utf-8")
-        handler.setFormatter(
-            logging.Formatter("%(asctime)s %(levelname)s [%(name)s] %(message)s")
-        )
-        root.addHandler(handler)
-        logging.info("Logging to %s", log_path)
+    log_path = setup_assignment_logging(out_dir)
+    logging.info("Logging to %s", log_path)
 
     if args.config_only:
         return 0

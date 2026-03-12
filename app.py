@@ -9,36 +9,12 @@ logger = logging.getLogger(__name__)
 
 def _setup_file_logging() -> None:
     """Ensure the root logger writes to the active assignment's autograder.log."""
-    root = logging.getLogger()
     try:
         cfg = load_config()
         out_dir = Path(cfg.get("output_dir", "output"))
     except Exception:
         out_dir = Path("output")
-    out_dir.mkdir(parents=True, exist_ok=True)
-    log_path = (out_dir / "autograder.log").resolve()
-
-    current_handlers = [
-        h
-        for h in root.handlers
-        if isinstance(h, logging.FileHandler)
-        and getattr(h, "baseFilename", "").endswith("autograder.log")
-    ]
-    if any(Path(h.baseFilename).resolve() == log_path for h in current_handlers):
-        return
-
-    for handler in current_handlers:
-        root.removeHandler(handler)
-        handler.close()
-
-    handler = logging.FileHandler(log_path, encoding="utf-8")
-    handler.setFormatter(
-        logging.Formatter("%(asctime)s %(levelname)s [%(name)s] %(message)s")
-    )
-    root.addHandler(handler)
-    root.setLevel(min(root.level, logging.INFO))
-    logging.getLogger("httpx").setLevel(logging.WARNING)
-    logging.getLogger("httpcore").setLevel(logging.WARNING)
+    log_path = setup_assignment_logging(out_dir)
     logger.info("Logging to %s", log_path)
 
 
@@ -71,6 +47,8 @@ from utils import (
     AppConfig,
     DEFAULT_MODEL,
     filter_groups_by_grade_only,
+    sanitize_assignment_name,
+    setup_assignment_logging,
 )
 from gather import gather_submissions
 from parse_notebook import parse_all_students, parse_notebook, get_all_question_ids
@@ -93,6 +71,29 @@ def _safe_path(base: Path, user_input: str) -> Path:
     except ValueError:
         raise HTTPException(status_code=400, detail="Path traversal detected")
     return resolved
+
+
+def _qid_sort_key(qid: str) -> tuple[int, int]:
+    if "." not in qid:
+        return (999, 0)
+    section, question = qid.split(".", 1)
+    return (
+        int(section) if section.isdigit() else 999,
+        int(question) if question.isdigit() else 0,
+    )
+
+
+def _build_suggested_groups(parsed: dict) -> list[list[str]]:
+    suggested_groups: list[list[str]] = []
+    for sec_id in sorted(
+        parsed.get("sections", {}).keys(),
+        key=lambda s: (int(s) if s.isdigit() else 999, s),
+    ):
+        sec_data = parsed["sections"][sec_id]
+        qids = sorted(sec_data.get("questions", {}).keys(), key=_qid_sort_key)
+        if qids:
+            suggested_groups.append(qids)
+    return suggested_groups
 
 
 @asynccontextmanager
@@ -209,7 +210,7 @@ async def api_parse_solution_upload(
     """
     if not assignment_name or not assignment_name.strip():
         raise HTTPException(status_code=400, detail="assignment_name is required")
-    safe_name = re.sub(r'[/\\:*?"<>|]', "_", assignment_name.strip()).strip("_")
+    safe_name = sanitize_assignment_name(assignment_name.strip())
     if not safe_name:
         raise HTTPException(status_code=400, detail="Invalid assignment name")
     if not solution_file.filename or not solution_file.filename.lower().endswith(
@@ -238,21 +239,7 @@ async def api_parse_solution_upload(
     question_ids = get_all_question_ids(parsed)
     duplicate_qids = parsed.get("duplicate_qids", [])
 
-    suggested_groups: list[list[str]] = []
-    for sec_id in sorted(
-        parsed.get("sections", {}).keys(),
-        key=lambda s: (int(s) if s.isdigit() else 999, s),
-    ):
-        sec_data = parsed["sections"][sec_id]
-        qids = sorted(
-            sec_data.get("questions", {}).keys(),
-            key=lambda q: (
-                int(q.split(".")[0]) if "." in q else 999,
-                int(q.split(".")[1]) if "." in q and q.split(".")[1].isdigit() else 0,
-            ),
-        )
-        if qids:
-            suggested_groups.append(qids)
+    suggested_groups = _build_suggested_groups(parsed)
 
     return {
         "question_ids": question_ids,
@@ -281,21 +268,7 @@ async def api_parse_solution():
     parsed = parse_notebook(solution_path, config)
     question_ids = get_all_question_ids(parsed)
     duplicate_qids = parsed.get("duplicate_qids", [])
-    suggested_groups: list[list[str]] = []
-    for sec_id in sorted(
-        parsed.get("sections", {}).keys(),
-        key=lambda s: (int(s) if s.isdigit() else 999, s),
-    ):
-        sec_data = parsed["sections"][sec_id]
-        qids = sorted(
-            sec_data.get("questions", {}).keys(),
-            key=lambda q: (
-                int(q.split(".")[0]) if "." in q else 999,
-                int(q.split(".")[1]) if "." in q and q.split(".")[1].isdigit() else 0,
-            ),
-        )
-        if qids:
-            suggested_groups.append(qids)
+    suggested_groups = _build_suggested_groups(parsed)
     return {
         "question_ids": question_ids,
         "sections": {

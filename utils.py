@@ -1,5 +1,6 @@
 """Shared utilities for the AI Autograder pipeline."""
 
+import logging
 import os
 import re
 from pathlib import Path
@@ -31,6 +32,37 @@ def filter_groups_by_grade_only(
         for group in groups
         if group and any(q in grade_only_set for q in group)
     ]
+
+
+def setup_assignment_logging(output_dir: str | Path) -> Path:
+    """Ensure the root logger writes to output_dir/autograder.log."""
+    root = logging.getLogger()
+    out_dir = Path(output_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    log_path = (out_dir / "autograder.log").resolve()
+
+    current_handlers = [
+        h
+        for h in root.handlers
+        if isinstance(h, logging.FileHandler)
+        and getattr(h, "baseFilename", "").endswith("autograder.log")
+    ]
+    if any(Path(h.baseFilename).resolve() == log_path for h in current_handlers):
+        return log_path
+
+    for handler in current_handlers:
+        root.removeHandler(handler)
+        handler.close()
+
+    handler = logging.FileHandler(log_path, encoding="utf-8")
+    handler.setFormatter(
+        logging.Formatter("%(asctime)s %(levelname)s [%(name)s] %(message)s")
+    )
+    root.addHandler(handler)
+    root.setLevel(min(root.level, logging.INFO))
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
+    return log_path
 
 
 # ---------------------------------------------------------------------------

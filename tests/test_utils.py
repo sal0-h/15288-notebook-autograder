@@ -1,10 +1,12 @@
 """Tests for utils.py: load_config, save_config, path resolution."""
 
+import logging
+
 from pathlib import Path
 
 import pytest
 
-from utils import load_config, save_config
+from utils import load_config, save_config, setup_assignment_logging
 
 
 class TestLoadConfig:
@@ -139,3 +141,31 @@ prompts:
         save_config(cfg, config_path)
         root_cfg = load_config(config_path)
         assert root_cfg["assignment_name"] == "Lab #1"
+
+
+    class TestSetupAssignmentLogging:
+      def test_switches_autograder_log_file(self, tmp_path):
+        root = logging.getLogger()
+        old_handlers = list(root.handlers)
+        for handler in list(root.handlers):
+          if isinstance(handler, logging.FileHandler):
+            root.removeHandler(handler)
+            handler.close()
+
+        try:
+          first = setup_assignment_logging(tmp_path / "one")
+          second = setup_assignment_logging(tmp_path / "two")
+          file_handlers = [h for h in root.handlers if isinstance(h, logging.FileHandler)]
+
+          assert first.name == "autograder.log"
+          assert second.name == "autograder.log"
+          assert len(file_handlers) == 1
+          assert Path(file_handlers[0].baseFilename).resolve() == second.resolve()
+        finally:
+          for handler in list(root.handlers):
+            if isinstance(handler, logging.FileHandler):
+              root.removeHandler(handler)
+              handler.close()
+          for handler in old_handlers:
+            if handler not in root.handlers:
+              root.addHandler(handler)

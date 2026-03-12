@@ -15,6 +15,7 @@ logger = logging.getLogger(__name__)
 # Constants
 # ---------------------------------------------------------------------------
 
+CHARS_PER_TOKEN = 3.5
 TOKENS_PER_IMAGE = 1_000  # typical matplotlib plot at high detail
 
 _enc_cache: dict[str, object] = {}
