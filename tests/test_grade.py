@@ -13,6 +13,7 @@ from grade import (
     _sanitize_student_text,
     build_group_prompt,
     estimate_tokens,
+    grade_all_students,
     grade_student,
     parse_llm_json,
     truncate_output,
@@ -440,3 +441,479 @@ class TestGradeOnly:
         # total_max is sum of graded questions only (not skipped)
         assert result["total_max"] == 2.0  # 1.1 only (2 pts)
         assert result["total_score"] == 2.0  # only 1.1 contributes
+
+    def test_grade_only_merge_preserves_existing(self):
+        """When merge_into and grade_only, only grade grade_only; preserve other questions."""
+        sol = self._make_solution(["1.1", "1.2", "2.1"])
+        stu = self._make_solution(["1.1", "1.2", "2.1"])
+        stu["student_name"] = "TestStudent"
+
+        existing = {
+            "student_name": "TestStudent",
+            "questions": {
+                "1.1": {"score": 2.0, "max": 2, "feedback": "correct", "confidence": "high", "requires_review": False},
+                "1.2": {"score": 1.0, "max": 2, "feedback": "partial", "confidence": "medium", "requires_review": False},
+            },
+            "total_score": 3.0,
+            "total_max": 4.0,
+            "summary_feedback": "Q1.2: partial",
+        }
+
+        config = {
+            "grading": {
+                "question_groups": [["1.1", "1.2"], ["2.1"]],
+                "grade_only": ["2.1"],
+            },
+            "model": DEFAULT_MODEL,
+            "prompts": {"system": "Grade."},
+            "max_prompt_tokens": 80000,
+            "max_completion_tokens": 4096,
+            "rubrics": {},
+        }
+
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message.content = (
+            '{"2.1": {"score": 2, "feedback": "correct"}}'
+        )
+
+        with patch("grade.get_openai_client") as mock_client_cls:
+            mock_client = MagicMock()
+            mock_client.chat.completions.create.return_value = mock_response
+            mock_client_cls.return_value = mock_client
+
+            result = grade_student(stu, sol, config, client=mock_client, merge_into=existing)
+
+        # 1.1 and 1.2 preserved exactly
+        assert result["questions"]["1.1"]["score"] == 2.0
+        assert result["questions"]["1.1"]["feedback"] == "correct"
+        assert result["questions"]["1.2"]["score"] == 1.0
+        assert result["questions"]["1.2"]["feedback"] == "partial"
+
+        # 2.1 newly graded
+        assert result["questions"]["2.1"]["score"] == 2.0
+        assert result["questions"]["2.1"]["feedback"] == "correct"
+
+        # totals recomputed from full questions
+        assert result["total_score"] == 5.0
+        assert result["total_max"] == 6.0
+
+        # summary_feedback includes deductions from both old and new
+        assert "Q1.2: partial" in result["summary_feedback"]
+        assert "Q2.1" not in result["summary_feedback"]  # 2.1 got full marks
+
+    def test_grade_only_merge_overwrites_regraded_question(self):
+        """When grade_only includes a question already in existing, new grade overwrites."""
+        sol = self._make_solution(["1.1", "1.2"])
+        stu = self._make_solution(["1.1", "1.2"])
+        stu["student_name"] = "TestStudent"
+
+        existing = {
+            "student_name": "TestStudent",
+            "questions": {
+                "1.1": {"score": 2.0, "max": 2, "feedback": "correct", "confidence": "high", "requires_review": False},
+                "1.2": {"score": 0.0, "max": 2, "feedback": "wrong", "confidence": "low", "requires_review": False},
+            },
+            "total_score": 2.0,
+            "total_max": 4.0,
+            "summary_feedback": "Q1.2: wrong",
+        }
+
+        config = {
+            "grading": {
+                "question_groups": [["1.1", "1.2"]],
+                "grade_only": ["1.2"],
+            },
+            "model": DEFAULT_MODEL,
+            "prompts": {"system": "Grade."},
+            "max_prompt_tokens": 80000,
+            "max_completion_tokens": 4096,
+            "rubrics": {},
+        }
+
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message.content = (
+            '{"1.2": {"score": 2, "feedback": "now correct"}}'
+        )
+
+        with patch("grade.get_openai_client") as mock_client_cls:
+            mock_client = MagicMock()
+            mock_client.chat.completions.create.return_value = mock_response
+            mock_client_cls.return_value = mock_client
+
+            result = grade_student(stu, sol, config, client=mock_client, merge_into=existing)
+
+        # 1.1 unchanged
+        assert result["questions"]["1.1"]["score"] == 2.0
+        assert result["questions"]["1.1"]["feedback"] == "correct"
+
+        # 1.2 overwritten with new grade
+        assert result["questions"]["1.2"]["score"] == 2.0
+        assert result["questions"]["1.2"]["feedback"] == "now correct"
+
+        assert result["total_score"] == 4.0
+        assert result["total_max"] == 4.0
+        assert result["summary_feedback"] == "Full marks."
+
+    def test_grade_only_merge_skipped_group_preserves_rest(self):
+        """When merged group is all-missing (skipped), existing questions preserved."""
+        sol = self._make_solution(["1.1", "2.1"])
+        stu = self._make_solution(["1.1"])  # no 2.1
+        stu["student_name"] = "TestStudent"
+
+        existing = {
+            "student_name": "TestStudent",
+            "questions": {
+                "1.1": {"score": 2.0, "max": 2, "feedback": "correct", "confidence": "high", "requires_review": False},
+            },
+            "total_score": 2.0,
+            "total_max": 2.0,
+            "summary_feedback": "Full marks.",
+        }
+
+        config = {
+            "grading": {
+                "question_groups": [["1.1"], ["2.1"]],
+                "grade_only": ["2.1"],
+            },
+            "model": DEFAULT_MODEL,
+            "prompts": {"system": "Grade."},
+            "max_prompt_tokens": 80000,
+            "max_completion_tokens": 4096,
+            "rubrics": {},
+        }
+
+        with patch("grade.get_openai_client") as mock_client_cls:
+            mock_client = MagicMock()
+            mock_client_cls.return_value = mock_client
+
+            result = grade_student(stu, sol, config, client=mock_client, merge_into=existing)
+
+        # No LLM call (group skipped)
+        mock_client.chat.completions.create.assert_not_called()
+
+        # 1.1 preserved
+        assert result["questions"]["1.1"]["score"] == 2.0
+        assert result["questions"]["1.1"]["feedback"] == "correct"
+
+        # 2.1 added as [no submission]
+        assert result["questions"]["2.1"]["score"] == 0.0
+        assert result["questions"]["2.1"]["feedback"] == "[no submission]"
+        assert result["questions"]["2.1"]["max"] == 2
+
+        assert result["total_score"] == 2.0
+        assert result["total_max"] == 4.0
+
+    def test_grade_only_merge_without_grade_only_ignores_merge(self):
+        """When merge_into provided but grade_only is None, treat as normal grading (no merge)."""
+        sol = self._make_solution(["1.1", "2.1"])
+        stu = self._make_solution(["1.1", "2.1"])
+        stu["student_name"] = "TestStudent"
+
+        existing = {
+            "student_name": "TestStudent",
+            "questions": {"1.1": {"score": 99.0, "max": 2, "feedback": "old"}},
+            "total_score": 99.0,
+            "total_max": 2.0,
+            "summary_feedback": "old",
+        }
+
+        config = {
+            "grading": {
+                "question_groups": [["1.1"], ["2.1"]],
+                "grade_only": None,
+            },
+            "model": DEFAULT_MODEL,
+            "prompts": {"system": "Grade."},
+            "max_prompt_tokens": 80000,
+            "max_completion_tokens": 4096,
+            "rubrics": {},
+        }
+
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message.content = (
+            '{"1.1": {"score": 2, "feedback": "new"}, "2.1": {"score": 2, "feedback": "new"}}'
+        )
+
+        with patch("grade.get_openai_client") as mock_client_cls:
+            mock_client = MagicMock()
+            mock_client.chat.completions.create.return_value = mock_response
+            mock_client_cls.return_value = mock_client
+
+            result = grade_student(stu, sol, config, client=mock_client, merge_into=existing)
+
+        # Normal grading: both questions graded, existing ignored
+        assert result["questions"]["1.1"]["score"] == 2.0
+        assert result["questions"]["1.1"]["feedback"] == "new"
+        assert result["questions"]["2.1"]["score"] == 2.0
+        assert result["total_score"] == 4.0
+        assert result["total_max"] == 4.0
+
+    def test_grade_only_merge_empty_existing_questions(self):
+        """Merge with empty existing questions still produces correct result."""
+        sol = self._make_solution(["1.1", "2.1"])
+        stu = self._make_solution(["1.1", "2.1"])
+        stu["student_name"] = "TestStudent"
+
+        existing = {
+            "student_name": "TestStudent",
+            "questions": {},
+            "total_score": 0.0,
+            "total_max": 0.0,
+            "summary_feedback": "",
+        }
+
+        config = {
+            "grading": {
+                "question_groups": [["1.1"], ["2.1"]],
+                "grade_only": ["2.1"],
+            },
+            "model": DEFAULT_MODEL,
+            "prompts": {"system": "Grade."},
+            "max_prompt_tokens": 80000,
+            "max_completion_tokens": 4096,
+            "rubrics": {},
+        }
+
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message.content = (
+            '{"2.1": {"score": 2, "feedback": "correct"}}'
+        )
+
+        with patch("grade.get_openai_client") as mock_client_cls:
+            mock_client = MagicMock()
+            mock_client.chat.completions.create.return_value = mock_response
+            mock_client_cls.return_value = mock_client
+
+            result = grade_student(stu, sol, config, client=mock_client, merge_into=existing)
+
+        # Only 2.1 graded; 1.1 not in existing so not in result
+        assert set(result["questions"].keys()) == {"2.1"}
+        assert result["questions"]["2.1"]["score"] == 2.0
+        assert result["total_score"] == 2.0
+        assert result["total_max"] == 2.0
+
+    def test_grade_only_merge_summary_includes_all_deductions(self):
+        """summary_feedback includes deductions from both preserved and newly graded."""
+        sol = self._make_solution(["1.1", "1.2", "2.1"])
+        stu = self._make_solution(["1.1", "1.2", "2.1"])
+        stu["student_name"] = "TestStudent"
+
+        existing = {
+            "student_name": "TestStudent",
+            "questions": {
+                "1.1": {"score": 2.0, "max": 2, "feedback": "ok", "confidence": "high", "requires_review": False},
+                "1.2": {"score": 1.0, "max": 2, "feedback": "partial", "confidence": "medium", "requires_review": False},
+            },
+            "total_score": 3.0,
+            "total_max": 4.0,
+            "summary_feedback": "Q1.2: partial",
+        }
+
+        config = {
+            "grading": {
+                "question_groups": [["1.1", "1.2"], ["2.1"]],
+                "grade_only": ["2.1"],
+            },
+            "model": DEFAULT_MODEL,
+            "prompts": {"system": "Grade."},
+            "max_prompt_tokens": 80000,
+            "max_completion_tokens": 4096,
+            "rubrics": {},
+        }
+
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message.content = (
+            '{"2.1": {"score": 1, "feedback": "minor error"}}'
+        )
+
+        with patch("grade.get_openai_client") as mock_client_cls:
+            mock_client = MagicMock()
+            mock_client.chat.completions.create.return_value = mock_response
+            mock_client_cls.return_value = mock_client
+
+            result = grade_student(stu, sol, config, client=mock_client, merge_into=existing)
+
+        assert "Q1.2: partial" in result["summary_feedback"]
+        assert "Q2.1: minor error" in result["summary_feedback"]
+        assert result["total_score"] == 4.0
+        assert result["total_max"] == 6.0
+
+
+# ---------------------------------------------------------------------------
+# grade_all_students with grade_only_merge
+# ---------------------------------------------------------------------------
+
+
+class TestGradeOnlyMergeIntegration:
+    """Integration tests for grade_only_merge in grade_all_students."""
+
+    def _make_parsed_student(self, name: str, qids: list[str]) -> dict:
+        sections = {}
+        for qid in qids:
+            sec, _ = qid.split(".")
+            sections.setdefault(sec, {"questions": {}})
+            sections[sec]["questions"][qid] = {
+                "points": 2,
+                "question_markdown": f"Q{qid}",
+                "answer_cells": [{"code": "x=1", "output_text": "", "images": []}],
+            }
+        return {"sections": sections, "student_name": name}
+
+    def _make_solution(self, qids: list[str]) -> dict:
+        sections = {}
+        for qid in qids:
+            sec, _ = qid.split(".")
+            sections.setdefault(sec, {"questions": {}})
+            sections[sec]["questions"][qid] = {
+                "points": 2,
+                "question_markdown": f"Q{qid}",
+                "answer_cells": [],
+            }
+        return {"sections": sections}
+
+    def test_grade_all_students_merge_updates_existing(self, tmp_path):
+        """grade_all_students with grade_only_merge merges new grades into existing results."""
+        output_dir = tmp_path / "output"
+        parsed_dir = output_dir / "parsed"
+        output_dir.mkdir()
+        parsed_dir.mkdir()
+
+        sol = self._make_solution(["1.1", "1.2", "2.1"])
+        (output_dir / "solution_parsed.json").write_text(json.dumps(sol), encoding="utf-8")
+
+        stu = self._make_parsed_student("Alice", ["1.1", "1.2", "2.1"])
+        (parsed_dir / "Alice.json").write_text(json.dumps(stu), encoding="utf-8")
+
+        existing_alice = {
+            "student_name": "Alice",
+            "questions": {
+                "1.1": {"score": 2.0, "max": 2, "feedback": "ok", "confidence": "high", "requires_review": False},
+                "1.2": {"score": 1.0, "max": 2, "feedback": "partial", "confidence": "medium", "requires_review": False},
+            },
+            "total_score": 3.0,
+            "total_max": 4.0,
+            "summary_feedback": "Q1.2: partial",
+        }
+        graded_path = output_dir / "graded_results.json"
+        graded_path.write_text(json.dumps([existing_alice], indent=2), encoding="utf-8")
+
+        config = {
+            "output_dir": str(output_dir),
+            "parsed_dir": str(parsed_dir),
+            "model": "gpt-4o-mini",
+            "grading": {
+                "question_groups": [["1.1", "1.2"], ["2.1"]],
+                "grade_only": ["2.1"],
+                "grade_only_merge": True,
+            },
+            "prompts": {"system": "Grade."},
+            "max_prompt_tokens": 80000,
+            "max_completion_tokens": 4096,
+            "rubrics": {},
+            "workers": 1,
+        }
+
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message.content = '{"2.1": {"score": 2, "feedback": "correct"}}'
+        mock_response.usage = MagicMock(prompt_tokens=100, completion_tokens=50)
+
+        with patch("grade.get_openai_client") as mock_cls:
+            mock_client = MagicMock()
+            mock_client.chat.completions.create.return_value = mock_response
+            mock_cls.return_value = mock_client
+
+            events = list(grade_all_students(config, client=mock_client))
+
+        results = json.loads(graded_path.read_text(encoding="utf-8"))
+        assert len(results) == 1
+
+        alice = results[0]
+        assert alice["student_name"] == "Alice"
+        assert alice["questions"]["1.1"]["score"] == 2.0
+        assert alice["questions"]["1.1"]["feedback"] == "ok"
+        assert alice["questions"]["1.2"]["score"] == 1.0
+        assert alice["questions"]["2.1"]["score"] == 2.0
+        assert alice["questions"]["2.1"]["feedback"] == "correct"
+        assert alice["total_score"] == 5.0
+        assert alice["total_max"] == 6.0
+
+        assert mock_client.chat.completions.create.call_count == 1
+
+    def test_grade_all_students_merge_new_student_gets_full_grade_only(self, tmp_path):
+        """New student (not in results) gets graded for grade_only only, no merge."""
+        output_dir = tmp_path / "output"
+        parsed_dir = output_dir / "parsed"
+        output_dir.mkdir()
+        parsed_dir.mkdir()
+
+        sol = self._make_solution(["1.1", "1.2", "2.1"])
+        (output_dir / "solution_parsed.json").write_text(json.dumps(sol), encoding="utf-8")
+
+        for name in ["Alice", "Bob"]:
+            stu = self._make_parsed_student(name, ["1.1", "1.2", "2.1"])
+            (parsed_dir / f"{name}.json").write_text(json.dumps(stu), encoding="utf-8")
+
+        existing_alice = {
+            "student_name": "Alice",
+            "questions": {
+                "1.1": {"score": 2.0, "max": 2, "feedback": "ok", "confidence": "high", "requires_review": False},
+                "1.2": {"score": 2.0, "max": 2, "feedback": "ok", "confidence": "high", "requires_review": False},
+            },
+            "total_score": 4.0,
+            "total_max": 4.0,
+            "summary_feedback": "Full marks.",
+        }
+        graded_path = output_dir / "graded_results.json"
+        graded_path.write_text(json.dumps([existing_alice], indent=2), encoding="utf-8")
+
+        config = {
+            "output_dir": str(output_dir),
+            "parsed_dir": str(parsed_dir),
+            "model": "gpt-4o-mini",
+            "grading": {
+                "question_groups": [["1.1", "1.2"], ["2.1"]],
+                "grade_only": ["2.1"],
+                "grade_only_merge": True,
+            },
+            "prompts": {"system": "Grade."},
+            "max_prompt_tokens": 80000,
+            "max_completion_tokens": 4096,
+            "rubrics": {},
+            "workers": 1,
+        }
+
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message.content = '{"2.1": {"score": 2, "feedback": "correct"}}'
+        mock_response.usage = MagicMock(prompt_tokens=100, completion_tokens=50)
+
+        with patch("grade.get_openai_client") as mock_cls:
+            mock_client = MagicMock()
+            mock_client.chat.completions.create.return_value = mock_response
+            mock_cls.return_value = mock_client
+
+            list(grade_all_students(config, client=mock_client))
+
+        results = json.loads(graded_path.read_text(encoding="utf-8"))
+        assert len(results) == 2
+
+        alice = next(r for r in results if r["student_name"] == "Alice")
+        bob = next(r for r in results if r["student_name"] == "Bob")
+
+        assert alice["questions"]["1.1"]["score"] == 2.0
+        assert alice["questions"]["2.1"]["score"] == 2.0
+        assert alice["total_score"] == 6.0
+
+        assert "2.1" in bob["questions"]
+        assert bob["questions"]["2.1"]["score"] == 2.0
+        assert bob["questions"]["2.1"]["feedback"] == "correct"
+        assert "[skipped - not in grade_only]" in bob["questions"]["1.1"]["feedback"]
+        assert "[skipped - not in grade_only]" in bob["questions"]["1.2"]["feedback"]
+        assert bob["total_score"] == 2.0
+        assert bob["total_max"] == 2.0

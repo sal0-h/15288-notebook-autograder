@@ -96,6 +96,12 @@
                 <strong>Grade only these questions</strong> <span style="font-size:0.85rem;color:#64748b">(others get 0 [skipped])</span>
             </label>
             <input type="text" id="setupGradeOnlyInput" placeholder="e.g. 1.1, 2.1, 4.2" class="hidden" style="margin-top:6px;width:100%;max-width:400px;padding:8px;border:1px solid #cbd5e1;border-radius:4px">
+            <div id="setupGradeOnlyMergeWrap" class="hidden" style="margin-top:6px;margin-left:24px">
+                <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+                    <input type="checkbox" id="setupGradeOnlyMergeCheck">
+                    <strong>Merge into existing</strong> <span style="font-size:0.85rem;color:#64748b">(grade only these, keep other questions unchanged)</span>
+                </label>
+            </div>
         </div>
         <div id="setupDuplicateWarning" class="outlier-banner hidden mb-2"></div>
         <div id="setupGroupsEditor" class="hidden mb-2">

@@ -60,9 +60,12 @@ async function loadSetupFromConfig() {
         document.getElementById("setupIncludeReferenceCheck").checked = setupConfig.include_reference_in_grading === true;
         setupQuestionGroups = (setupConfig.grading || {}).question_groups || [];
         const gradeOnly = (setupConfig.grading || {}).grade_only;
+        const gradeOnlyMerge = (setupConfig.grading || {}).grade_only_merge === true;
         document.getElementById("setupGradeOnlyCheck").checked = !!gradeOnly && gradeOnly.length > 0;
         document.getElementById("setupGradeOnlyInput").value = gradeOnly ? gradeOnly.join(", ") : "";
         document.getElementById("setupGradeOnlyInput").classList.toggle("hidden", !gradeOnly || gradeOnly.length === 0);
+        document.getElementById("setupGradeOnlyMergeCheck").checked = gradeOnlyMerge;
+        document.getElementById("setupGradeOnlyMergeWrap").classList.toggle("hidden", !gradeOnly || gradeOnly.length === 0);
         renderSetupGroups();
         updateOutputDirHint();
     } catch (e) {
@@ -152,7 +155,9 @@ document.getElementById("setupSolutionFile").onchange = e => {
 };
 document.getElementById("setupWorkers").oninput = e => { document.getElementById("setupWorkersVal").textContent = e.target.value; };
 document.getElementById("setupGradeOnlyCheck").onchange = e => {
-    document.getElementById("setupGradeOnlyInput").classList.toggle("hidden", !e.target.checked);
+    const show = e.target.checked;
+    document.getElementById("setupGradeOnlyInput").classList.toggle("hidden", !show);
+    document.getElementById("setupGradeOnlyMergeWrap").classList.toggle("hidden", !show);
 };
 
 document.getElementById("setupParseUploadBtn").onclick = async () => {
@@ -241,6 +246,7 @@ document.getElementById("setupSaveBtn").onclick = async () => {
     const gradeOnlyCheck = document.getElementById("setupGradeOnlyCheck").checked;
     const gradeOnlyInput = document.getElementById("setupGradeOnlyInput").value.trim();
     setupConfig.grading.grade_only = gradeOnlyCheck && gradeOnlyInput ? gradeOnlyInput.split(/[\s,]+/).filter(x => x.trim()) : null;
+    setupConfig.grading.grade_only_merge = setupConfig.grading.grade_only ? document.getElementById("setupGradeOnlyMergeCheck").checked : false;
     const btn = document.getElementById("setupSaveBtn");
     setLoading(btn, true, "Saving…");
     try {

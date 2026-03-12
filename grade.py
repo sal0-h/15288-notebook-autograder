@@ -591,8 +591,13 @@ def grade_student(
     config: dict,
     client: OpenAI | None = None,
     ungrouped: list[str] | None = None,
+    merge_into: dict | None = None,
 ) -> dict:
-    """Grade one student. Returns result dict for graded_results.json."""
+    """Grade one student. Returns result dict for graded_results.json.
+
+    When merge_into is provided with grade_only, only grades grade_only questions
+    and merges new grades into existing result (keeps other questions unchanged).
+    """
     if client is None:
         client = get_openai_client()
 
@@ -600,6 +605,7 @@ def grade_student(
     groups: list[list[str]] = grading_config.get("question_groups", [])
     grade_only: list[str] | None = grading_config.get("grade_only")
     student_name = student_parsed.get("student_name", "Unknown")
+    is_merge = merge_into is not None and grade_only is not None
 
     # When grade_only is set, only grade those questions; filter groups accordingly
     if grade_only is not None:
@@ -611,6 +617,8 @@ def grade_student(
         ungrouped = validate_question_groups(groups, solution_parsed)
 
     questions: dict[str, dict] = {}
+    if is_merge:
+        questions = dict(merge_into.get("questions", {}))
     total_score = 0.0
     total_max = 0.0
     feedback_parts: list[str] = []
@@ -681,26 +689,36 @@ def grade_student(
             if feedback and score < max_pts:
                 feedback_parts.append(f"Q{qid}: {feedback}")
 
-    # Zero-score ungrouped or skipped questions
-    skip_msg = (
-        "[skipped - not in grade_only]"
-        if grade_only
-        else "[not included in grading groups]"
-    )
-    for qid in ungrouped:
-        sol_q = get_question_data(solution_parsed, qid)
-        max_pts = (sol_q or {}).get("points", 0)
-        # When grade_only is set, skipped questions must not contribute to total_max (display X/28 not X/98)
-        if grade_only is None:
-            total_max += max_pts
-        questions[qid] = {
-            "score": 0.0,
-            "max": max_pts,
-            "feedback": skip_msg,
-            "confidence": "low",
-            "requires_review": False,
-        }
-        feedback_parts.append(f"Q{qid}: {skip_msg}")
+    # Zero-score ungrouped or skipped questions (skip when merging — already in existing)
+    if not is_merge:
+        skip_msg = (
+            "[skipped - not in grade_only]"
+            if grade_only
+            else "[not included in grading groups]"
+        )
+        for qid in ungrouped:
+            sol_q = get_question_data(solution_parsed, qid)
+            max_pts = (sol_q or {}).get("points", 0)
+            # When grade_only is set, skipped questions must not contribute to total_max (display X/28 not X/98)
+            if grade_only is None:
+                total_max += max_pts
+            questions[qid] = {
+                "score": 0.0,
+                "max": max_pts,
+                "feedback": skip_msg,
+                "confidence": "low",
+                "requires_review": False,
+            }
+            feedback_parts.append(f"Q{qid}: {skip_msg}")
+
+    if is_merge:
+        total_score = sum(q.get("score", 0) for q in questions.values())
+        total_max = sum(q.get("max", 0) for q in questions.values())
+        feedback_parts = [
+            f"Q{qid}: {q.get('feedback', '')}"
+            for qid, q in sorted(questions.items())
+            if q.get("feedback") and q.get("score", 0) < q.get("max", 0)
+        ]
 
     result = {
         "student_name": student_name,
@@ -783,6 +801,8 @@ def grade_all_students(
     else:
         raw = _read_results()
 
+    grading_config = config.get("grading", {})
+
     if isinstance(raw, list):
         results: list[dict] = raw
         already_graded = {
@@ -790,18 +810,25 @@ def grade_all_students(
             for r in raw
             if isinstance(r, dict) and "student_name" in r
         }
+        results_by_name = {r["student_name"]: idx for idx, r in enumerate(raw) if isinstance(r, dict) and "student_name" in r}
     else:
         results = []
         already_graded = set()
+        results_by_name = {}
 
-    to_grade = [
-        (i, path)
-        for i, path in enumerate(student_files)
-        if path.stem not in already_graded
-    ]
+    grade_only_merge = grading_config.get("grade_only_merge", False) and bool(grading_config.get("grade_only"))
+
+    if grade_only_merge:
+        to_grade = [(i, path) for i, path in enumerate(student_files)]
+        print(f"grade_only_merge: grading {len(to_grade)} students, merging into existing for grade_only questions")
+    else:
+        to_grade = [
+            (i, path)
+            for i, path in enumerate(student_files)
+            if path.stem not in already_graded
+        ]
 
     # Validate question groups once (not per student)
-    grading_config = config.get("grading", {})
     groups = grading_config.get("question_groups", [])
     grade_only = grading_config.get("grade_only")
     if grade_only:
@@ -841,14 +868,19 @@ def grade_all_students(
             }
             try:
                 student_parsed = json.loads(path.read_text(encoding="utf-8"))
+                merge_into = results[results_by_name[student_name]] if student_name in results_by_name and grade_only_merge else None
                 result = grade_student(
-                    student_parsed, solution_parsed, config, client, ungrouped=ungrouped
+                    student_parsed, solution_parsed, config, client, ungrouped=ungrouped, merge_into=merge_into
                 )
                 u = result.pop("_usage", None)
                 if u:
                     usage_total["prompt_tokens"] += u.get("prompt_tokens", 0)
                     usage_total["completion_tokens"] += u.get("completion_tokens", 0)
-                results.append(result)
+                if student_name in results_by_name:
+                    results[results_by_name[student_name]] = result
+                else:
+                    results.append(result)
+                    results_by_name[student_name] = len(results) - 1
                 graded_count += 1
                 if results_lock:
                     with results_lock:
@@ -900,12 +932,12 @@ def grade_all_students(
     else:
         # Parallel grading
         def _grade_one(args):
-            i, path = args
+            i, path, merge_into = args
             student_name = path.stem
             try:
                 student_parsed = json.loads(path.read_text(encoding="utf-8"))
                 result = grade_student(
-                    student_parsed, solution_parsed, config, client, ungrouped=ungrouped
+                    student_parsed, solution_parsed, config, client, ungrouped=ungrouped, merge_into=merge_into
                 )
                 return (i, student_name, "done", result, None)
             except Exception as e:
@@ -913,6 +945,10 @@ def grade_all_students(
                 return (i, student_name, "error", None, str(e))
 
         graded_count = 0
+        to_grade_with_merge = [
+            (i, path, results[results_by_name[path.stem]] if path.stem in results_by_name and grade_only_merge else None)
+            for i, path in to_grade
+        ]
         for i, path in to_grade:
             yield {
                 "student": path.stem,
@@ -923,7 +959,7 @@ def grade_all_students(
                 "total": len(student_files),
             }
         with ThreadPoolExecutor(max_workers=workers) as pool:
-            futures = {pool.submit(_grade_one, item): item for item in to_grade}
+            futures = {pool.submit(_grade_one, item): item for item in to_grade_with_merge}
             for future in as_completed(futures):
                 i, student_name, status, result, error = future.result()
                 if status == "done":
@@ -933,7 +969,11 @@ def grade_all_students(
                         usage_total["completion_tokens"] += u.get(
                             "completion_tokens", 0
                         )
-                    results.append(result)
+                    if student_name in results_by_name:
+                        results[results_by_name[student_name]] = result
+                    else:
+                        results.append(result)
+                        results_by_name[student_name] = len(results) - 1
                     graded_count += 1
                     if results_lock:
                         with results_lock:
