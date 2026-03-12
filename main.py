@@ -218,7 +218,7 @@ Examples:
         print(f"Generate rubrics: {len(rubrics)} questions")
 
     if "grade" in steps:
-        from grade import grade_all_students
+        from batch_grader import grade_all_students
 
         for evt in grade_all_students(config):
             if evt["status"] == "done" and evt.get("result"):

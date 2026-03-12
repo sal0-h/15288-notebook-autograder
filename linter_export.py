@@ -141,7 +141,9 @@ def main():
 
     zip_path = export_linter_zip(args.config)
     print(f"Created: {zip_path}")
-    print("Upload this zip in Gradescope before the deadline for format validation (0 pts).")
+    print(
+        "Upload this zip in Gradescope before the deadline for format validation (0 pts)."
+    )
     print("After the deadline, replace with gradescope_autograder.zip from Export.")
 
 

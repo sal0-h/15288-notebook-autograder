@@ -13,6 +13,26 @@ from pydantic import BaseModel, field_validator, model_validator
 # Default model for grading when not specified in config
 DEFAULT_MODEL = "gpt-5-mini"
 
+
+def sanitize_assignment_name(name: str) -> str:
+    """Normalize assignment names to a filesystem-safe token."""
+    return re.sub(r'[/\\:*?"<>|.]', "_", str(name or "default")).strip("_") or "default"
+
+
+def filter_groups_by_grade_only(
+    groups: list[list[str]], grade_only: list[str] | None
+) -> list[list[str]]:
+    """Return question groups filtered to only grade_only questions when provided."""
+    if not grade_only:
+        return groups
+    grade_only_set = set(grade_only)
+    return [
+        [q for q in group if q in grade_only_set]
+        for group in groups
+        if group and any(q in grade_only_set for q in group)
+    ]
+
+
 # ---------------------------------------------------------------------------
 # Config I/O
 # ---------------------------------------------------------------------------
@@ -47,11 +67,8 @@ def load_config(config_path: Path | None = None) -> dict:
         with open(root_path, "r", encoding="utf-8") as f:
             cfg = yaml.safe_load(f) or {}
         config_root = project_root
-        assignment_name = (
-            re.sub(r'[/\\:*?"<>|.]', "_", cfg.get("assignment_name", "default")).strip(
-                "_"
-            )
-            or "default"
+        assignment_name = sanitize_assignment_name(
+            cfg.get("assignment_name", "default")
         )
         base_output = cfg.get("output_dir", "output")
         if Path(base_output).is_absolute():
@@ -66,11 +83,8 @@ def load_config(config_path: Path | None = None) -> dict:
         else:
             root_cfg = {}
 
-        assignment_name = (
-            re.sub(
-                r'[/\\:*?"<>|.]', "_", root_cfg.get("assignment_name", "default")
-            ).strip("_")
-            or "default"
+        assignment_name = sanitize_assignment_name(
+            root_cfg.get("assignment_name", "default")
         )
         base_output = root_cfg.get("output_dir", "output")
         assignment_config_path = (
@@ -142,10 +156,7 @@ def save_config(config: dict, config_path: Path | None = None) -> None:
     cfg.pop("parsed_dir", None)
 
     project_root = _project_root(config_path)
-    assignment_name = (
-        re.sub(r'[/\\:*?"<>|.]', "_", cfg.get("assignment_name", "default")).strip("_")
-        or "default"
-    )
+    assignment_name = sanitize_assignment_name(cfg.get("assignment_name", "default"))
     base_output = cfg.get("output_dir", "output")
     assignment_config_path = (
         project_root / base_output / assignment_name / "config.yaml"

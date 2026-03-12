@@ -57,10 +57,18 @@ from sse_starlette.sse import EventSourceResponse
 
 import re
 
-from utils import load_config, save_config, AppConfig, DEFAULT_MODEL
+from utils import (
+    load_config,
+    save_config,
+    AppConfig,
+    DEFAULT_MODEL,
+    filter_groups_by_grade_only,
+)
 from gather import gather_submissions
 from parse_notebook import parse_all_students, parse_notebook, get_all_question_ids
-from grade import grade_all_students, grade_student, validate_question_groups
+from batch_grader import grade_all_students
+from grade import grade_student
+from prompt_builder import validate_question_groups
 from export import export_all, export_autograder_zip
 from linter_export import export_linter_zip
 from rubric import generate_rubrics
@@ -447,7 +455,8 @@ async def api_generate_rubrics_post(
     body: dict | None = Body(None),
 ):
     """Generate rubrics (blocking). Saves to config. Use GET /generate-rubrics for progress stream.
-    Body: {"group_indices": [8]} to generate only for those groups (merges, does not overwrite)."""
+    Body: {"group_indices": [8]} to generate only for those groups (merges, does not overwrite).
+    """
     if not _rubric_lock.acquire(blocking=False):
         raise HTTPException(
             status_code=409,
@@ -634,15 +643,33 @@ async def api_grade_one(student_name: str):
     groups = grading_config.get("question_groups", [])
     grade_only = grading_config.get("grade_only")
     if grade_only:
-        groups = [[q for q in g if q in set(grade_only)] for g in groups]
-        groups = [g for g in groups if g]
+        groups = filter_groups_by_grade_only(groups, grade_only)
     ungrouped = validate_question_groups(groups, solution_parsed)
 
+    grade_only_merge = bool(grading_config.get("grade_only_merge") and grade_only)
+    merge_into = None
+    out_path = output_dir / "graded_results.json"
+    if grade_only_merge and out_path.exists():
+        raw_existing = json.loads(out_path.read_text(encoding="utf-8"))
+        existing_results = raw_existing if isinstance(raw_existing, list) else []
+        for existing in existing_results:
+            if (
+                isinstance(existing, dict)
+                and existing.get("student_name") == student_name
+            ):
+                merge_into = existing
+                break
+
     result = await asyncio.to_thread(
-        grade_student, student_parsed, solution_parsed, config, None, ungrouped
+        grade_student,
+        student_parsed,
+        solution_parsed,
+        config,
+        None,
+        ungrouped,
+        merge_into,
     )
 
-    out_path = output_dir / "graded_results.json"
     with _results_lock:
         raw = (
             json.loads(out_path.read_text(encoding="utf-8"))

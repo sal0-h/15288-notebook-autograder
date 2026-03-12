@@ -44,7 +44,8 @@ def run_calibration(config: dict) -> list[dict[str, str | float]]:
         if n < 2:
             continue
         mean = sum(scores) / n
-        variance = sum((x - mean) ** 2 for x in scores) / n
+        # Use sample variance (n-1) for more stable outlier detection on small cohorts.
+        variance = sum((x - mean) ** 2 for x in scores) / (n - 1)
         std = math.sqrt(variance) if variance > 0 else 0
         if std == 0:
             continue

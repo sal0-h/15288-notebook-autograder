@@ -191,8 +191,14 @@ class TestGenerateRubrics:
         )
 
         existing_rubrics = {
-            "4.1": {"points": 2, "items": [{"description": "Existing 4.1", "deduction": 2.0}]},
-            "4.2": {"points": 2, "items": [{"description": "Existing 4.2", "deduction": 2.0}]},
+            "4.1": {
+                "points": 2,
+                "items": [{"description": "Existing 4.1", "deduction": 2.0}],
+            },
+            "4.2": {
+                "points": 2,
+                "items": [{"description": "Existing 4.2", "deduction": 2.0}],
+            },
         }
 
         config = {
@@ -206,7 +212,12 @@ class TestGenerateRubrics:
         mock_response = MagicMock()
         mock_response.choices = [MagicMock()]
         mock_response.choices[0].message.content = json.dumps(
-            {"5.1": {"points": 2, "items": [{"description": "New 5.1", "deduction": 2.0}]}}
+            {
+                "5.1": {
+                    "points": 2,
+                    "items": [{"description": "New 5.1", "deduction": 2.0}],
+                }
+            }
         )
 
         with patch("rubric.get_openai_client") as mock_get_client:
@@ -221,3 +232,42 @@ class TestGenerateRubrics:
         assert rubrics["4.2"]["items"][0]["description"] == "Existing 4.2"
         # Group 1 (5.1) generated
         assert rubrics["5.1"]["items"][0]["description"] == "New 5.1"
+
+    def test_group_indices_are_applied_before_grade_only_filter(self, tmp_path):
+        """group_indices refer to original question_groups even when grade_only is set."""
+        sol = _solution_parsed(["1.1", "1.2", "2.1"])
+        (tmp_path / "solution_parsed.json").write_text(
+            json.dumps(sol), encoding="utf-8"
+        )
+
+        config = {
+            "output_dir": str(tmp_path),
+            "grading": {
+                "question_groups": [["1.1"], ["1.2"], ["2.1"]],
+                "grade_only": ["2.1"],
+            },
+            "model": "gpt-4o",
+            "max_completion_tokens": 4096,
+            "rubrics": {},
+        }
+
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message.content = json.dumps(
+            {
+                "2.1": {
+                    "points": 2,
+                    "items": [{"description": "Generated 2.1", "deduction": 2.0}],
+                }
+            }
+        )
+
+        with patch("rubric.get_openai_client") as mock_get_client:
+            mock_client = MagicMock()
+            mock_client.chat.completions.create.return_value = mock_response
+            mock_get_client.return_value = mock_client
+
+            rubrics = generate_rubrics(config, client=mock_client, group_indices=[2])
+
+        assert "2.1" in rubrics
+        assert rubrics["2.1"]["items"][0]["description"] == "Generated 2.1"

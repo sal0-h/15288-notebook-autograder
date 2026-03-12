@@ -148,7 +148,6 @@ def parse_notebook(nb_path: Path, config: dict) -> dict:
                     artifacts = extract_code_outputs(
                         nxt, keep_images_base64=keep_images
                     )
-                    artifacts["cell_index"] = j
                     q_obj["answer_cells"].append(artifacts)
 
                     if artifacts["code"].strip():
@@ -247,7 +246,7 @@ def parse_all_students(config: dict) -> tuple[dict | None, list[dict]]:
         student_name = nb_path.stem
         try:
             parsed = parse_notebook(nb_path, config)
-        except Exception as e:
+        except (json.JSONDecodeError, KeyError, ValueError, OSError) as e:
             logger.warning("Parse failed for %s: %s", student_name, e)
             report.append(
                 {

@@ -43,14 +43,16 @@ class TestLinterExport:
         out_dir.mkdir(parents=True)
         config_path = out_dir / "config.yaml"
         config_path.write_text(
-            yaml.dump({
-                "output_dir": str(out_dir),
-                "assignment_name": "Test",
-                "solution_notebook": str(sol_path),
-                "parsing": {
-                    "question_regex": r"(?i)^\s*(-\s*)?Q(\d+)\.(\d+)\s*.*?\[\s*(\d+)\s*PTS\s*\]",
-                },
-            }),
+            yaml.dump(
+                {
+                    "output_dir": str(out_dir),
+                    "assignment_name": "Test",
+                    "solution_notebook": str(sol_path),
+                    "parsing": {
+                        "question_regex": r"(?i)^\s*(-\s*)?Q(\d+)\.(\d+)\s*.*?\[\s*(\d+)\s*PTS\s*\]",
+                    },
+                }
+            ),
             encoding="utf-8",
         )
         zip_path = export_linter_zip(config_path)
@@ -73,11 +75,13 @@ class TestLinterExport:
         out_dir.mkdir(parents=True)
         config_path = out_dir / "config.yaml"
         config_path.write_text(
-            yaml.dump({
-                "output_dir": str(out_dir),
-                "assignment_name": "Test",
-                "solution_notebook": str(tmp_path / "nonexistent.ipynb"),
-            }),
+            yaml.dump(
+                {
+                    "output_dir": str(out_dir),
+                    "assignment_name": "Test",
+                    "solution_notebook": str(tmp_path / "nonexistent.ipynb"),
+                }
+            ),
             encoding="utf-8",
         )
         with pytest.raises(FileNotFoundError, match="Solution notebook not found"):

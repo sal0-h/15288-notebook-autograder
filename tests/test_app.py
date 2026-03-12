@@ -151,6 +151,77 @@ class TestGradingLock:
             assert r.status_code == 409
 
 
+class TestGradeOneMerge:
+    def test_grade_one_uses_merge_into_when_grade_only_merge_enabled(
+        self, client, tmp_path
+    ):
+        parsed_dir = tmp_path / "parsed"
+        parsed_dir.mkdir(parents=True, exist_ok=True)
+        output_dir = tmp_path / "output"
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        solution = {
+            "sections": {
+                "1": {"questions": {"1.1": {"points": 2}, "1.2": {"points": 2}}}
+            }
+        }
+        student = {
+            "sections": {
+                "1": {"questions": {"1.1": {"points": 2}, "1.2": {"points": 2}}}
+            }
+        }
+        existing = {
+            "student_name": "Alice",
+            "questions": {
+                "1.1": {"score": 2, "max": 2, "feedback": "ok"},
+                "1.2": {"score": 0, "max": 2, "feedback": "old"},
+            },
+            "total_score": 2,
+            "total_max": 4,
+            "summary_feedback": "Q1.2: old",
+        }
+
+        (output_dir / "solution_parsed.json").write_text(
+            json.dumps(solution), encoding="utf-8"
+        )
+        (parsed_dir / "Alice.json").write_text(json.dumps(student), encoding="utf-8")
+        (output_dir / "graded_results.json").write_text(
+            json.dumps([existing]), encoding="utf-8"
+        )
+
+        cfg = _full_config(tmp_path)
+        cfg["parsed_dir"] = str(parsed_dir)
+        cfg["output_dir"] = str(output_dir)
+        cfg["grading"] = {
+            "question_groups": [["1.1", "1.2"]],
+            "grade_only": ["1.2"],
+            "grade_only_merge": True,
+        }
+
+        returned = {
+            "student_name": "Alice",
+            "questions": {
+                "1.1": {"score": 2, "max": 2, "feedback": "ok"},
+                "1.2": {"score": 2, "max": 2, "feedback": "new"},
+            },
+            "total_score": 4,
+            "total_max": 4,
+            "summary_feedback": "Full marks.",
+        }
+
+        with patch("app.load_config", return_value=cfg), patch(
+            "app.grade_student", return_value=returned
+        ) as mock_grade_student:
+            r = client.post("/grade/Alice")
+
+        assert r.status_code == 200
+        assert mock_grade_student.called
+        call_args = mock_grade_student.call_args[0]
+        # merge_into is the 6th positional argument in api_grade_one call.
+        assert call_args[5]["student_name"] == "Alice"
+        assert call_args[5]["questions"]["1.2"]["feedback"] == "old"
+
+
 class TestRubricsEndpoints:
     def test_get_rubrics_returns_config_rubrics(self, client, mock_config):
         mock_config["rubrics"] = {

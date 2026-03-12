@@ -3,13 +3,10 @@
 import json
 from pathlib import Path
 
-from grade import (
-    MODEL_PRICING,
-    build_group_prompt,
-    estimate_tokens,
-)
+from grading_models import MODEL_PRICING
+from prompt_builder import build_group_prompt, estimate_tokens
 from rubric import _build_group_prompt, RUBRIC_REVIEW_SYSTEM_PROMPT
-from utils import load_config, DEFAULT_MODEL
+from utils import load_config, DEFAULT_MODEL, filter_groups_by_grade_only
 
 RUBRIC_SYSTEM_LEN = 800  # approx chars
 RUBRIC_REVIEW_SYSTEM_LEN = 700  # approx chars for review pass
@@ -59,9 +56,7 @@ def estimate_rubrics(config: dict) -> dict:
     groups = grading_config.get("question_groups", [])
     grade_only = grading_config.get("grade_only")
     if grade_only:
-        s = set(grade_only)
-        groups = [[q for q in g if q in s] for g in groups]
-        groups = [g for g in groups if g]
+        groups = filter_groups_by_grade_only(groups, grade_only)
     model = config.get("rubric_model") or config.get("model") or DEFAULT_MODEL
 
     prompt_tokens = estimate_tokens(" " * RUBRIC_SYSTEM_LEN, 0, model)
@@ -125,9 +120,7 @@ def estimate_grade(config: dict, student_name: str | None = None) -> dict:
     groups = grading_config.get("question_groups", [])
     grade_only = grading_config.get("grade_only")
     if grade_only:
-        s = set(grade_only)
-        groups = [[q for q in g if q in s] for g in groups]
-        groups = [g for g in groups if g]
+        groups = filter_groups_by_grade_only(groups, grade_only)
 
     student_files = sorted(parsed_dir.glob("*.json"))
     if student_name:

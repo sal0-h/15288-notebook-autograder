@@ -107,14 +107,16 @@ def export_all(config: dict) -> dict[str, str | int]:
         tests = []
         for qid in gs_q_cols:
             q_data = questions.get(qid, {"score": 0, "max": 0, "feedback": ""})
-            tests.append({
-                "name": gs_title_mapping.get(qid, qid),
-                "score": q_data.get("score", 0),
-                "max_score": q_data.get("max", 0),
-                "output": q_data.get("feedback", ""),
-                "output_format": "md",
-                "visibility": "visible",
-            })
+            tests.append(
+                {
+                    "name": gs_title_mapping.get(qid, qid),
+                    "score": q_data.get("score", 0),
+                    "max_score": q_data.get("max", 0),
+                    "output": q_data.get("feedback", ""),
+                    "output_format": "md",
+                    "visibility": "visible",
+                }
+            )
 
         gs_data = {"tests": tests}
         safe_name = (
@@ -181,9 +183,7 @@ def export_autograder_zip(config: dict) -> Path:
 
     json_files = list(gradescope_dir.glob("*.json"))
     if not json_files:
-        raise FileNotFoundError(
-            f"No JSON files in {gradescope_dir}. Run export first."
-        )
+        raise FileNotFoundError(f"No JSON files in {gradescope_dir}. Run export first.")
 
     # Gradescope requires setup.sh and run_autograder to be executable (Unix)
     exec_attr = 0o755 << 16  # Unix executable bits in zip external_attr
@@ -229,7 +229,9 @@ def main():
         print(f"Exported {summary['students']} students")
         print(f"Gradescope JSONs: {summary['gradescope_dir']}")
         print(f"Excel: {summary['excel_path']}")
-        print("To create autograder zip: python export.py --config ... --autograder-zip")
+        print(
+            "To create autograder zip: python export.py --config ... --autograder-zip"
+        )
 
 
 if __name__ == "__main__":

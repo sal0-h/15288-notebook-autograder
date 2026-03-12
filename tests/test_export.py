@@ -53,7 +53,9 @@ class TestExportAll:
         gs_data = json.loads(gs_path.read_text(encoding="utf-8"))
         assert "tests" in gs_data
         assert len(gs_data["tests"]) == 1
-        assert gs_data["tests"][0]["name"] == "1.1"  # qid as-is (no Q prefix) for Gradescope outline match
+        assert (
+            gs_data["tests"][0]["name"] == "1.1"
+        )  # qid as-is (no Q prefix) for Gradescope outline match
         assert gs_data["tests"][0]["score"] == 2
         assert gs_data["tests"][0]["max_score"] == 2
 
@@ -107,7 +109,11 @@ class TestExportAll:
                 "questions": {
                     "8.1": {"score": 2, "max": 2, "feedback": "ok"},
                     "9.1": {"score": 3, "max": 7, "feedback": "partial"},
-                    "1.1": {"score": 0, "max": 1, "feedback": "[skipped - not in grade_only]"},
+                    "1.1": {
+                        "score": 0,
+                        "max": 1,
+                        "feedback": "[skipped - not in grade_only]",
+                    },
                 },
                 "total_score": 5,
                 "total_max": 10,
@@ -143,7 +149,6 @@ class TestExportAll:
         export_all(config)
         gs_data = json.loads((tmp_path / "gradescope" / "Carol.json").read_text())
         assert gs_data["tests"][0]["name"] == "Outline Item 5"
-
 
 
 class TestExportAutograderZip:

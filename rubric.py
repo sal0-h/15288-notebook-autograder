@@ -10,8 +10,14 @@ from pathlib import Path
 
 from openai import OpenAI
 
-from grade import get_question_data, parse_llm_json, truncate_output
-from utils import get_openai_client, load_config, temperature_for_model, DEFAULT_MODEL
+from prompt_builder import get_question_data, parse_llm_json, truncate_output
+from utils import (
+    get_openai_client,
+    load_config,
+    temperature_for_model,
+    DEFAULT_MODEL,
+    filter_groups_by_grade_only,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -197,9 +203,15 @@ def _generate_one_group(
                     )
                     total_deductions += d
                 if parsed_items and abs(total_deductions - pts) > 0.01:
-                    scale = pts / total_deductions if total_deductions else 1.0
-                    for item in parsed_items:
-                        item["deduction"] = round(item["deduction"] * scale, 2)
+                    if total_deductions <= 0:
+                        # If the model returned zero deductions, distribute evenly and correct last item.
+                        even = round(float(pts) / len(parsed_items), 2)
+                        for item in parsed_items:
+                            item["deduction"] = even
+                    else:
+                        scale = pts / total_deductions
+                        for item in parsed_items:
+                            item["deduction"] = round(item["deduction"] * scale, 2)
                     diff = pts - sum(i["deduction"] for i in parsed_items)
                     parsed_items[-1]["deduction"] = round(
                         parsed_items[-1]["deduction"] + diff, 2
@@ -284,6 +296,21 @@ def _review_one_group(
                 else:
                     # Item count changed — keep originals untouched
                     v["items"] = orig_items
+            # Sanity-check: deduction sum must still equal points after review
+            pts = float(original.get("points", 0))
+            items = v.get("items", [])
+            if items:
+                total = sum(float(i.get("deduction", 0)) for i in items)
+                if abs(total - pts) > 0.01:
+                    logger.warning(
+                        "Rubric review for Q%s: deduction sum %.2f != points %.2f after review; "
+                        "reverting to original rubric",
+                        normalized,
+                        total,
+                        pts,
+                    )
+                    revised[normalized] = original
+                    continue
             revised[normalized] = v
         return revised
     except Exception as e:
@@ -310,13 +337,13 @@ def review_rubrics(
     model = config.get("rubric_model") or config.get("model") or DEFAULT_MODEL
     max_tokens = config.get("max_completion_tokens", 4096)
     grading_config = config.get("grading", {})
-    groups: list[list[str]] = groups_to_review or grading_config.get("question_groups", [])
+    groups: list[list[str]] = groups_to_review or grading_config.get(
+        "question_groups", []
+    )
     grade_only: list[str] | None = grading_config.get("grade_only")
 
     if groups_to_review is None and grade_only is not None:
-        grade_only_set = set(grade_only)
-        groups = [[q for q in group if q in grade_only_set] for group in groups]
-        groups = [g for g in groups if g]
+        groups = filter_groups_by_grade_only(groups, grade_only)
 
     revised = dict(rubrics)  # start with copy
     for group in groups:
@@ -367,7 +394,7 @@ def generate_rubrics(
 
     solution_parsed = json.loads(solution_path.read_text(encoding="utf-8"))
     grading_config = config.get("grading", {})
-    groups: list[list[str]] = grading_config.get("question_groups", [])
+    all_groups: list[list[str]] = grading_config.get("question_groups", [])
     grade_only: list[str] | None = grading_config.get("grade_only")
     model = config.get("rubric_model") or config.get("model") or DEFAULT_MODEL
     workers = config.get("workers", 1)
@@ -376,20 +403,20 @@ def generate_rubrics(
         config.get("prompts", {}).get("rubric_system") or DEFAULT_RUBRIC_SYSTEM_PROMPT
     )
 
-    if grade_only is not None:
-        grade_only_set = set(grade_only)
-        groups = [[q for q in group if q in grade_only_set] for group in groups]
-        groups = [g for g in groups if g]
-
-    # When group_indices: only process those groups; merge with existing
+    # When group_indices: select those groups from the original grouping first.
     partial = group_indices is not None
     if group_indices is not None:
-        valid = [i for i in group_indices if 0 <= i < len(groups)]
+        valid = [i for i in group_indices if 0 <= i < len(all_groups)]
         if not valid:
             raise ValueError(
-                f"Invalid group_indices {group_indices}. Valid range: 0–{len(groups) - 1}."
+                f"Invalid group_indices {group_indices}. Valid range: 0–{len(all_groups) - 1}."
             )
-        groups = [groups[i] for i in sorted(set(valid))]
+        groups = [all_groups[i] for i in sorted(set(valid))]
+    else:
+        groups = list(all_groups)
+
+    if grade_only is not None:
+        groups = filter_groups_by_grade_only(groups, grade_only)
 
     rubrics: dict[str, dict] = dict(config.get("rubrics", {})) if partial else {}
     rubrics_lock = threading.Lock()
@@ -441,7 +468,10 @@ def generate_rubrics(
     if config.get("rubric_review", False):
         logger.info("Running rubric review pass...")
         rubrics = review_rubrics(
-            rubrics, config, solution_parsed, client,
+            rubrics,
+            config,
+            solution_parsed,
+            client,
             groups_to_review=groups if partial else None,
         )
 

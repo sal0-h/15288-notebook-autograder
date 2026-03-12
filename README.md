@@ -1,562 +1,313 @@
 # AI Autograder for Gradescope
 
-An AI-powered grading pipeline for Jupyter notebook assignments. Parses student submissions and reference solutions, sends them to an LLM (OpenAI) for evaluation, and exports results in both Gradescope autograder format and human-readable Excel.
+AI-assisted grading pipeline for Jupyter notebook assignments.
 
-Built for Carnegie Mellon University in Qatar courses (15-288, 07-280).
+It parses solution and student notebooks, grades with an OpenAI model, and exports:
+- Gradescope JSON results
+- Excel gradebook
+- Optional Gradescope autograder ZIP
 
----
+Built for CMU Qatar courses (15-288).
 
 ## Table of Contents
 
-1. [Project Structure](#project-structure)
-2. [The Pipeline](#the-pipeline)
-3. [How Everything Works](#how-everything-works)
-4. [Configuration](#configuration)
-5. [Usage](#usage)
-6. [Web UI](#web-ui)
-7. [Testing](#testing)
-8. [Recent Changes](#recent-changes)
+1. Overview
+2. Architecture
+3. Pipeline
+4. Configuration
+5. CLI Usage
+6. Web UI and API
+7. Testing
+8. Notes and Guardrails
 
----
+## Overview
 
-## Project Structure
+Core capabilities:
+- Gather student notebooks from a Gradescope export (ZIP or extracted folder)
+- Parse notebooks into structured JSON per question
+- Optionally generate rubrics from the solution notebook
+- Grade by question groups with retry + validation
+- Optionally calibrate (z-score outlier detection)
+- Export grades to Gradescope JSON and Excel
 
-```
-ai_autograder/
-├── main.py              # CLI entry point: writes config, runs pipeline
-├── config.yaml          # Assignment config (auto-generated or edited)
-├── utils.py             # Shared: load_config, save_config, get_openai_client, Pydantic models
-├── gather.py            # Step 1: Extract notebooks from Gradescope ZIP
-├── parse_notebook.py    # Step 2: Parse notebooks into structured JSON
-├── rubric.py            # Step 3: LLM-based rubric generation from solution
-├── grade.py             # Step 4: LLM grading engine
-├── calibrate.py         # Step 5: Post-grading outlier detection (z-score)
-├── export.py            # Step 6: Export to Gradescope JSON + Excel
-├── app.py               # FastAPI backend
-├── ui/
-│   └── index.html       # Single-page web UI
-├── tests/
-│   ├── conftest.py
-│   ├── test_grade.py    # Tests for grade.py
-│   ├── test_parse.py    # Tests for parse_notebook.py
-│   ├── test_utils.py    # Tests for utils.py
-│   ├── test_gather.py   # Tests for gather.py
-│   ├── test_app.py      # Tests for app.py API
-│   └── test_export.py   # Tests for export.py
-├── requirements.txt
-├── .env                 # API key (key=...)
-└── output/              # Generated (gitignored)
-    └── {assignment_name}/   # Per-assignment output (e.g. LabTest_2_S26)
-        ├── submissions/     # Raw notebooks after gather
-        ├── parsed/          # Parsed JSON per student
-        ├── solution_parsed.json
-        ├── graded_results.json
-        ├── calibration_report.json
-        ├── gradescope/      # Per-student Gradescope JSON
-        └── Final_Grades.xlsx
-```
+Default pipeline from `main.py` is:
+- `parse -> grade -> export`
 
----
+Optional steps:
+- `gather`
+- `generate-rubrics`
+- `calibrate`
 
-## The Pipeline
+## Architecture
 
-The pipeline has six steps:
+Current grading stack is split into focused modules:
+- `grading_models.py`: Pydantic grading models and shared constants
+- `prompt_builder.py`: token estimation, JSON extraction, sanitization, prompt construction
+- `grade.py`: per-group and per-student grading logic
+- `batch_grader.py`: batch orchestration (sequential/parallel, resume support)
 
-```
-┌──────────┐   ┌──────────┐   ┌──────────────────┐   ┌──────────┐   ┌───────────┐   ┌──────────┐
-│ 1.GATHER │   │ 2.PARSE  │   │ 3.GEN-RUBRICS    │   │ 4.GRADE  │   │5.CALIBRATE│   │ 6.EXPORT │
-│          │   │          │   │                  │   │          │   │           │   │          │
-│Gradescope│──▶│Notebooks │──▶│LLM-generated     │──▶│LLM eval  │──▶│Outlier    │──▶│Gradescope│
-│ZIP       │   │→ JSON    │   │rubrics per Q     │   │per student│   │detection  │   │JSON+Excel│
-└──────────┘   └──────────┘   └──────────────────┘   └──────────┘   └───────────┘   └──────────┘
-```
+Main project files:
+- `main.py`: CLI pipeline entrypoint
+- `app.py`: FastAPI backend + static UI serving
+- `gather.py`: submission extraction and normalization
+- `parse_notebook.py`: notebook parser
+- `rubric.py`: rubric generation and optional rubric review pass
+- `calibrate.py`: outlier detection
+- `export.py`: Gradescope + Excel export, autograder ZIP build
+- `estimate.py`: cost and token estimates
+- `linter_export.py`: linter autograder ZIP
+- `utils.py`: config loading/saving, OpenAI client, shared validation models
 
-Steps 3 (generate-rubrics) and 5 (calibrate) are optional — the default CLI run is `parse → grade → export`.
+Output layout is assignment-scoped:
+- `output/{assignment_name}/submissions/`
+- `output/{assignment_name}/parsed/`
+- `output/{assignment_name}/solution_parsed.json`
+- `output/{assignment_name}/graded_results.json`
+- `output/{assignment_name}/calibration_report.json`
+- `output/{assignment_name}/gradescope/*.json`
+- `output/{assignment_name}/Final_Grades.xlsx`
 
----
+## Pipeline
 
-### Step 1: Gather
+### 1) Gather
 
-**Input:** Gradescope export ZIP (or extracted folder)
+Input:
+- Gradescope export ZIP, or extracted export folder
 
-**Output:** `output/{assignment_name}/submissions/` with one `.ipynb` per student, named `{StudentName}_{original}.ipynb`
-
-**What it does:**
-
-1. Extracts the ZIP to a temp directory
-2. Finds `submission_metadata.yml` (Gradescope metadata)
-3. For each submission folder: reads student name from metadata, finds the `.ipynb`, copies it to `output/submissions/` with a sanitized filename
-4. Reports status: `ok`, `missing`, or `duplicate`
-
-**Requirements:** Gradescope export must contain `submission_metadata.yml` and per-submission folders with `.ipynb` files.
-
----
-
-### Step 2: Parse
-
-**Input:** `output/{assignment_name}/submissions/*.ipynb` + solution notebook (path in config)
-
-**Output:** `output/{assignment_name}/parsed/{StudentName}.json` + `output/{assignment_name}/solution_parsed.json`
-
-**What it does:**
-
-1. Parses the solution notebook first
-2. Writes `solution_parsed.json` to `output/{assignment_name}/`
-3. Parses each student notebook
-4. Writes `{StudentName}.json` to `output/{assignment_name}/parsed/`
-5. Returns a verification report: which questions were found, which are missing
-
-**Parsing logic:**
-
-- Uses regex from config to detect **sections** (e.g. `# <font color='red'>1 Read and inspect the data</font>`) and **questions** (e.g. `- Q1.1 [1 PTS] ...`)
-- For each question, collects all cells until the next section/question:
-  - **Code cells:** code, text output, images (Base64)
-  - **Markdown cells:** treated as written answers
-- Produces per-question: `answer_code_concat`, `answer_text_concat`, `answer_markdown_concat`, `answer_cells` (with images)
-
-**Parsed JSON structure:**
-
-```json
-{
-  "sections": {
-    "1": {
-      "overview_markdown": "# Section 1...",
-      "questions": {
-        "1.1": {
-          "points": 1,
-          "question_markdown": "- Q1.1 [1 PTS] ...",
-          "answer_cells": [
-            { "code": "...", "output_text": "...", "images": [...] }
-          ],
-          "answer_code_concat": "...",
-          "answer_text_concat": "...",
-          "answer_markdown_concat": "..."
-        }
-      }
-    }
-  }
-}
-```
-
----
-
-### Step 3: Generate Rubrics (optional)
-
-**Input:** `output/{assignment_name}/solution_parsed.json`
-
-**Output:** `rubrics` key written to `config.yaml`
-
-**What it does:**
-
-For each question group, sends the question text and reference solution to the LLM and asks it to produce grading criteria. The criteria are stored in `config.yaml` under `rubrics` and are injected into the grading prompt in Step 4.
-
-**Rubric generation framework:**
-
-The rubric prompt uses a **"Question text = spec, Solution = example"** principle. The question text defines what students must do; the reference solution is one correct implementation, not the specification. Four rules govern when to hardcode vs use flexible wording:
-
-1. **Explicit requirements:** If the question explicitly requires specific values (e.g. "use K=5", "10-fold CV"), the rubric must require them.
-2. **Open-ended choices:** If the question is open-ended (e.g. "try four different values"), use flexible wording — do NOT hardcode the reference solution's specific choices.
-3. **Data-dependent results:** For values that depend on preprocessing or data (dataset size n, accuracy, iterations), use "correctly computed from their data" — do NOT hardcode the reference's numbers.
-4. **Implementation details:** For incidental choices (random_state, variable names), use flexible wording like "any fixed random_state".
-
-**Rubric review pass (optional):**
-
-When `rubric_review: true` (default), a second LLM pass audits each generated rubric against the question text. It softens criteria that hardcode reference-solution-specific values when the question doesn't explicitly require them. Point values and deduction amounts are preserved; only description text may be rewritten.
-
-**Rubric format (per question in config):**
-
-```yaml
-rubrics:
-  "1.1":
-    points: 2
-    items:
-      - description: "Correct plot with labeled axes"
-        deduction: 1.0
-      - description: "Axes labeled"
-        deduction: 1.0
-```
-
-Rubrics are optional — if absent, grading proceeds without pre-defined criteria. Deductions must sum to the question's total points.
-
----
-
-### Step 4: Grade
-
-**Input:** `output/{assignment_name}/parsed/*.json` + `output/{assignment_name}/solution_parsed.json`
-
-**Output:** `output/{assignment_name}/graded_results.json` (updated incrementally after each student)
-
-**What it does:**
-
-1. Loads `solution_parsed.json`
-2. For each student in `output/{assignment_name}/parsed/`:
-   - Skips if already in `graded_results.json` (resume support)
-   - For each **question group** in config:
-     - Builds a prompt with: question text, rubric (if set), reference solution, student submission
-     - Sends to OpenAI API (with vision support for images)
-     - Parses JSON response, validates with Pydantic
-     - Retries up to 2 times if response is partial or malformed
-   - Aggregates scores and feedback
-   - Appends to `graded_results.json` immediately (incremental save)
-
-**Question groups:**
-
-Questions are graded in groups (e.g. `["1.1", "1.2", "1.3"]`) so the LLM sees related context. Each group is one API call.
-
-**Grading principles (system prompt):**
-
-- **PRINCIPLE 1 — Question text is authoritative:** When a rubric criterion specifies something NOT explicitly required by the question text, treat the criterion as satisfied if the student made a reasonable alternative choice and completed the task correctly.
-- **PRINCIPLE 2 — Single deduction:** Each distinct mistake is penalized once. Do not cascade penalties.
-
-**Empty submission guard:**
-
-When a question has no code, no output, and no images, the prompt includes a warning so the LLM does not award points for non-existent content.
-
-**Reference solution in grading:**
-
-By default (`include_reference_in_grading: false`), the reference solution is **not** included in the grading prompt to avoid anchoring on solution-specific values. Set to `true` to include it.
-
-**Grade only specific questions:**
-
-Set `grading.grade_only: ['1.1', '2.1', '4.2']` in config to grade only those questions. All others receive 0 and feedback `[skipped - not in grade_only]`. When `grade_only` is set, `total_max` is the sum of graded questions only (e.g. 28/28, not 98/98). Omit `grade_only` to grade everything.
-
-**LLM prompt structure (per group):**
-
-```
-[system prompt with grading guidelines]
-
---- QUESTION 1.1 (1 pts) ---
-<question text>
-RUBRIC:
-<rubric items if set>
-
-REFERENCE SOLUTION:
-Code:
-<solution code>
 Output:
-<solution output>
-[2 reference plot(s) follow below]
-<images>
+- Notebook files in `submissions_dir`
 
-STUDENT SUBMISSION:
-<<<STUDENT_SUBMISSION>>>
-Code:
-<student code>
-...
-<<<END_STUDENT_SUBMISSION>>>
-```
+What it does:
+- Reads Gradescope metadata
+- Finds each student notebook
+- Copies with normalized names
 
-**Output format:**
+### 2) Parse
 
-```json
-[
-  {
-    "student_name": "Alice",
-    "questions": {
-      "1.1": {
-        "score": 1,
-        "max": 1,
-        "feedback": "",
-        "confidence": "high",
-        "requires_review": false
-      },
-      "1.2": {
-        "score": 0.5,
-        "max": 1,
-        "feedback": "-0.5 (missing axis label)",
-        "confidence": "medium",
-        "requires_review": false
-      }
-    },
-    "total_score": 28.5,
-    "total_max": 35,
-    "summary_feedback": "Q1.2: -0.5 (missing axis label). Q4.1: -1 (wrong value)."
-  }
-]
-```
+Input:
+- Solution notebook (`solution_notebook`)
+- Student notebooks from `submissions_dir`
 
-- `summary_feedback` only includes deductions (not full-marks questions).
-- `confidence`: `"high"`, `"medium"`, or `"low"` — the LLM's self-reported confidence.
-- `requires_review`: `true` when the LLM flags the answer as ambiguous or uninterpretable (e.g. answer is only an image).
+Output:
+- `solution_parsed.json`
+- Per-student JSON files in `parsed_dir`
 
----
+What it does:
+- Detects sections/questions via regex from config
+- Extracts code, markdown, text outputs, and images
+- Produces normalized per-question payloads used by grading
 
-### Step 5: Calibrate (optional)
+### 3) Generate Rubrics (optional)
 
-**Input:** `output/{assignment_name}/graded_results.json`
+Input:
+- `solution_parsed.json`
 
-**Output:** `output/{assignment_name}/calibration_report.json`
+Output:
+- `rubrics` saved in assignment config
 
-**What it does:**
+What it does:
+- Generates rubric items per question via LLM
+- Optional review pass (`rubric_review`) can soften over-specific criteria while preserving deductions/points
 
-Computes the mean and standard deviation of scores per question across all students. Flags any student-question pair where the z-score exceeds ±2 (i.e. an outlier relative to the class). These are surfaced in the Review tab as potential grading errors.
+### 4) Grade
 
-**Calibration report format:**
+Input:
+- Parsed solution + parsed student files
+- Question groups from `grading.question_groups`
 
-```json
-[
-  {
-    "student_name": "Bob",
-    "qid": "3.1",
-    "score": 0,
-    "max": 3,
-    "mean": 2.4,
-    "std": 0.5,
-    "z_score": -4.8,
-    "flag_reason": "low"
-  }
-]
-```
+Output:
+- `graded_results.json` (incrementally updated)
 
----
+What it does:
+- Grades per group with validated JSON responses
+- Retries malformed/partial LLM responses
+- Supports `grade_only` filtering
+- Supports resume (already graded students are skipped)
+- Supports optional `grade_only_merge` behavior used by API regrading paths
 
-### Step 6: Export
+### 5) Calibrate (optional)
 
-**Input:** `output/{assignment_name}/graded_results.json`
+Input:
+- `graded_results.json`
 
-**Output:**
+Output:
+- `calibration_report.json`
 
-- `output/{assignment_name}/gradescope/{StudentName}.json` — Gradescope autograder format
-- `output/{assignment_name}/Final_Grades.xlsx` — Human-readable spreadsheet
+What it does:
+- Computes per-question score distribution
+- Flags outliers by z-score
 
-**Gradescope JSON format:**
+### 6) Export
 
-```json
-{
-  "tests": [
-    {
-      "name": "Q1.1",
-      "score": 1,
-      "max_score": 1,
-      "output": "",
-      "visibility": "visible"
-    }
-  ]
-}
-```
+Input:
+- `graded_results.json`
 
-**Excel:** Columns: `student_name`, `total_score`, `Q1.1`, `Q1.2`, ..., `summary_feedback`.
-
----
-
-## How Everything Works
-
-### Config and Path Resolution
-
-- **Output-first layout:** The root `config.yaml` holds the assignment pointer (`assignment_name`, `output_dir`), **prompts** (grading system prompt, rubric_system), and root-level options (`rubric_review`, `include_reference_in_grading`). The assignment-specific config (rubrics, question groups, model, rubric_model, etc.) is stored at `output/{assignment_name}/config.yaml`. Prompts and rubric options stay at the project root so they are visible and reusable across assignments.
-- **Legacy:** If `output/{assignment_name}/config.yaml` does not exist, the root config is used (full config at root). On first save, the config migrates to the output folder.
-- **Paths:** All paths in config are resolved **relative to the project root** (directory containing the root `config.yaml`).
-- **Example:** If `config.yaml` is at `/home/project/config.yaml` and `solution_notebook: "archive1/sol.ipynb"`, it resolves to `/home/project/archive1/sol.ipynb`.
-
-### Per-assignment output directories
-
-All outputs are scoped under `output_dir/{assignment_name}/`. This lets you grade multiple assignments without overwriting results:
-
-- **LabTest_2_S26** → `output/LabTest_2_S26/submissions/`, `parsed/`, `graded_results.json`, etc.
-- **LabTest_3_S26** → `output/LabTest_3_S26/...`
-
-To grade a different assignment, change `assignment_name` in `config.yaml` (and `solution_notebook` if needed), then run the pipeline. Each assignment keeps its own outputs.
-
-### API Key
-
-- Stored in `.env` as `key=your-openai-api-key`
-- Loaded via `python-dotenv`; passed explicitly to `OpenAI(api_key=...)`
-- Fallback: `OPENAI_API_KEY` environment variable if `key` is not set
-
-### Security
-
-- **Do not commit `.env`** — it contains your API key. Ensure `.env` is in `.gitignore` (it is by default).
-- Student submissions are untrusted input; the pipeline sanitizes delimiter strings and instructs the LLM to treat student content as data, not instructions.
-
-### LLM Response Validation
-
-- **Pydantic models:** `QuestionGrade` (score, feedback, confidence, requires_review) and `GradingResponse` (grades dict)
-- **Key normalization:** `Q4.1` and `4.1` both map to `4.1`
-- **Retry:** If any question has placeholder feedback (`[not returned by LLM]` or `[parse error in LLM response]`), the group is retried up to 2 times with exponential backoff
-- **Temperature:** `0` for deterministic grading
-- **Token limits:** `max_prompt_tokens` (default 80k), `max_completion_tokens` (default 4k). Long outputs are truncated.
-- **Response format:** `{"type": "json_object"}` enforced on every API call
-
-### Images
-
-- Parsed images are Base64 PNG/JPEG
-- Sent to the API as `image_url` blocks with `data:image/png;base64,...`
-- Placed inline after the text they describe (e.g. `[2 reference plot(s) follow below]`)
-
-### Ungrouped Questions
-
-- If a question exists in the solution but is not in any `question_groups`, it gets score 0 and feedback `[not included in grading groups]`
-- A warning is logged at the start of grading
-
-### Resume support
-
-- If grading is interrupted, re-running `grade` skips students already in `graded_results.json` and continues from the next one
-
----
+Output:
+- `gradescope/*.json`
+- `Final_Grades.xlsx`
+- Optional `gradescope_autograder.zip`
+- Optional `linter_autograder.zip`
 
 ## Configuration
 
-| Key | Description |
-|-----|-------------|
-| `assignment_name` | Label for the assignment; all outputs go under `output_dir/{assignment_name}/` |
-| `model` | OpenAI model for grading (e.g. `gpt-5-mini`, `gpt-4o`) |
-| `rubric_model` | Optional model for rubric generation; uses `model` if not set |
-| `solution_notebook` | Path to reference solution `.ipynb` |
-| `output_dir` | Base directory; outputs go to `output_dir/{assignment_name}/submissions`, `parsed`, etc. |
-| `rubric_review` | If `true` (default), run a second LLM pass to soften hardcoded rubric values. Stored in root config. |
-| `include_reference_in_grading` | If `true`, include reference solution in grading prompt. Default: `false` to avoid anchoring. |
-| `max_prompt_tokens` | Max tokens for prompt (triggers truncation). Default: 80000 |
-| `max_completion_tokens` | Max tokens for LLM response. Default: 4096 |
-| `workers` | Number of parallel grading workers (default: 1). Set > 1 for faster grading of large classes. |
-| `parsing.section_regex` | Regex to detect section headers |
-| `parsing.question_regex` | Regex to detect questions (must capture section, question number, points) |
-| `parsing.keep_images` | Whether to include Base64 images in parsed output |
-| `grading.question_groups` | List of question ID lists, e.g. `[["1.1","1.2"], ["2.1"]]` |
-| `grading.grade_only` | Optional list of question IDs to grade; others get 0 and feedback `[skipped - not in grade_only]`. When set, `total_max` = sum of graded questions only. Omit to grade all. |
-| `gradescope_title_mapping` | Optional dict mapping internal qid to Gradescope outline title, e.g. `{"8.1": "5.1", "8.2": "6.1"}`. When set, Gradescope export uses these names. Omit to use qid as-is. |
-| `gradescope_outline_order` | Optional list of `{name, max}` in exact Gradescope outline order. When set, export outputs tests in this order so position-based matching works. Items not graded get score 0. |
-| `rubrics` | Optional per-question rubrics (auto-generated or hand-edited). Dict of `{qid: {points, items: [{description, deduction}]}}`. Deductions must sum to points. |
-| `prompts.system` | System prompt for the LLM grader |
-| `prompts.rubric_system` | System prompt for rubric generation |
-| `upload_max_mb` | Max ZIP upload size in MB for Web UI gather (default: 500). |
+The project uses an output-first config layout:
+- Root `config.yaml` keeps assignment pointer + root-level controls (`prompts`, `rubric_review`, `include_reference_in_grading`)
+- Assignment runtime config is stored at `output/{assignment_name}/config.yaml`
 
----
+Key fields:
+- `assignment_name`: assignment identifier; output is scoped under this name
+- `model`: grading model
+- `rubric_model`: rubric generation model (falls back to `model` when empty)
+- `solution_notebook`: path to solution notebook
+- `workers`: grading worker count
+- `max_prompt_tokens`: prompt token budget
+- `max_completion_tokens`: completion token budget
+- `rubric_review`: enable rubric review pass
+- `include_reference_in_grading`: include reference solution in grading prompts
+- `parsing.section_regex`: section matcher
+- `parsing.question_regex`: question matcher
+- `parsing.keep_images`: include parsed image payloads
+- `grading.question_groups`: grouped question IDs for each grading call
+- `grading.grade_only`: optional subset of question IDs to grade
+- `rubrics`: optional per-question rubric map
+- `prompts.system`: grading system prompt
+- `prompts.rubric_system`: rubric generation system prompt
+- `upload_max_mb`: max ZIP upload size for `/gather` (default 500)
 
-## Usage
+## CLI Usage
 
-### CLI
+### Setup
 
 ```bash
-# Create venv and install
 python -m venv .venv
 .venv/bin/pip install -r requirements.txt
-
-# Set API key
 echo "key=sk-..." > .env
+```
 
-# Run full pipeline (parse + grade + export)
+### Main pipeline (`main.py`)
+
+```bash
+# Default: parse + grade + export
 python main.py
 
-# With Gradescope ZIP (gather + parse + grade + export)
+# Add gather by supplying a Gradescope ZIP
 python main.py --zip gradescope_export.zip
 
-# Only write config.yaml, don't run pipeline
+# Only write config
 python main.py --config-only
 
-# Run specific steps
+# Explicit steps
 python main.py --steps parse
 python main.py --steps parse generate-rubrics grade calibrate export
 
-# Override model
-python main.py --model gpt-4o
-
-# Override solution notebook path
+# Overrides
+python main.py --model gpt-5-mini
 python main.py --solution path/to/solution.ipynb
-
-# Override submissions directory
-python main.py --submissions-dir path/to/submissions/
-
-# Use existing config without overwriting
+python main.py --submissions-dir path/to/submissions
 python main.py --no-write-config
-
-# Custom config path
 python main.py --config my_config.yaml
 ```
 
-Available `--steps` choices: `gather`, `parse`, `generate-rubrics`, `grade`, `calibrate`, `export`
+Available `--steps` values:
+- `gather`
+- `parse`
+- `generate-rubrics`
+- `grade`
+- `calibrate`
+- `export`
 
-Default steps (when `--steps` is not given): `parse grade export`
-
-### Individual modules
+### Module entrypoints
 
 ```bash
-# Gather only
-python gather.py --zip export.zip
-
-# Parse only
-python parse_notebook.py
-
-# Generate rubrics only (requires solution_parsed.json)
-python rubric.py
-
-# Grade only (requires parsed output)
-python grade.py
-
-# Calibrate only (requires graded_results.json)
-python calibrate.py
-
-# Export only (requires graded_results.json)
-python export.py
+python gather.py --zip gradescope_export.zip
+python gather.py --folder extracted_export_folder
+python parse_notebook.py --config config.yaml
+python rubric.py --config config.yaml
+python grade.py --config config.yaml
+python calibrate.py --config config.yaml
+python export.py --config config.yaml
+python export.py --config config.yaml --autograder-zip
 ```
 
----
+## Web UI and API
 
-## Web UI
+Run server:
 
 ```bash
 uvicorn app:app --reload
 ```
 
-Open browser to `http://localhost:8000`.
+Open `http://127.0.0.1:8000`.
 
-**Note:** The Review tab uses [DOMPurify](https://github.com/cure53/DOMPurify) (loaded from CDN) to safely render question markdown from student submissions.
+### UI tabs
 
-**Tabs:**
+1. Setup
+2. Gather
+3. Parse
+4. Rubrics
+5. Grade
+6. Review
+7. Export
 
-0. **Setup** — Assignment name, model, rubric model, solution notebook, workers, rubric review pass, include reference in grading, grade-only questions, question groups
-1. **Gather** — Upload Gradescope ZIP or specify a local folder path
-2. **Parse** — Run parse, view verification report
-3. **Rubrics** — Generate LLM rubrics from solution (with optional review pass), edit per-question criteria, save to config. Cost estimate includes rubric review when enabled.
-4. **Grade** — Start grading, view live progress (SSE stream)
-5. **Review** — Load results, edit scores/feedback, view confidence badges and outlier flags, save
-6. **Export** — Generate Gradescope JSON + Excel, download
+### API endpoints
 
-**Cost estimation:**
+Config:
+- `GET /config`
+- `PUT /config`
+- `GET /config/default`
 
-Before running rubric generation or grading, the UI shows estimated tokens and cost. Rubric estimate includes the optional review pass when `rubric_review` is enabled.
+Setup helpers:
+- `POST /parse-solution-upload`
+- `POST /parse-solution`
 
-**API endpoints:**
+Pipeline:
+- `POST /gather`
+- `POST /gather-from-folder`
+- `POST /parse`
+- `GET /generate-rubrics` (SSE stream)
+- `POST /generate-rubrics` (blocking)
+- `GET /grade/status`
+- `GET /grade` (SSE stream)
+- `POST /grade/{student_name}` (single student regrade)
+- `POST /calibrate`
+- `POST /export`
 
-| Method | Path | Description |
-|--------|------|-------------|
-| `GET` | `/config` | Read current config |
-| `PUT` | `/config` | Update config |
-| `GET` | `/estimate/rubrics` | Estimate tokens and cost for rubric generation |
-| `GET` | `/estimate/grade` | Estimate tokens and cost for grading all students |
-| `GET` | `/estimate/grade/{student}` | Estimate cost for re-grading one student |
-| `POST` | `/gather` | Upload ZIP and run gather |
-| `POST` | `/gather-from-folder` | Run gather from a local folder path |
-| `POST` | `/parse` | Run parse step |
-| `GET` | `/generate-rubrics` | SSE stream: generate rubrics and save to config |
-| `POST` | `/generate-rubrics` | Generate rubrics (blocking) |
-| `GET` | `/rubrics` | Read rubrics from config |
-| `PUT` | `/rubrics` | Save edited rubrics to config |
-| `GET` | `/grade` | SSE stream of grading progress |
-| `POST` | `/calibrate` | Run outlier detection on graded results |
-| `GET` | `/calibration` | Read saved calibration report |
-| `GET` | `/results` | Read full graded results |
-| `PUT` | `/results/{student}` | Update one student's scores/feedback |
-| `GET` | `/parsed/{student}` | Get parsed notebook for a student |
-| `POST` | `/export` | Run export step |
-| `GET` | `/export/excel` | Download Final_Grades.xlsx |
+Rubrics and estimates:
+- `GET /rubrics`
+- `PUT /rubrics`
+- `GET /estimate/rubrics`
+- `GET /estimate/grade`
+- `GET /estimate/grade/{student_name}`
 
----
+Results and parsed data:
+- `GET /results`
+- `PUT /results/{student_name}`
+- `GET /parsed/{student_name}`
+- `GET /calibration`
+
+Downloads:
+- `GET /export/excel`
+- `GET /export/autograder-zip`
+- `GET /export/linter-zip`
+
+Static UI:
+- `GET /`
+- `GET /ui/{path}`
 
 ## Testing
 
 ```bash
-.venv/bin/pytest tests/ -v
+.venv/bin/python -m pytest tests/ -q
 ```
 
-Tests cover grading logic, JSON parsing, prompt building, notebook parsing, config loading, gather, export, and API endpoints.
+Test suite covers parsing, grading, rubric generation, API behavior, export paths, and utilities.
 
----
+## Notes and Guardrails
 
-## Recent Changes
-
-- **Rubric generation:** "Question text = spec, Solution = example" framework with four rules (explicit requirements, open-ended choices, data-dependent results, implementation details). Optional **rubric review pass** softens hardcoded values when the question doesn't require them.
-- **Grading:** Two principles — question text is authoritative; single deduction (no cascading penalties). **Empty submission guard** warns the LLM when a question has no code/output/images to prevent over-grading.
-- **total_max fix:** When `grade_only` is set, `total_max` is the sum of graded questions only (e.g. 28/28, not 98/98).
-- **Config:** `rubric_review` (root), `rubric_model`, `include_reference_in_grading`. Prompts and rubric options live in root config.
-- **UI:** Setup tab (0) with rubric model, rubric review checkbox, include reference in grading. Cost estimates include rubric review when enabled.
-- **Cost estimation:** `estimate_rubrics` accounts for the rubric review pass when `rubric_review` is true.
+- API key lookup order:
+  - `.env` key: `key=...`
+  - fallback: `OPENAI_API_KEY`
+- Student submission content is treated as untrusted input and sanitized before prompt injection into model messages.
+- Grading responses are JSON-validated; malformed responses trigger retries.
+- Empty/missing submissions are normalized to `[no submission]`.
+- Re-running grading resumes from existing `graded_results.json` unless regrade endpoints are used.

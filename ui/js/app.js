@@ -359,10 +359,7 @@ async function loadRubricGroups() {
         const config = await r.json();
         let groups = (config.grading || {}).question_groups || [];
         const gradeOnly = (config.grading || {}).grade_only;
-        if (gradeOnly && Array.isArray(gradeOnly)) {
-            const set = new Set(gradeOnly);
-            groups = groups.map(g => g.filter(q => set.has(q))).filter(g => g.length);
-        }
+        groups = filterGroupsByGradeOnly(groups, gradeOnly);
         rubricQuestionGroups = groups;
         renderRubricGroupCheckboxes(groups);
         return groups;
@@ -381,13 +378,11 @@ async function loadRubricsForEdit() {
         fullRubricsCache = rubrics;
         let groups = (config.grading || {}).question_groups || [];
         const gradeOnly = (config.grading || {}).grade_only;
-        if (gradeOnly && Array.isArray(gradeOnly)) {
-            const set = new Set(gradeOnly);
-            groups = groups.map(g => g.filter(q => set.has(q))).filter(g => g.length);
-        }
+        groups = filterGroupsByGradeOnly(groups, gradeOnly);
         rubricQuestionGroups = groups;
         renderRubricGroupCheckboxes(groups);
-        const toShow = gradeOnly && gradeOnly.length ? Object.fromEntries(Object.entries(rubrics).filter(([k]) => new Set(gradeOnly).has(k))) : rubrics;
+        const gradeOnlySet = gradeOnly && gradeOnly.length ? new Set(gradeOnly) : null;
+        const toShow = gradeOnlySet ? Object.fromEntries(Object.entries(rubrics).filter(([k]) => gradeOnlySet.has(k))) : rubrics;
         renderRubricForm(toShow);
     } catch (e) {
         document.getElementById("rubricResults").innerHTML = `<p class="status-error">Error: ${escHtml(e.message)}</p>`;
