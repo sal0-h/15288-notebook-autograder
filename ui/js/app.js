@@ -23,6 +23,12 @@ document.querySelectorAll(".tab[data-tab]").forEach(t => {
 let setupQuestionGroups = [];
 let setupConfig = {};
 
+const filterGroupsForUi = window.filterGroupsByGradeOnly || function(groups, gradeOnly) {
+    if (!gradeOnly || !Array.isArray(gradeOnly) || gradeOnly.length === 0) return groups;
+    const set = new Set(gradeOnly);
+    return groups.map(g => g.filter(q => set.has(q))).filter(g => g.length > 0);
+};
+
 async function loadSetupFromConfig() {
     try {
         const r = await fetch(API + "/config");
@@ -359,7 +365,7 @@ async function loadRubricGroups() {
         const config = await r.json();
         let groups = (config.grading || {}).question_groups || [];
         const gradeOnly = (config.grading || {}).grade_only;
-        groups = filterGroupsByGradeOnly(groups, gradeOnly);
+        groups = filterGroupsForUi(groups, gradeOnly);
         rubricQuestionGroups = groups;
         renderRubricGroupCheckboxes(groups);
         return groups;
@@ -378,7 +384,7 @@ async function loadRubricsForEdit() {
         fullRubricsCache = rubrics;
         let groups = (config.grading || {}).question_groups || [];
         const gradeOnly = (config.grading || {}).grade_only;
-        groups = filterGroupsByGradeOnly(groups, gradeOnly);
+        groups = filterGroupsForUi(groups, gradeOnly);
         rubricQuestionGroups = groups;
         renderRubricGroupCheckboxes(groups);
         const gradeOnlySet = gradeOnly && gradeOnly.length ? new Set(gradeOnly) : null;

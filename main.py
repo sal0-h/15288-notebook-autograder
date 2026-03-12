@@ -158,13 +158,18 @@ Examples:
     # Set up file logging to output_dir/autograder.log (same as web app)
     out_dir = Path(config.get("output_dir", "output"))
     out_dir.mkdir(parents=True, exist_ok=True)
-    log_path = out_dir / "autograder.log"
+    log_path = (out_dir / "autograder.log").resolve()
     root = logging.getLogger()
-    if not any(
-        getattr(h, "baseFilename", "").endswith("autograder.log")
+    current_handlers = [
+        h
         for h in root.handlers
         if isinstance(h, logging.FileHandler)
-    ):
+        and getattr(h, "baseFilename", "").endswith("autograder.log")
+    ]
+    if not any(Path(h.baseFilename).resolve() == log_path for h in current_handlers):
+        for handler in current_handlers:
+            root.removeHandler(handler)
+            handler.close()
         handler = logging.FileHandler(log_path, encoding="utf-8")
         handler.setFormatter(
             logging.Formatter("%(asctime)s %(levelname)s [%(name)s] %(message)s")

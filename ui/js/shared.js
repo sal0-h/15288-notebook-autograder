@@ -52,6 +52,8 @@ function filterGroupsByGradeOnly(groups, gradeOnly) {
     return groups.map(g => g.filter(q => set.has(q))).filter(g => g.length > 0);
 }
 
+window.filterGroupsByGradeOnly = filterGroupsByGradeOnly;
+
 async function loadRubricEstimate() {
     const el = document.getElementById("rubricEstimate");
     if (!el) return;

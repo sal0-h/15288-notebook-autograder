@@ -8,21 +8,29 @@ logger = logging.getLogger(__name__)
 
 
 def _setup_file_logging() -> None:
-    """Add a FileHandler to the root logger, writing to output_dir/autograder.log."""
+    """Ensure the root logger writes to the active assignment's autograder.log."""
     root = logging.getLogger()
-    if any(
-        getattr(h, "baseFilename", "").endswith("autograder.log")
-        for h in root.handlers
-        if isinstance(h, logging.FileHandler)
-    ):
-        return
     try:
         cfg = load_config()
         out_dir = Path(cfg.get("output_dir", "output"))
     except Exception:
         out_dir = Path("output")
     out_dir.mkdir(parents=True, exist_ok=True)
-    log_path = out_dir / "autograder.log"
+    log_path = (out_dir / "autograder.log").resolve()
+
+    current_handlers = [
+        h
+        for h in root.handlers
+        if isinstance(h, logging.FileHandler)
+        and getattr(h, "baseFilename", "").endswith("autograder.log")
+    ]
+    if any(Path(h.baseFilename).resolve() == log_path for h in current_handlers):
+        return
+
+    for handler in current_handlers:
+        root.removeHandler(handler)
+        handler.close()
+
     handler = logging.FileHandler(log_path, encoding="utf-8")
     handler.setFormatter(
         logging.Formatter("%(asctime)s %(levelname)s [%(name)s] %(message)s")
@@ -118,12 +126,44 @@ def api_get_config():
 
 @app.put("/config")
 def api_put_config(config: dict = Body(...)):
-    """Validate and update config.yaml from UI."""
+    """Validate and update config.yaml from UI.
+
+    Accepts partial payloads from the setup UI by merging them into
+    defaults + existing config before validating against AppConfig.
+    """
+
+    def _deep_merge(base: dict, override: dict) -> dict:
+        merged = dict(base or {})
+        for k, v in (override or {}).items():
+            if isinstance(v, dict) and isinstance(merged.get(k), dict):
+                merged[k] = _deep_merge(merged[k], v)
+            else:
+                merged[k] = v
+        return merged
+
     try:
-        AppConfig.model_validate(config)
+        existing = load_config()
+    except Exception:
+        existing = {}
+
+    existing_assignment = str(existing.get("assignment_name", "")).strip()
+    incoming_assignment = str(config.get("assignment_name", "")).strip()
+    assignment_changed = bool(
+        incoming_assignment
+        and existing_assignment
+        and incoming_assignment != existing_assignment
+    )
+    if assignment_changed and "solution_notebook" not in config:
+        config = dict(config)
+        config["solution_notebook"] = ""
+
+    merged = _deep_merge(_default_config(), _deep_merge(existing, config))
+    try:
+        AppConfig.model_validate(merged)
     except Exception as e:
         raise HTTPException(status_code=422, detail=f"Invalid config: {e}")
-    save_config(config)
+    save_config(merged)
+    _setup_file_logging()
     return {"ok": True}
 
 

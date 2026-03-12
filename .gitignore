@@ -1,6 +1,7 @@
 .env
 .venv/
 .cursor
+.github
 output/
 __pycache__/
 .pytest_cache

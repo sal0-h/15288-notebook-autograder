@@ -102,3 +102,40 @@ prompts:
         cfg2 = load_config(config_path)
         assert cfg2.get("assignment_name") == cfg.get("assignment_name")
         assert "submissions" in str(cfg2.get("submissions_dir", ""))
+
+    def test_save_config_preserves_hash_in_assignment_name(self, tmp_path):
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text(
+            """
+assignment_name: default
+output_dir: output
+prompts:
+  system: "Grade"
+""",
+            encoding="utf-8",
+        )
+
+        cfg = {
+            "assignment_name": "Lab #1",
+            "model": "gpt-5-mini",
+            "rubric_model": "",
+            "rubric_review": True,
+            "include_reference_in_grading": False,
+            "solution_notebook": "",
+            "output_dir": "output",
+            "workers": 1,
+            "rubrics": {},
+            "max_prompt_tokens": 80_000,
+            "max_completion_tokens": 4_096,
+            "parsing": {
+                "section_regex": r"\\d+",
+                "question_regex": r"Q\\d+",
+                "keep_images": True,
+            },
+            "grading": {"question_groups": [["1.1"]], "grade_only": None},
+            "prompts": {"system": "Grade"},
+        }
+
+        save_config(cfg, config_path)
+        root_cfg = load_config(config_path)
+        assert root_cfg["assignment_name"] == "Lab #1"

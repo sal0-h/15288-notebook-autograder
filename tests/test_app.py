@@ -92,6 +92,92 @@ class TestUploadLimit:
         assert "Invalid" in r.json().get("detail", "")
 
 
+class TestConfigEndpoints:
+    def test_put_config_accepts_partial_payload(self, client, tmp_path):
+        existing = {
+            "assignment_name": "default",
+            "model": DEFAULT_MODEL,
+            "rubric_model": "",
+            "include_reference_in_grading": False,
+            "solution_notebook": str(tmp_path / "sol.ipynb"),
+            "output_dir": str(tmp_path / "output"),
+            "submissions_dir": str(tmp_path / "output" / "submissions"),
+            "parsed_dir": str(tmp_path / "output" / "parsed"),
+            "workers": 1,
+            "max_prompt_tokens": 80_000,
+            "max_completion_tokens": 4_096,
+            "parsing": {
+                "section_regex": r"(?m)^\\s*#\\s*<font[^>]*>\\s*(\\d+)\\b",
+                "question_regex": r"(?i)^\\s*(-\\s*)?Q(\\d+)\\.(\\d+)\\s*.*?\\[\\s*(\\d+)\\s*PTS\\s*\\]",
+                "keep_images": True,
+            },
+            "grading": {"question_groups": [["1.1"]]},
+            "prompts": {"system": "Grade."},
+            "rubrics": {},
+        }
+
+        with patch("app.load_config", return_value=existing), patch(
+            "app.save_config"
+        ) as mock_save:
+            r = client.put(
+                "/config",
+                json={
+                    "assignment_name": "LabTest_Demo",
+                    "model": DEFAULT_MODEL,
+                    "rubric_model": "",
+                },
+            )
+
+        assert r.status_code == 200
+        mock_save.assert_called_once()
+        saved = mock_save.call_args[0][0]
+        assert saved["assignment_name"] == "LabTest_Demo"
+        assert "parsing" in saved
+        assert "grading" in saved
+        assert "prompts" in saved
+
+    def test_put_config_assignment_change_clears_solution_when_missing(
+        self, client, tmp_path
+    ):
+        existing = {
+            "assignment_name": "Old_Assignment",
+            "model": DEFAULT_MODEL,
+            "rubric_model": "",
+            "include_reference_in_grading": False,
+            "solution_notebook": str(tmp_path / "old_sol.ipynb"),
+            "output_dir": str(tmp_path / "output"),
+            "submissions_dir": str(tmp_path / "output" / "submissions"),
+            "parsed_dir": str(tmp_path / "output" / "parsed"),
+            "workers": 1,
+            "max_prompt_tokens": 80_000,
+            "max_completion_tokens": 4_096,
+            "parsing": {
+                "section_regex": r"(?m)^\\s*#\\s*<font[^>]*>\\s*(\\d+)\\b",
+                "question_regex": r"(?i)^\\s*(-\\s*)?Q(\\d+)\\.(\\d+)\\s*.*?\\[\\s*(\\d+)\\s*PTS\\s*\\]",
+                "keep_images": True,
+            },
+            "grading": {"question_groups": [["1.1"]]},
+            "prompts": {"system": "Grade."},
+            "rubrics": {},
+        }
+
+        with patch("app.load_config", return_value=existing), patch(
+            "app.save_config"
+        ) as mock_save:
+            r = client.put(
+                "/config",
+                json={
+                    "assignment_name": "New_Assignment",
+                    "model": DEFAULT_MODEL,
+                },
+            )
+
+        assert r.status_code == 200
+        saved = mock_save.call_args[0][0]
+        assert saved["assignment_name"] == "New_Assignment"
+        assert saved["solution_notebook"] == ""
+
+
 class TestPutResults:
     def test_malformed_payload_rejected(self, client, mock_config, tmp_path):
         (tmp_path / "output").mkdir(exist_ok=True)

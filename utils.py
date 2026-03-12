@@ -183,48 +183,19 @@ def save_config(config: dict, config_path: Path | None = None) -> None:
     with open(assignment_config_path, "w", encoding="utf-8") as f:
         yaml.dump(assignment_cfg, f, default_flow_style=False, allow_unicode=True)
 
-    # Save root: only update assignment_name and output_dir; leave prompts untouched
-    # to avoid reformatting the prompts block on every save.
+    # Save root config with assignment pointer + root-level controls.
     root_path = (config_path or Path("config.yaml")).resolve()
-    root_content = root_path.read_text(encoding="utf-8") if root_path.exists() else ""
-    root_content = re.sub(
-        r"^assignment_name:\s*.+",
-        f"assignment_name: {assignment_name}",
-        root_content,
-        count=1,
-        flags=re.MULTILINE,
-    )
-    root_content = re.sub(
-        r"^output_dir:\s*.+",
-        f"output_dir: {base_output}",
-        root_content,
-        count=1,
-        flags=re.MULTILINE,
-    )
-    # If prompts or root-only controls changed, do a full write.
-    existing = yaml.safe_load(root_content) if root_content.strip() else {}
-    existing_prompts = existing.get("prompts", {})
-    new_prompts = cfg.get("prompts", {})
-    existing_review = existing.get("rubric_review", True)
-    new_review = cfg.get("rubric_review", True)
-    existing_include_ref = existing.get("include_reference_in_grading", False)
-    new_include_ref = cfg.get("include_reference_in_grading", False)
-    if (
-        existing_prompts != new_prompts
-        or existing_review != new_review
-        or existing_include_ref != new_include_ref
-    ):
-        root_cfg = {
-            "assignment_name": assignment_name,
-            "output_dir": base_output,
-            "rubric_review": new_review,
-            "include_reference_in_grading": new_include_ref,
-            "prompts": new_prompts,
-        }
-        with open(root_path, "w", encoding="utf-8") as f:
-            yaml.dump(root_cfg, f, default_flow_style=False, allow_unicode=True)
-    else:
-        root_path.write_text(root_content, encoding="utf-8")
+    root_cfg = {
+        "assignment_name": assignment_name,
+        "output_dir": base_output,
+        "rubric_review": cfg.get("rubric_review", True),
+        "include_reference_in_grading": cfg.get(
+            "include_reference_in_grading", False
+        ),
+        "prompts": cfg.get("prompts", {}),
+    }
+    with open(root_path, "w", encoding="utf-8") as f:
+        yaml.dump(root_cfg, f, default_flow_style=False, allow_unicode=True)
 
 
 # ---------------------------------------------------------------------------
