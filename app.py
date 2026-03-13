@@ -233,6 +233,8 @@ def _default_config() -> dict:
         "grading": {"question_groups": []},
         "prompts": {
             "system": "You are an expert Python instructor grading student lab work.\n\nReturn valid JSON only.",
+            "rubric_system": "",
+            "rubric_review_system": "",
         },
         "rubrics": {},
     }

@@ -26,6 +26,107 @@ def _solution_parsed(qids: list[str]) -> dict:
 
 
 class TestGenerateRubrics:
+    def test_uses_configured_rubric_generation_prompt(self, tmp_path):
+        """Rubric generation should use prompts.rubric_system when provided."""
+        sol = _solution_parsed(["1.1"])
+        (tmp_path / "solution_parsed.json").write_text(
+            json.dumps(sol), encoding="utf-8"
+        )
+
+        custom_prompt = "CUSTOM RUBRIC SYSTEM PROMPT"
+        config = {
+            "output_dir": str(tmp_path),
+            "grading": {"question_groups": [["1.1"]]},
+            "model": "gpt-4o",
+            "max_completion_tokens": 4096,
+            "prompts": {"rubric_system": custom_prompt},
+        }
+
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message.content = json.dumps(
+            {
+                "1.1": {
+                    "points": 2,
+                    "items": [{"description": "Correct", "deduction": 2.0}],
+                }
+            }
+        )
+
+        mock_client = MagicMock()
+        mock_client.chat.completions.create.return_value = mock_response
+
+        generate_rubrics(config, client=mock_client)
+
+        call = mock_client.chat.completions.create.call_args
+        assert call.kwargs["messages"][0]["content"] == custom_prompt
+
+    def test_uses_configured_rubric_review_prompt(self, tmp_path):
+        """Rubric review second pass should use prompts.rubric_review_system when provided."""
+        sol = {
+            "sections": {
+                "1": {
+                    "questions": {
+                        "1.1": {
+                            "points": 2,
+                            "question_markdown": "Q1.1",
+                            "answer_code_concat": "x = 1",
+                            "answer_text_concat": "",
+                            "answer_markdown_concat": "",
+                        }
+                    }
+                }
+            }
+        }
+        (tmp_path / "solution_parsed.json").write_text(
+            json.dumps(sol), encoding="utf-8"
+        )
+
+        custom_review_prompt = "CUSTOM RUBRIC REVIEW PROMPT"
+        config = {
+            "output_dir": str(tmp_path),
+            "grading": {"question_groups": [["1.1"]]},
+            "model": "gpt-4o",
+            "max_completion_tokens": 4096,
+            "rubric_review": True,
+            "prompts": {"rubric_review_system": custom_review_prompt},
+        }
+
+        gen_response = MagicMock()
+        gen_response.choices = [MagicMock()]
+        gen_response.choices[0].message.content = json.dumps(
+            {
+                "1.1": {
+                    "points": 2,
+                    "items": [{"description": "Generated", "deduction": 2.0}],
+                }
+            }
+        )
+
+        review_response = MagicMock()
+        review_response.choices = [MagicMock()]
+        review_response.choices[0].message.content = json.dumps(
+            {
+                "1.1": {
+                    "points": 2,
+                    "items": [{"description": "Reviewed", "deduction": 2.0}],
+                }
+            }
+        )
+
+        mock_client = MagicMock()
+        mock_client.chat.completions.create.side_effect = [
+            gen_response,
+            review_response,
+        ]
+
+        rubrics = generate_rubrics(config, client=mock_client)
+
+        calls = mock_client.chat.completions.create.call_args_list
+        assert len(calls) == 2
+        assert calls[1].kwargs["messages"][0]["content"] == custom_review_prompt
+        assert rubrics["1.1"]["items"][0]["description"] == "Reviewed"
+
     def test_returns_expected_structure_and_normalizes_keys(self, tmp_path):
         """Mock LLM returns valid JSON; keys like Q4.1 are normalized to 4.1."""
         sol = _solution_parsed(["4.1", "4.2"])
