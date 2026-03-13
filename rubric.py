@@ -347,9 +347,6 @@ def generate_rubrics(
     """
     logger = get_job_logger(config, __name__)
     cfg = ensure_app_config(config)
-    if client is None:
-        client = get_openai_client()
-
     output_dir = Path(cfg.output_dir)
     solution_path = output_dir / "solution_parsed.json"
 
@@ -357,6 +354,9 @@ def generate_rubrics(
         raise FileNotFoundError(
             f"Solution parsed not found: {solution_path}. Run the parse step first."
         )
+
+    if client is None:
+        client = get_openai_client()
 
     solution_parsed = json.loads(solution_path.read_text(encoding="utf-8"))
     grading_config = cfg.grading

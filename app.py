@@ -1,63 +1,22 @@
 """FastAPI backend for the AI Autograder pipeline."""
 
 import asyncio
-import logging
-from collections.abc import Callable
-from contextlib import asynccontextmanager
-
-logger = logging.getLogger(__name__)
-
-# Active assignment config path — set by /load-or-create, drives all pipeline endpoints.
-_active_config_path = None  # Path | None
-
-
-def _get_active_config() -> dict:
-    """Return the current assignment config. Raises 400 if no assignment is loaded."""
-    if _active_config_path is None:
-        raise HTTPException(
-            status_code=400,
-            detail="No assignment loaded. Use Setup to load or create an assignment.",
-        )
-    return load_config(_active_config_path)
-
-
-def _setup_file_logging() -> None:
-    """Ensure the root logger writes to the active assignment's autograder.log."""
-    if _active_config_path is None:
-        return
-    try:
-        cfg = load_config(_active_config_path)
-        out_dir = Path(cfg.get("output_dir", "output"))
-        assignment_name = cfg.get("assignment_name", "DEFAULT")
-    except Exception:
-        out_dir = Path("output")
-        assignment_name = "DEFAULT"
-    log_path = setup_assignment_logging(assignment_name, out_dir)
-    logger.info("Logging to %s", log_path)
-
-
 import io
 import json
+import logging
+import re
 import tempfile
 import threading
 import zipfile
+from collections.abc import Callable
+from contextlib import asynccontextmanager
 from pathlib import Path
 from urllib.parse import unquote
-
-# Guard against concurrent grading runs (both write to graded_results.json)
-_grading_lock = threading.Lock()
-# Guard against concurrent reads/writes of graded_results.json (grading + review save)
-_results_lock = threading.Lock()
-_rubric_lock = threading.Lock()
-
-DEFAULT_UPLOAD_MB = 500
 
 from fastapi import FastAPI, File, Form, UploadFile, HTTPException, Body, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from sse_starlette.sse import EventSourceResponse
-
-import re
 
 from utils import (
     load_config,
@@ -78,6 +37,44 @@ from linter_export import export_linter_zip
 from rubric import generate_rubrics
 from calibrate import run_calibration
 from estimate import estimate_rubrics, estimate_grade
+
+logger = logging.getLogger(__name__)
+
+# Active assignment config path — set by /load-or-create, drives all pipeline endpoints.
+_active_config_path = None  # Path | None
+
+# Guard against concurrent grading runs (both write to graded_results.json)
+_grading_lock = threading.Lock()
+# Guard against concurrent reads/writes of graded_results.json (grading + review save)
+_results_lock = threading.Lock()
+_rubric_lock = threading.Lock()
+
+DEFAULT_UPLOAD_MB = 500
+
+
+def _get_active_config() -> dict:
+    """Return the current assignment config. Raises 400 if no assignment is loaded."""
+    if _active_config_path is None:
+        raise HTTPException(
+            status_code=400,
+            detail="No assignment loaded. Use Setup to load or create an assignment.",
+        )
+    return load_config(_active_config_path)
+
+
+def _setup_file_logging() -> None:
+    """Configure the assignment-specific logger to write to the active assignment's autograder.log."""
+    if _active_config_path is None:
+        return
+    try:
+        cfg = load_config(_active_config_path)
+        out_dir = Path(cfg.get("output_dir", "output"))
+        assignment_name = cfg.get("assignment_name", "DEFAULT")
+    except Exception:
+        out_dir = Path("output")
+        assignment_name = "DEFAULT"
+    log_path = setup_assignment_logging(assignment_name, out_dir)
+    logger.info("Logging to %s", log_path)
 
 
 def _safe_path(base: Path, user_input: str) -> Path:

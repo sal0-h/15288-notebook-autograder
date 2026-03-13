@@ -1,5 +1,7 @@
 """Shared utilities for the AI Autograder pipeline."""
 
+from __future__ import annotations
+
 import logging
 import os
 import threading

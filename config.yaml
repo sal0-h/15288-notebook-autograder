@@ -15,13 +15,13 @@ max_prompt_tokens: 80000
 max_completion_tokens: 4096
 
 parsing:
-	section_regex: '(?m)^\s*#\s*<font[^>]*>\s*(\d+)\b'
-	question_regex: '(?i)^\s*(-\s*)?Q(\d+)\.(\d+)\s*.*?\[\s*(\d+)\s*PTS\s*\]'
-	keep_images: true
+  section_regex: '(?m)^\s*#\s*<font[^>]*>\s*(\d+)\b'
+  question_regex: '(?i)^\s*(-\s*)?Q(\d+)\.(\d+)\s*.*?\[\s*(\d+)\s*PTS\s*\]'
+  keep_images: true
 
 grading:
-	question_groups: []
-	grade_only: null
-	grade_only_merge: false
+  question_groups: []
+  grade_only: null
+  grade_only_merge: false
 
 rubrics: {}
