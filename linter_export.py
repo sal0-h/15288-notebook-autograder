@@ -7,6 +7,10 @@ from pathlib import Path
 from parse_notebook import get_all_question_ids, parse_notebook
 from utils import AppConfig, load_config
 
+# Unix executable bits used when creating Gradescope autograder zip entries
+_UNIX_EXEC_ATTR = 0o755 << 16
+_ZIP_UNIX_CREATE_SYSTEM = 3  # Unix
+
 LINTER_SETUP_SH = """#!/bin/bash
 # Python 3 is available on Gradescope; no setup required
 """
@@ -211,18 +215,15 @@ def export_linter_zip(config_path: Path | None = None) -> Path:
     zip_path = output_dir / "linter_autograder.zip"
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    exec_attr = 0o755 << 16
-    create_system = 3  # Unix
-
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
         zi = zipfile.ZipInfo("setup.sh")
-        zi.create_system = create_system
-        zi.external_attr = exec_attr
+        zi.create_system = _ZIP_UNIX_CREATE_SYSTEM
+        zi.external_attr = _UNIX_EXEC_ATTR
         zf.writestr(zi, LINTER_SETUP_SH)
 
         zi = zipfile.ZipInfo("run_autograder")
-        zi.create_system = create_system
-        zi.external_attr = exec_attr
+        zi.create_system = _ZIP_UNIX_CREATE_SYSTEM
+        zi.external_attr = _UNIX_EXEC_ATTR
         zf.writestr(zi, run_autograder)
 
     return zip_path

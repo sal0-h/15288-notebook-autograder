@@ -1,6 +1,6 @@
 """Shared utilities for the AI Autograder pipeline."""
 
-from __future__ import annotations
+from __future__ import annotations  # enables dict | AppConfig union syntax on Python < 3.10
 
 import logging
 import os
@@ -12,7 +12,7 @@ from pathlib import Path
 import yaml
 from dotenv import load_dotenv
 
-from grading_models import SKIP_FEEDBACKS
+from grading_models import GRADING_FAILED, SKIP_FEEDBACKS
 from openai import OpenAI
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -66,7 +66,7 @@ def needs_grade_only_merge(
         return True
 
     questions = existing_result.get("questions", {})
-    retryable_feedback = {SKIP_FEEDBACKS[0], "[grading failed after retries]"}
+    retryable_feedback = {SKIP_FEEDBACKS[0], GRADING_FAILED}
     for qid in set(grade_only):
         if qid not in questions:
             return True

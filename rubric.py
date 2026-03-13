@@ -29,6 +29,8 @@ from utils import (
 
 logger = logging.getLogger(__name__)
 
+_GENERATION_FAILED = "[generation failed]"
+
 
 def _sanitize_llm_text(text: str) -> str:
     """Normalize malformed control-char artifacts seen in some LLM outputs.
@@ -175,7 +177,7 @@ def _generate_one_group(
             pts = (sol_q or {}).get("points", 0)
             rubrics_for_group[qid] = {
                 "points": pts,
-                "items": [{"description": "[generation failed]", "deduction": pts}],
+                "items": [{"description": _GENERATION_FAILED, "deduction": pts}],
             }
 
     return (idx, group, rubrics_for_group)

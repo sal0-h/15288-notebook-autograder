@@ -194,6 +194,23 @@ def validate_question_groups(
     return [q for q in all_sol_qids if q not in grouped]
 
 
+def _append_image_parts(content_parts: list[dict], images: list[dict]) -> None:
+    """Append base64-encoded image content parts to the message content list."""
+    for img in images:
+        b64 = img.get("base64")
+        if not b64:
+            continue
+        if isinstance(b64, list):
+            b64 = "".join(b64)
+        mime = img.get("mime", "image/png")
+        content_parts.append(
+            {
+                "type": "image_url",
+                "image_url": {"url": f"data:{mime};base64,{b64}"},
+            }
+        )
+
+
 # ---------------------------------------------------------------------------
 # Prompt builder
 # ---------------------------------------------------------------------------
@@ -287,19 +304,7 @@ def build_group_prompt(
                 ref_text += "(no reference)\n"
 
             content_parts.append({"type": "text", "text": ref_text})
-            for img in ref_images:
-                b64 = img.get("base64")
-                if not b64:
-                    continue
-                if isinstance(b64, list):
-                    b64 = "".join(b64)
-                mime = img.get("mime", "image/png")
-                content_parts.append(
-                    {
-                        "type": "image_url",
-                        "image_url": {"url": f"data:{mime};base64,{b64}"},
-                    }
-                )
+            _append_image_parts(content_parts, ref_images)
 
         # Student submission (wrapped in delimiters for prompt injection mitigation)
         stu_text = "STUDENT SUBMISSION:\n<<<STUDENT_SUBMISSION>>>\n"
@@ -333,19 +338,7 @@ def build_group_prompt(
         stu_text += "<<<END_STUDENT_SUBMISSION>>>\n\n"
 
         content_parts.append({"type": "text", "text": stu_text})
-        for img in stu_images:
-            b64 = img.get("base64")
-            if not b64:
-                continue
-            if isinstance(b64, list):
-                b64 = "".join(b64)
-            mime = img.get("mime", "image/png")
-            content_parts.append(
-                {
-                    "type": "image_url",
-                    "image_url": {"url": f"data:{mime};base64,{b64}"},
-                }
-            )
+        _append_image_parts(content_parts, stu_images)
 
         # Update token estimate
         total_estimated_tokens += estimate_tokens(

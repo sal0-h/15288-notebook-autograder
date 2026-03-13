@@ -10,6 +10,10 @@ from linter_export import build_linter_summary, fmt_qid_list
 from parse_notebook import _sort_key_qid
 from utils import AppConfig, ensure_app_config, load_config
 
+# Unix executable bits used when creating Gradescope autograder zip entries
+_UNIX_EXEC_ATTR = 0o755 << 16
+_ZIP_UNIX_CREATE_SYSTEM = 3  # Unix
+
 # Gradescope expects these at the root of the autograder zip
 SETUP_SH = """#!/bin/bash
 # No setup required - we only output pre-computed results
@@ -249,17 +253,14 @@ def export_autograder_zip(config: AppConfig | dict) -> Path:
         raise FileNotFoundError(f"No JSON files in {gradescope_dir}. Run export first.")
 
     # Gradescope requires setup.sh and run_autograder to be executable (Unix)
-    exec_attr = 0o755 << 16  # Unix executable bits in zip external_attr
-    create_system = 3  # Unix
-
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
         zi = zipfile.ZipInfo("setup.sh")
-        zi.create_system = create_system
-        zi.external_attr = exec_attr
+        zi.create_system = _ZIP_UNIX_CREATE_SYSTEM
+        zi.external_attr = _UNIX_EXEC_ATTR
         zf.writestr(zi, SETUP_SH)
         zi = zipfile.ZipInfo("run_autograder")
-        zi.create_system = create_system
-        zi.external_attr = exec_attr
+        zi.create_system = _ZIP_UNIX_CREATE_SYSTEM
+        zi.external_attr = _UNIX_EXEC_ATTR
         zf.writestr(zi, RUN_AUTOGRADER)
         for jf in json_files:
             arcname = f"results/{jf.name}"
