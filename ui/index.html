@@ -24,12 +24,18 @@
     <div id="panel-setup" class="panel active">
         <h2>Assignment Setup</h2>
         <p class="mb-2">Configure assignment name, solution notebook, and question groups. Run this before Gather for a new assignment.</p>
+        <!-- Always-visible: assignment name entry and load/create trigger -->
+        <div class="mb-2" style="display:flex;align-items:center;flex-wrap:wrap;gap:8px">
+            <label><strong>Assignment name</strong></label>
+            <input type="text" id="setupAssignmentName" placeholder="e.g. LabTest_3_S26" style="width:280px;padding:8px;border:1px solid #cbd5e1;border-radius:4px">
+            <button class="btn" id="setupLoadBtn">Load / Create</button>
+            <span class="status-ok" style="font-size:0.8rem" id="setupOutputDirHint"></span>
+        </div>
+        <div id="setupLoadStatus" class="mb-2"></div>
+
+        <!-- Config fields — shown only after Load / Create succeeds -->
+        <div id="setupConfigFields" class="hidden">
         <div class="setup-form mb-2">
-            <div class="mb-2">
-                <label><strong>Assignment name</strong></label>
-                <input type="text" id="setupAssignmentName" placeholder="e.g. LabTest_3_S26" style="width:280px;padding:8px;margin-left:8px;border:1px solid #cbd5e1;border-radius:4px">
-                <span class="status-ok" style="margin-left:8px;font-size:0.8rem" id="setupOutputDirHint"></span>
-            </div>
             <div class="mb-2">
                 <label><strong>Model</strong></label>
                 <select id="setupModel" style="margin-left:8px;padding:8px 12px;border:1px solid #cbd5e1;border-radius:4px;font-size:0.9rem">
@@ -111,6 +117,7 @@
             <button class="btn btn-secondary mt-2" id="setupAddGroupBtn">Add empty group</button>
         </div>
         <div id="setupResults" class="mb-2"></div>
+        </div>  <!-- /#setupConfigFields -->
     </div>
 
     <!-- GATHER -->

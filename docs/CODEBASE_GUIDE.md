@@ -88,18 +88,18 @@ ai_autograder/
 
 ## 2. Configuration system
 
-### Two-file layout
+### Assignment-first layout
 
-The project uses a split config pattern. There is a root-level pointer and a full
-per-assignment config.
+The project now uses an explicit per-assignment config as the only runtime source
+of truth.
 
-**Root `config.yaml`** (project root, hand-edited, version-controlled if desired):
+**Root `config.yaml`** (project root, optional example only):
 ```yaml
 assignment_name: LabTest_3_S26
 output_dir: output
 ```
-This is a pure pointer — it only identifies the active assignment and the output
-directory. All other settings live in the assignment config.
+This file is only a convenient template/example for humans. The CLI and web app do
+not use it as an active pointer.
 
 **Assignment `output/{assignment_name}/config.yaml`** (runtime artifact):
 Contains everything else — model choice, tokenizer budgets, rubrics, question groups,
@@ -108,18 +108,14 @@ while grading is running.
 
 ### Loading logic (`utils.load_config`)
 
-`load_config(config_path: Path | None)` implements the following resolution:
+`load_config(config_path: Path)` requires an explicit path to the assignment config.
 
 ```
-if config_path points to output/{name}/config.yaml:
-    → load that file directly as the assignment config (fully authoritative)
-    → also read project_root/config.yaml; root fields fill in only if absent
-
-else (config_path is root config.yaml or None):
-    → read root config.yaml to find assignment_name + output_dir
-    → derive output/{assignment_name}/config.yaml path
-    → if assignment config exists: load it; root fields fill in only if absent
-    → else: use root config as-is (bootstrapping scenario)
+config_path must point to output/{assignment_name}/config.yaml
+  → load that file directly as the assignment config
+  → infer project_root as config_path.parent.parent.parent
+  → resolve relative paths against project_root
+  → normalize derived paths like output_dir, submissions_dir, parsed_dir
 ```
 
 After resolution, relative paths (`solution_notebook`, `submissions_dir`, etc.) are
@@ -190,11 +186,10 @@ re-validate an already-typed object, wasting work and potentially failing under
 
 ### Saving config
 
-`save_config(config: dict | AppConfig, config_path: Path | None)` writes two files:
+`save_config(config: dict | AppConfig, config_path: Path)` writes one file:
 
 1. The assignment config to `output/{assignment_name}/config.yaml` — the full config
-   including `rubric_review` and `include_reference_in_grading`.
-2. The root `config.yaml` — pointer only: just `assignment_name` and `output_dir`.
+  including `rubric_review` and `include_reference_in_grading`.
 
 `solution_notebook` is relativized against the project root before saving so configs
 remain portable across machines.

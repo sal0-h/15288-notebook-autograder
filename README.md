@@ -99,8 +99,8 @@ Supporting directories:
 
 The project uses an output-first assignment layout.
 
-Root-level config:
-- `config.yaml` is a pure pointer: it stores only `assignment_name` and `output_dir`. All other settings (including `rubric_review` and `include_reference_in_grading`) live in the assignment config.
+Root-level example config:
+- `config.yaml` at the project root is only an example template. The app does not treat it as the active config source.
 
 Assignment runtime data:
 - output/{assignment_name}/config.yaml
@@ -114,6 +114,8 @@ Assignment runtime data:
 - output/{assignment_name}/autograder.log
 
 This separation matters because switching assignments should move both artifacts and logs with the active assignment.
+
+The single source of truth for a live assignment is always `output/{assignment_name}/config.yaml`.
 
 ## Requirements
 
@@ -141,7 +143,7 @@ API key lookup order:
 
 ### Option A: run the CLI pipeline
 
-The default main.py flow writes config and runs:
+The default `main.py` flow builds a config object, writes the assignment config, and runs:
 
 parse -> grade -> export
 
@@ -155,10 +157,16 @@ python main.py --config-only
 python main.py --model gpt-5-mini
 python main.py --solution path/to/solution.ipynb
 python main.py --submissions-dir path/to/submissions
-python main.py --config my_config.yaml
+python main.py --config output/My_Assignment/config.yaml
 python main.py --no-write-config
 python main.py --steps parse --config output/LabTest_3_S26/config.yaml --no-write-config
 ```
+
+Notes:
+
+- If `--config` is omitted, `main.py` writes to `output/{assignment_name}/config.yaml` based on the programmatic `CONFIG` object.
+- If you pass `--config`, it should point to an assignment config file, typically under `output/{assignment_name}/config.yaml`.
+- Programmatic callers should construct an `AppConfig` or config dict directly before invoking pipeline functions.
 
 Supported pipeline step names:
 
@@ -188,6 +196,14 @@ cp output/LabTest_3_S26/config.yaml output/LabTest_3_S26/config.backup_YYYY-MM-D
 ```
 
 ### Option B: run the web app
+
+The Setup tab now starts with an assignment name and a `Load / Create` action.
+
+- If `output/{assignment_name}/config.yaml` already exists, the UI loads it.
+- If it does not exist, the UI creates the assignment folder and writes a default config there.
+- After that, all edits in the UI save back to that assignment config.
+
+The project-root `config.yaml` is not used by the UI runtime.
 
 ```bash
 uvicorn app:app --reload

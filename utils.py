@@ -137,71 +137,11 @@ def get_job_logger(config: dict | BaseModel, module_name: str) -> logging.Logger
 # ---------------------------------------------------------------------------
 
 
-def _project_root(config_path: Path | None) -> Path:
-    """Project root = directory containing the root config.yaml."""
-    return (config_path or Path("config.yaml")).resolve().parent
-
-
-def _is_assignment_config(path: Path) -> bool:
-    """True if path is output/{assignment_name}/config.yaml."""
-    parts = path.resolve().parts
-    return len(parts) >= 3 and "output" in parts and path.name == "config.yaml"
-
-
 def _read_yaml_dict(path: Path) -> dict:
     if not path.exists():
         return {}
     with open(path, "r", encoding="utf-8") as f:
         return yaml.safe_load(f) or {}
-
-
-def _merge_root_controls(
-    cfg: dict,
-    root_cfg: dict,
-) -> dict:
-    """Merge root config fields into assignment config as fallback values only.
-    Assignment config is authoritative; root fields only fill gaps."""
-    merged = dict(cfg)
-    for key in ("rubric_review", "include_reference_in_grading"):
-        if key not in merged and key in root_cfg:
-            merged[key] = root_cfg[key]
-    return merged
-
-
-def _load_explicit_assignment_config(
-    assignment_config_path: Path,
-) -> tuple[dict, Path, Path, str, str]:
-    project_root = assignment_config_path.parent.parent.parent
-    cfg = _read_yaml_dict(assignment_config_path)
-    assignment_name = sanitize_assignment_name(cfg.get("assignment_name", "default"))
-    base_output = cfg.get("output_dir", "output")
-    if Path(base_output).is_absolute():
-        base_output = "output"
-    root_cfg = _read_yaml_dict(project_root / "config.yaml")
-    cfg = _merge_root_controls(cfg, root_cfg)
-    return cfg, project_root, project_root, assignment_name, base_output
-
-
-def _load_root_or_assignment_config(
-    root_path: Path,
-) -> tuple[dict, Path, Path, str, str]:
-    project_root = root_path.parent
-    root_cfg = _read_yaml_dict(root_path)
-    assignment_name = sanitize_assignment_name(
-        root_cfg.get("assignment_name", "default")
-    )
-    base_output = root_cfg.get("output_dir", "output")
-    assignment_config_path = (
-        project_root / base_output / assignment_name / "config.yaml"
-    )
-
-    if assignment_config_path.exists():
-        cfg = _read_yaml_dict(assignment_config_path)
-        cfg = _merge_root_controls(cfg, root_cfg)
-    else:
-        cfg = dict(root_cfg)
-
-    return cfg, project_root, project_root, assignment_name, base_output
 
 
 def _resolve_config_paths(cfg: dict, config_root: Path) -> dict:
@@ -243,32 +183,22 @@ def _apply_config_defaults(cfg: dict) -> dict:
     return normalized
 
 
-def load_config(config_path: Path | None = None) -> dict:
-    """Load config. Uses output-first layout when available:
-    - Root config.yaml: minimal pointer (assignment_name, output_dir)
-    - Primary config: output/{assignment_name}/config.yaml (full config)
-    Paths are resolved relative to project root. Outputs scoped under output/{assignment_name}/.
+def load_config(config_path: Path) -> dict:
+    """Load assignment config from an explicit path.
+
+    config_path must point to the assignment config file, typically at
+    output/{assignment_name}/config.yaml.  The project root is inferred as
+    config_path.parent.parent.parent; relative paths in the config (e.g.
+    solution_notebook) are resolved against it.
     """
-    root_path = (config_path or Path("config.yaml")).resolve()
-
-    if (
-        config_path is not None
-        and _is_assignment_config(root_path)
-        and root_path.exists()
-    ):
-        cfg, project_root, config_root, assignment_name, base_output = (
-            _load_explicit_assignment_config(root_path)
-        )
-    else:
-        cfg, project_root, config_root, assignment_name, base_output = (
-            _load_root_or_assignment_config(root_path)
-        )
-
+    path = Path(config_path).resolve()
+    cfg = _read_yaml_dict(path)
     cfg = _apply_config_defaults(cfg)
-    cfg = _resolve_config_paths(cfg, config_root)
-
-    # Output dir is always output/{assignment_name}/
-    assignment_root = (project_root / base_output / assignment_name).resolve()
+    # Project root: output/{name}/config.yaml → 3 levels up
+    project_root = path.parent.parent.parent
+    cfg = _resolve_config_paths(cfg, project_root)
+    assignment_name = sanitize_assignment_name(cfg.get("assignment_name", "default"))
+    assignment_root = (project_root / "output" / assignment_name).resolve()
     cfg["output_dir"] = str(assignment_root)
     cfg["submissions_dir"] = str(assignment_root / "submissions")
     cfg["parsed_dir"] = str(assignment_root / "parsed")
@@ -277,39 +207,27 @@ def load_config(config_path: Path | None = None) -> dict:
     return ensure_app_config(cfg).model_dump()
 
 
-def load_app_config(config_path: Path | None = None) -> "AppConfig":
+def load_app_config(config_path: Path) -> "AppConfig":
     """Load and validate configuration, returning an AppConfig object."""
     return ensure_app_config(load_config(config_path))
 
 
-def save_config(config: dict | "AppConfig", config_path: Path | None = None) -> None:
-    """Save config using output-first layout:
-    - Full config → output/{assignment_name}/config.yaml
-    - Root config.yaml → minimal pointer (assignment_name, output_dir)"""
+def save_config(config: dict | "AppConfig", config_path: Path) -> None:
+    """Save config to config_path (the assignment config at output/{name}/config.yaml).
+
+    Writes all fields. Relativizes solution_notebook against the project root
+    (config_path.parent.parent.parent).
+    """
     validated = ensure_app_config(config)
     cfg = app_config_to_yaml_data(validated)
     cfg["output_dir"] = "output"
     cfg.pop("submissions_dir", None)
     cfg.pop("parsed_dir", None)
 
-    input_path = (config_path or Path("config.yaml")).resolve()
-    assignment_name = sanitize_assignment_name(cfg.get("assignment_name", "default"))
-    base_output = cfg.get("output_dir", "output")
+    config_path = Path(config_path).resolve()
+    project_root = config_path.parent.parent.parent
 
-    # If caller explicitly targets output/{assignment}/config.yaml, treat it as
-    # the assignment-scoped runtime config destination (full config goes there).
-    if config_path is not None and _is_assignment_config(input_path):
-        project_root = input_path.parent.parent.parent
-        assignment_config_path = input_path
-        root_path = project_root / "config.yaml"
-    else:
-        project_root = _project_root(config_path)
-        assignment_config_path = (
-            project_root / base_output / assignment_name / "config.yaml"
-        )
-        root_path = input_path
-
-    # Relativize solution_notebook for portability (relative to project root)
+    # Relativize solution_notebook for portability
     sol = cfg.get("solution_notebook", "")
     if sol:
         sol_path = Path(sol)
@@ -319,23 +237,10 @@ def save_config(config: dict | "AppConfig", config_path: Path | None = None) -> 
             except ValueError:
                 pass
 
-    # Save full config to output/{assignment_name}/config.yaml
-    assignment_cfg = {
-        k: v
-        for k, v in cfg.items()
-        if k not in ("prompts",)
-    }
-    assignment_config_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(assignment_config_path, "w", encoding="utf-8") as f:
-        yaml.dump(assignment_cfg, f, default_flow_style=False, allow_unicode=True)
-
-    # Save root config as assignment pointer only.
-    root_cfg = {
-        "assignment_name": assignment_name,
-        "output_dir": base_output,
-    }
-    with open(root_path, "w", encoding="utf-8") as f:
-        yaml.dump(root_cfg, f, default_flow_style=False, allow_unicode=True)
+    out_cfg = {k: v for k, v in cfg.items() if k not in ("prompts",)}
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(config_path, "w", encoding="utf-8") as f:
+        yaml.dump(out_cfg, f, default_flow_style=False, allow_unicode=True)
 
 
 # ---------------------------------------------------------------------------

@@ -19,7 +19,8 @@ from utils import (
 
 class TestLoadConfig:
     def test_path_resolution_relative_to_config(self, tmp_path):
-        config_path = tmp_path / "config.yaml"
+        config_path = tmp_path / "output" / "Test" / "config.yaml"
+        config_path.parent.mkdir(parents=True, exist_ok=True)
         config_path.write_text(
             """
 assignment_name: Test
@@ -44,7 +45,8 @@ grading:
         )
 
     def test_assignment_scoping(self, tmp_path):
-        config_path = tmp_path / "config.yaml"
+        config_path = tmp_path / "output" / "LabTest_2" / "config.yaml"
+        config_path.parent.mkdir(parents=True, exist_ok=True)
         config_path.write_text(
             """
 assignment_name: LabTest_2
@@ -63,7 +65,8 @@ grading:
         assert "parsed" in cfg["parsed_dir"]
 
     def test_assignment_name_sanitization(self, tmp_path):
-        config_path = tmp_path / "config.yaml"
+        config_path = tmp_path / "output" / "Test" / "config.yaml"
+        config_path.parent.mkdir(parents=True, exist_ok=True)
         config_path.write_text(
             """
 assignment_name: "../../etc"
@@ -78,7 +81,6 @@ grading:
         )
         cfg = load_config(config_path)
         assert ".." not in cfg["output_dir"]
-        assert "_" in cfg["output_dir"]
 
 
 class TestSaveConfig:
@@ -202,10 +204,6 @@ output_dir: output
         assert "solution_notebook:" in assignment_cfg_text
         assert "parsing:" in assignment_cfg_text
         assert "grading:" in assignment_cfg_text
-
-        root_cfg_text = (tmp_path / "config.yaml").read_text(encoding="utf-8")
-        assert "assignment_name: LabTest_3_S26" in root_cfg_text
-        assert "rubric_review:" not in root_cfg_text
         assert "rubric_review:" in assignment_cfg_text
 
     def test_save_load_preserves_grade_flags_and_review_controls(self, tmp_path):

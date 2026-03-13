@@ -7,11 +7,26 @@ from contextlib import asynccontextmanager
 
 logger = logging.getLogger(__name__)
 
+# Active assignment config path — set by /load-or-create, drives all pipeline endpoints.
+_active_config_path = None  # Path | None
+
+
+def _get_active_config() -> dict:
+    """Return the current assignment config. Raises 400 if no assignment is loaded."""
+    if _active_config_path is None:
+        raise HTTPException(
+            status_code=400,
+            detail="No assignment loaded. Use Setup to load or create an assignment.",
+        )
+    return load_config(_active_config_path)
+
 
 def _setup_file_logging() -> None:
     """Ensure the root logger writes to the active assignment's autograder.log."""
+    if _active_config_path is None:
+        return
     try:
-        cfg = load_config()
+        cfg = load_config(_active_config_path)
         out_dir = Path(cfg.get("output_dir", "output"))
         assignment_name = cfg.get("assignment_name", "DEFAULT")
     except Exception:
@@ -165,11 +180,13 @@ app.add_middleware(
 
 @app.get("/config")
 def api_get_config():
-    """Read current config.yaml."""
-    path = Path("config.yaml")
-    if not path.exists():
+    """Return config for active assignment, or {} if none loaded."""
+    if _active_config_path is None:
         return {}
-    return load_config()
+    try:
+        return load_config(_active_config_path)
+    except Exception:
+        return {}
 
 
 @app.put("/config")
@@ -190,7 +207,7 @@ def api_put_config(config: dict = Body(...)):
         return merged
 
     try:
-        existing = load_config()
+        existing = _get_active_config()
     except Exception:
         existing = {}
 
@@ -210,7 +227,12 @@ def api_put_config(config: dict = Body(...)):
         AppConfig.model_validate(merged)
     except Exception as e:
         raise HTTPException(status_code=422, detail=f"Invalid config: {e}")
-    save_config(merged)
+    if _active_config_path is None:
+        raise HTTPException(
+            status_code=400,
+            detail="No assignment loaded. Use Setup to load or create an assignment.",
+        )
+    save_config(merged, _active_config_path)
     _setup_file_logging()
     return {"ok": True}
 
@@ -248,6 +270,31 @@ def api_get_config_default():
     return _default_config()
 
 
+@app.post("/load-or-create")
+def api_load_or_create(body: dict = Body(...)):
+    """Load assignment config if it exists, or create a new folder with default config.
+
+    Returns the config dict, whether the config was freshly created, and the safe assignment name.
+    """
+    global _active_config_path
+    assignment_name = str(body.get("assignment_name", "")).strip()
+    if not assignment_name:
+        raise HTTPException(status_code=400, detail="assignment_name is required")
+    safe_name = sanitize_assignment_name(assignment_name)
+    if not safe_name or safe_name == "default":
+        raise HTTPException(status_code=400, detail="Invalid assignment name")
+    config_path = _PROJECT_ROOT / "output" / safe_name / "config.yaml"
+    was_created = not config_path.exists()
+    if was_created:
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        default = AppConfig(assignment_name=safe_name)
+        save_config(default, config_path)
+    _active_config_path = config_path
+    cfg = load_config(config_path)
+    _setup_file_logging()
+    return {"config": cfg, "created": was_created, "assignment_name": safe_name}
+
+
 @app.post("/parse-solution-upload")
 async def api_parse_solution_upload(
     assignment_name: str = Form(...),
@@ -278,7 +325,9 @@ async def api_parse_solution_upload(
     solution_path = save_dir / f"{safe_name}_sol.ipynb"
     solution_path.write_bytes(content)
 
-    config = load_config() if Path("config.yaml").exists() else _default_config()
+    config = dict(
+        _get_active_config() if _active_config_path is not None else _default_config()
+    )
     config["assignment_name"] = safe_name
     config["solution_notebook"] = str(solution_path.relative_to(_PROJECT_ROOT))
     config["grading"] = config.get("grading", {})
@@ -306,7 +355,7 @@ async def api_parse_solution_upload(
 @app.post("/parse-solution")
 async def api_parse_solution():
     """Parse the current solution notebook from config (no upload). Returns question IDs and suggested groups."""
-    config = load_config()
+    config = _get_active_config()
     solution_path = Path(config.get("solution_notebook", ""))
     if not solution_path or not solution_path.is_absolute():
         solution_path = _PROJECT_ROOT / config.get("solution_notebook", "")
@@ -337,9 +386,7 @@ async def api_parse_solution():
 @app.post("/gather")
 async def api_gather(zip_file: UploadFile = File(...)):
     """Run gather step. Expects a Gradescope export ZIP upload."""
-    config = load_config()
-    out_dir = Path(config.get("submissions_dir", "output/submissions"))
-    upload_max_mb = config.get("upload_max_mb", DEFAULT_UPLOAD_MB)
+    upload_max_mb = DEFAULT_UPLOAD_MB
     upload_max_bytes = upload_max_mb * 1024 * 1024
 
     content = await zip_file.read()
@@ -352,6 +399,9 @@ async def api_gather(zip_file: UploadFile = File(...)):
         zipfile.ZipFile(io.BytesIO(content), "r")
     except zipfile.BadZipFile:
         raise HTTPException(status_code=400, detail="Invalid or corrupted ZIP file")
+
+    config = _get_active_config()
+    out_dir = Path(config.get("submissions_dir", "output/submissions"))
 
     with tempfile.NamedTemporaryFile(suffix=".zip", delete=False) as tmp:
         tmp.write(content)
@@ -370,7 +420,7 @@ _PROJECT_ROOT = Path(__file__).resolve().parent
 @app.post("/gather-from-folder")
 def api_gather_from_folder(folder_path: str):
     """Run gather from an already-extracted folder path. Path must be under project root."""
-    config = load_config()
+    config = _get_active_config()
     out_dir = Path(config.get("submissions_dir", "output/submissions"))
     folder = (Path(folder_path)).resolve()
     if not folder.exists():
@@ -389,7 +439,7 @@ def api_gather_from_folder(folder_path: str):
 @app.post("/parse")
 async def api_parse():
     """Run parse step. Returns verification report + first student preview."""
-    config = load_config()
+    config = _get_active_config()
     solution_parsed, report = await asyncio.to_thread(parse_all_students, config)
 
     preview = None
@@ -445,7 +495,7 @@ async def api_generate_rubrics_stream(
             status_code=409,
             detail="Rubric generation already in progress. Wait for it to finish or refresh.",
         )
-    config = load_config()
+    config = _get_active_config()
     group_indices = _parse_group_indices_param(groups)
 
     def worker(emit: Callable[[dict], None]) -> None:
@@ -469,7 +519,7 @@ async def api_generate_rubrics_stream(
                 group_indices=group_indices,
             )
             config["rubrics"] = rubrics
-            save_config(config)
+            save_config(config, _active_config_path)
             emit({"status": "done", "rubrics": rubrics})
         except Exception as e:
             emit(_error_event(str(e)))
@@ -494,12 +544,12 @@ async def api_generate_rubrics_post(
         gi = body["group_indices"]
         group_indices = gi if isinstance(gi, list) else [int(gi)]
     try:
-        config = load_config()
+        config = _get_active_config()
         rubrics = await asyncio.to_thread(
             generate_rubrics, config, group_indices=group_indices
         )
         config["rubrics"] = rubrics
-        save_config(config)
+        save_config(config, _active_config_path)
         return {"rubrics": rubrics}
     finally:
         _rubric_lock.release()
@@ -508,20 +558,20 @@ async def api_generate_rubrics_post(
 @app.get("/rubrics")
 def api_get_rubrics():
     """Read rubrics from config."""
-    config = load_config()
+    config = _get_active_config()
     return config.get("rubrics", {})
 
 
 @app.put("/rubrics")
 def api_put_rubrics(rubrics: dict = Body(...)):
     """Save edited rubrics to config."""
-    config = load_config()
+    config = _get_active_config()
     config["rubrics"] = rubrics
     try:
         AppConfig.model_validate(config)
     except Exception as e:
         raise HTTPException(status_code=422, detail=f"Invalid rubrics: {e}")
-    save_config(config)
+    save_config(config, _active_config_path)
     return {"ok": True}
 
 
@@ -533,14 +583,14 @@ def api_put_rubrics(rubrics: dict = Body(...)):
 @app.get("/estimate/rubrics")
 def api_estimate_rubrics():
     """Estimate tokens and cost for rubric generation."""
-    config = load_config()
+    config = _get_active_config()
     return estimate_rubrics(config)
 
 
 @app.get("/estimate/grade")
 def api_estimate_grade_all():
     """Estimate tokens and cost for grading all students."""
-    config = load_config()
+    config = _get_active_config()
     return estimate_grade(config, student_name=None)
 
 
@@ -550,7 +600,7 @@ def api_estimate_grade_one(student_name: str):
     student_name = unquote(student_name)
     if "/" in student_name or "\\" in student_name or ".." in student_name:
         raise HTTPException(status_code=400, detail="Invalid student name")
-    config = load_config()
+    config = _get_active_config()
     return estimate_grade(config, student_name=student_name)
 
 
@@ -562,7 +612,7 @@ def api_estimate_grade_one(student_name: str):
 @app.post("/calibrate")
 async def api_calibrate():
     """Run calibration (outlier detection) on graded results."""
-    config = load_config()
+    config = _get_active_config()
     flagged = await asyncio.to_thread(run_calibration, config)
     return {"flagged": flagged, "count": len(flagged)}
 
@@ -570,7 +620,7 @@ async def api_calibrate():
 @app.get("/calibration")
 def api_get_calibration():
     """Read saved calibration report."""
-    config = load_config()
+    config = _get_active_config()
     output_dir = Path(config.get("output_dir", "output"))
     path = output_dir / "calibration_report.json"
     if not path.exists():
@@ -595,7 +645,7 @@ async def api_grade():
             status_code=409,
             detail="Grading already in progress. Wait for it to finish or refresh.",
         )
-    config = load_config()
+    config = _get_active_config()
 
     def worker(emit: Callable[[dict], None]) -> None:
         try:
@@ -624,7 +674,7 @@ async def api_grade_one(student_name: str):
     student_name = unquote(student_name)
     if "/" in student_name or "\\" in student_name or ".." in student_name:
         raise HTTPException(status_code=400, detail="Invalid student name")
-    config = load_config()
+    config = _get_active_config()
     output_dir = Path(config.get("output_dir", "output"))
     parsed_dir = Path(config.get("parsed_dir", "output/parsed"))
     solution_path = output_dir / "solution_parsed.json"
@@ -698,7 +748,7 @@ async def api_grade_one(student_name: str):
 @app.get("/results")
 def api_get_results():
     """Return full graded_results.json."""
-    config = load_config()
+    config = _get_active_config()
     output_dir = Path(config.get("output_dir", "output"))
     path = output_dir / "graded_results.json"
     if not path.exists():
@@ -719,7 +769,7 @@ def api_put_results(student_name: str, result: dict = Body(...)):
             status_code=422,
             detail=f"Missing required keys: {[k for k in required if k not in result]}",
         )
-    config = load_config()
+    config = _get_active_config()
     output_dir = Path(config.get("output_dir", "output"))
     path = output_dir / "graded_results.json"
 
@@ -749,7 +799,7 @@ def api_put_results(student_name: str, result: dict = Body(...)):
 def api_get_parsed(student_name: str):
     """Return parsed JSON for a specific student."""
     student_name = unquote(student_name)
-    config = load_config()
+    config = _get_active_config()
     parsed_dir = Path(config.get("parsed_dir", "output/parsed"))
     path = _safe_path(parsed_dir, f"{student_name}.json")
     if not path.exists():
@@ -767,7 +817,7 @@ def api_get_parsed(student_name: str):
 @app.post("/export")
 async def api_export():
     """Run export step. Returns summary and Excel download path."""
-    config = load_config()
+    config = _get_active_config()
     summary = await asyncio.to_thread(export_all, config)
     return summary
 
@@ -775,7 +825,7 @@ async def api_export():
 @app.get("/export/excel")
 def api_download_excel():
     """Download Final_Grades.xlsx."""
-    config = load_config()
+    config = _get_active_config()
     output_dir = Path(config.get("output_dir", "output"))
     path = output_dir / "Final_Grades.xlsx"
     if not path.exists():
@@ -788,7 +838,7 @@ def api_download_excel():
 @app.get("/export/autograder-zip")
 def api_download_autograder_zip():
     """Create Gradescope autograder zip and return it for download."""
-    config = load_config()
+    config = _get_active_config()
     export_all(config)  # Ensure gradescope/*.json exist
     zip_path = export_autograder_zip(config)
     return FileResponse(zip_path, filename="gradescope_autograder.zip")
@@ -797,7 +847,7 @@ def api_download_autograder_zip():
 @app.get("/export/linter-zip")
 def api_download_linter_zip():
     """Create linter autograder zip (Phase 1, pre-deadline). No grading required."""
-    zip_path = export_linter_zip(None)
+    zip_path = export_linter_zip(_active_config_path)
     return FileResponse(zip_path, filename="linter_autograder.zip")
 
 

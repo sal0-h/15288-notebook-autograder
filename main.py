@@ -20,6 +20,7 @@ from utils import (
     AppConfig,
     DEFAULT_MODEL,
     setup_assignment_logging,
+    sanitize_assignment_name,
 )
 
 # -----------------------------------------------------------------------------
@@ -72,8 +73,8 @@ Examples:
     parser.add_argument(
         "--config",
         type=Path,
-        default=Path("config.yaml"),
-        help="Path to write config.yaml",
+        default=None,
+        help="Path to assignment config.yaml (default: output/{assignment_name}/config.yaml)",
     )
     parser.add_argument(
         "--config-only",
@@ -126,10 +127,15 @@ Examples:
     if args.submissions_dir:
         config["submissions_dir"] = str(args.submissions_dir)
 
+    # Derive config path from assignment_name when not supplied
+    safe_name = sanitize_assignment_name(config["assignment_name"])
+    config_path: Path = args.config or (Path("output") / safe_name / "config.yaml")
+
     if not args.no_write_config:
-        save_config(config, args.config)
-        print(f"Wrote config to {args.config}")
-    config = load_config(args.config)  # Reload to resolve paths relative to config file
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        save_config(config, config_path)
+        print(f"Wrote config to {config_path}")
+    config = load_config(config_path)  # Reload to resolve paths relative to config file
 
     try:
         AppConfig.model_validate(config)
@@ -185,7 +191,7 @@ Examples:
 
         rubrics = generate_rubrics(config)
         config["rubrics"] = rubrics
-        save_config(config, args.config)
+        save_config(config, config_path)
         print(f"Generate rubrics: {len(rubrics)} questions")
 
     if "grade" in steps:

@@ -15,7 +15,6 @@ document.querySelectorAll(".tab[data-tab]").forEach(t => {
         document.getElementById("panel-" + t.dataset.tab).classList.add("active");
         if (t.dataset.tab === "rubrics") { loadRubricsForEdit(); loadRubricEstimate(); }
         if (t.dataset.tab === "grade") { loadGradeEstimate(); if (!gradeStreamActive) document.getElementById("gradeProgress").innerHTML = ""; }
-        if (t.dataset.tab === "setup") loadSetupFromConfig();
     };
 });
 
@@ -29,55 +28,79 @@ const filterGroupsForUi = window.filterGroupsByGradeOnly || function(groups, gra
     return groups.map(g => g.filter(q => set.has(q))).filter(g => g.length > 0);
 };
 
-async function loadSetupFromConfig() {
-    try {
-        const r = await fetch(API + "/config");
-        const cfg = await r.json();
-        setupConfig = Object.keys(cfg).length ? cfg : await (await fetch(API + "/config/default")).json();
-        document.getElementById("setupAssignmentName").value = setupConfig.assignment_name || "";
-        document.getElementById("setupWorkers").value = setupConfig.workers || 1;
-        document.getElementById("setupWorkersVal").textContent = setupConfig.workers || 1;
-        document.getElementById("setupSolutionPath").textContent = setupConfig.solution_notebook ? "✓ " + setupConfig.solution_notebook : "";
-        const modelSelect = document.getElementById("setupModel");
-        const model = setupConfig.model || DEFAULT_MODEL;
-        const hasOpt = Array.from(modelSelect.options).some(o => o.value === model);
-        if (hasOpt) modelSelect.value = model;
-        else {
-            const opt = document.createElement("option");
-            opt.value = model;
-            opt.textContent = model;
-            modelSelect.appendChild(opt);
-            modelSelect.value = model;
-        }
-        const rubricModelSelect = document.getElementById("setupRubricModel");
-        const rubricModel = setupConfig.rubric_model || "";
-        const hasRubricOpt = Array.from(rubricModelSelect.options).some(o => o.value === rubricModel);
-        if (hasRubricOpt) rubricModelSelect.value = rubricModel;
-        else if (rubricModel) {
-            const opt = document.createElement("option");
-            opt.value = rubricModel;
-            opt.textContent = rubricModel;
-            rubricModelSelect.appendChild(opt);
-            rubricModelSelect.value = rubricModel;
-        } else {
-            rubricModelSelect.value = "";
-        }
-        document.getElementById("setupRubricReviewCheck").checked = setupConfig.rubric_review !== false;
-        document.getElementById("setupIncludeReferenceCheck").checked = setupConfig.include_reference_in_grading === true;
-        setupQuestionGroups = (setupConfig.grading || {}).question_groups || [];
-        const gradeOnly = (setupConfig.grading || {}).grade_only;
-        const gradeOnlyMerge = (setupConfig.grading || {}).grade_only_merge === true;
-        document.getElementById("setupGradeOnlyCheck").checked = !!gradeOnly && gradeOnly.length > 0;
-        document.getElementById("setupGradeOnlyInput").value = gradeOnly ? gradeOnly.join(", ") : "";
-        document.getElementById("setupGradeOnlyInput").classList.toggle("hidden", !gradeOnly || gradeOnly.length === 0);
-        document.getElementById("setupGradeOnlyMergeCheck").checked = gradeOnlyMerge;
-        document.getElementById("setupGradeOnlyMergeWrap").classList.toggle("hidden", !gradeOnly || gradeOnly.length === 0);
-        renderSetupGroups();
-        updateOutputDirHint();
-    } catch (e) {
-        document.getElementById("setupResults").innerHTML = `<p class="status-error">Error: ${escHtml(e.message)}</p>`;
+function _populateSetupFields(cfg) {
+    setupConfig = cfg;
+    document.getElementById("setupAssignmentName").value = setupConfig.assignment_name || "";
+    document.getElementById("setupWorkers").value = setupConfig.workers || 1;
+    document.getElementById("setupWorkersVal").textContent = setupConfig.workers || 1;
+    document.getElementById("setupSolutionPath").textContent = setupConfig.solution_notebook ? "✓ " + setupConfig.solution_notebook : "";
+    const modelSelect = document.getElementById("setupModel");
+    const model = setupConfig.model || DEFAULT_MODEL;
+    const hasOpt = Array.from(modelSelect.options).some(o => o.value === model);
+    if (hasOpt) modelSelect.value = model;
+    else {
+        const opt = document.createElement("option");
+        opt.value = model;
+        opt.textContent = model;
+        modelSelect.appendChild(opt);
+        modelSelect.value = model;
     }
+    const rubricModelSelect = document.getElementById("setupRubricModel");
+    const rubricModel = setupConfig.rubric_model || "";
+    const hasRubricOpt = Array.from(rubricModelSelect.options).some(o => o.value === rubricModel);
+    if (hasRubricOpt) rubricModelSelect.value = rubricModel;
+    else if (rubricModel) {
+        const opt = document.createElement("option");
+        opt.value = rubricModel;
+        opt.textContent = rubricModel;
+        rubricModelSelect.appendChild(opt);
+        rubricModelSelect.value = rubricModel;
+    } else {
+        rubricModelSelect.value = "";
+    }
+    document.getElementById("setupRubricReviewCheck").checked = setupConfig.rubric_review !== false;
+    document.getElementById("setupIncludeReferenceCheck").checked = setupConfig.include_reference_in_grading === true;
+    setupQuestionGroups = (setupConfig.grading || {}).question_groups || [];
+    const gradeOnly = (setupConfig.grading || {}).grade_only;
+    const gradeOnlyMerge = (setupConfig.grading || {}).grade_only_merge === true;
+    document.getElementById("setupGradeOnlyCheck").checked = !!gradeOnly && gradeOnly.length > 0;
+    document.getElementById("setupGradeOnlyInput").value = gradeOnly ? gradeOnly.join(", ") : "";
+    document.getElementById("setupGradeOnlyInput").classList.toggle("hidden", !gradeOnly || gradeOnly.length === 0);
+    document.getElementById("setupGradeOnlyMergeCheck").checked = gradeOnlyMerge;
+    document.getElementById("setupGradeOnlyMergeWrap").classList.toggle("hidden", !gradeOnly || gradeOnly.length === 0);
+    renderSetupGroups();
+    updateOutputDirHint();
 }
+
+document.getElementById("setupLoadBtn").onclick = async () => {
+    const name = document.getElementById("setupAssignmentName").value.trim();
+    const statusEl = document.getElementById("setupLoadStatus");
+    if (!name) {
+        statusEl.innerHTML = `<span class="status-error">Please enter an assignment name.</span>`;
+        return;
+    }
+    const btn = document.getElementById("setupLoadBtn");
+    setLoading(btn, true, "Loading…");
+    statusEl.innerHTML = `<span style="color:#64748b">Loading…</span>`;
+    try {
+        const r = await fetch(API + "/load-or-create", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ assignment_name: name }),
+        });
+        const data = await r.json();
+        if (!r.ok) throw new Error(data.detail || "Server error");
+        _populateSetupFields(data.config);
+        document.getElementById("setupConfigFields").classList.remove("hidden");
+        const icon = data.created ? "✨" : "✓";
+        const verb = data.created ? "Created new config" : "Loaded existing config";
+        statusEl.innerHTML = `<span class="status-ok">${icon} ${escHtml(verb)} for <strong>${escHtml(data.assignment_name)}</strong></span>`;
+    } catch (e) {
+        statusEl.innerHTML = `<span class="status-error">Error: ${escHtml(e.message)}</span>`;
+    } finally {
+        setLoading(btn, false, "Load / Create");
+    }
+};
 
 function updateOutputDirHint() {
     const name = document.getElementById("setupAssignmentName").value.trim() || "default";
@@ -1022,5 +1045,4 @@ document.getElementById("exportBtn").onclick = async () => {
 };
 
 // Init
-loadSetupFromConfig();
 loadRubricGroups();

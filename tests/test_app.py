@@ -59,7 +59,7 @@ def _full_config(tmp_path):
 
 class TestPathTraversal:
     def test_parsed_path_traversal_rejected(self, client, mock_config, tmp_path):
-        with patch("app.load_config", return_value=mock_config):
+        with patch("app._get_active_config", return_value=mock_config):
             (tmp_path / "parsed").mkdir(exist_ok=True)
             r = client.get("/parsed/..%2F..%2F..%2Fetc%2Fpasswd")
             assert r.status_code in (400, 404)
@@ -92,6 +92,42 @@ class TestUploadLimit:
 
 
 class TestConfigEndpoints:
+    def test_load_or_create_creates_new_config(self, client, tmp_path):
+        """Creates a new config file when the assignment folder does not exist."""
+        with patch("app._PROJECT_ROOT", new=tmp_path), patch(
+            "app.save_config"
+        ) as mock_save, patch(
+            "app.load_config",
+            return_value={"assignment_name": "NewLab", "model": DEFAULT_MODEL},
+        ):
+            r = client.post("/load-or-create", json={"assignment_name": "NewLab"})
+        assert r.status_code == 200
+        data = r.json()
+        assert data["assignment_name"] == "NewLab"
+        assert data["created"] is True
+        assert "config" in data
+        mock_save.assert_called_once()
+
+    def test_load_or_create_loads_existing_config(self, client, tmp_path):
+        """Loads existing config when the assignment folder already exists."""
+        config_path = tmp_path / "output" / "ExistingLab" / "config.yaml"
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        config_path.write_text("assignment_name: ExistingLab\n", encoding="utf-8")
+        with patch("app._PROJECT_ROOT", new=tmp_path), patch(
+            "app.load_config",
+            return_value={"assignment_name": "ExistingLab", "model": DEFAULT_MODEL},
+        ) as mock_load:
+            r = client.post("/load-or-create", json={"assignment_name": "ExistingLab"})
+        assert r.status_code == 200
+        data = r.json()
+        assert data["assignment_name"] == "ExistingLab"
+        assert data["created"] is False
+
+    def test_load_or_create_missing_name_rejected(self, client):
+        r = client.post("/load-or-create", json={})
+        assert r.status_code == 400
+        assert "assignment_name" in r.json().get("detail", "")
+
     def test_put_config_accepts_partial_payload(self, client, tmp_path):
         existing = {
             "assignment_name": "default",
@@ -114,9 +150,9 @@ class TestConfigEndpoints:
             "rubrics": {},
         }
 
-        with patch("app.load_config", return_value=existing), patch(
-            "app.save_config"
-        ) as mock_save:
+        with patch("app._get_active_config", return_value=existing), patch(
+            "app._active_config_path", new=Path("output/Test/config.yaml")
+        ), patch("app.save_config") as mock_save:
             r = client.put(
                 "/config",
                 json={
@@ -158,9 +194,9 @@ class TestConfigEndpoints:
             "rubrics": {},
         }
 
-        with patch("app.load_config", return_value=existing), patch(
-            "app.save_config"
-        ) as mock_save:
+        with patch("app._get_active_config", return_value=existing), patch(
+            "app._active_config_path", new=Path("output/Test/config.yaml")
+        ), patch("app.save_config") as mock_save:
             r = client.put(
                 "/config",
                 json={
@@ -180,7 +216,7 @@ class TestPutResults:
         (tmp_path / "output").mkdir(exist_ok=True)
         graded = tmp_path / "output" / "graded_results.json"
         graded.write_text("[]", encoding="utf-8")
-        with patch("app.load_config", return_value=mock_config):
+        with patch("app._get_active_config", return_value=mock_config):
             r = client.put(
                 "/results/Alice",
                 json={
@@ -194,7 +230,7 @@ class TestPutResults:
         out.mkdir(parents=True, exist_ok=True)
         graded = out / "graded_results.json"
         graded.write_text("[]", encoding="utf-8")
-        with patch("app.load_config", return_value=mock_config):
+        with patch("app._get_active_config", return_value=mock_config):
             r = client.put(
                 "/results/Alice",
                 json={
@@ -213,7 +249,7 @@ class TestPutResults:
         out.mkdir(parents=True, exist_ok=True)
         graded = out / "graded_results.json"
         graded.write_text("[]", encoding="utf-8")
-        with patch("app.load_config", return_value=mock_config):
+        with patch("app._get_active_config", return_value=mock_config):
             r = client.put(
                 "/results/..%2F..%2Fetc",
                 json={
@@ -292,7 +328,7 @@ class TestGradeOneMerge:
             "summary_feedback": "Full marks.",
         }
 
-        with patch("app.load_config", return_value=cfg), patch(
+        with patch("app._get_active_config", return_value=cfg), patch(
             "app.grade_student", return_value=returned
         ) as mock_grade_student:
             r = client.post("/grade/Alice")
@@ -313,7 +349,7 @@ class TestRubricsEndpoints:
                 "items": [{"description": "Check plot.", "deduction": 2.0}],
             }
         }
-        with patch("app.load_config", return_value=mock_config):
+        with patch("app._get_active_config", return_value=mock_config):
             r = client.get("/rubrics")
         assert r.status_code == 200
         assert r.json() == {
@@ -326,7 +362,7 @@ class TestRubricsEndpoints:
     def test_put_rubrics_saves_to_config(self, client, tmp_path):
         cfg = _full_config(tmp_path)
         cfg["rubrics"] = {}
-        with patch("app.load_config", return_value=cfg), patch(
+        with patch("app._get_active_config", return_value=cfg), patch(
             "app.save_config"
         ) as mock_save:
             r = client.put(
@@ -360,7 +396,7 @@ class TestRubricsEndpoints:
         )
         mock_config["output_dir"] = str(tmp_path / "output")
         mock_config["grading"] = {"question_groups": [["1.1"]]}
-        with patch("app.load_config", return_value=mock_config), patch(
+        with patch("app._get_active_config", return_value=mock_config), patch(
             "app.generate_rubrics",
             return_value={
                 "1.1": {"points": 2, "items": [{"description": "ok", "deduction": 2.0}]}
@@ -415,7 +451,7 @@ class TestCalibrateEndpoint:
         ]
         (out / "graded_results.json").write_text(json.dumps(graded))
         mock_config["output_dir"] = str(out)
-        with patch("app.load_config", return_value=mock_config):
+        with patch("app._get_active_config", return_value=mock_config):
             r = client.post("/calibrate")
         assert r.status_code == 200
         data = r.json()
@@ -431,7 +467,7 @@ class TestResultsGet:
             '[{"student_name": "Alice", "questions": {}, "total_score": 5, "total_max": 10}]'
         )
         mock_config["output_dir"] = str(out)
-        with patch("app.load_config", return_value=mock_config):
+        with patch("app._get_active_config", return_value=mock_config):
             r = client.get("/results")
         assert r.status_code == 200
         data = r.json()
@@ -443,7 +479,7 @@ class TestResultsGet:
         out = tmp_path / "output"
         out.mkdir(parents=True, exist_ok=True)
         mock_config["output_dir"] = str(out)
-        with patch("app.load_config", return_value=mock_config):
+        with patch("app._get_active_config", return_value=mock_config):
             r = client.get("/results")
         assert r.status_code == 200
         assert r.json() == []
@@ -457,7 +493,7 @@ class TestParsedEndpoint:
             '{"sections": {}, "student_name": "Alice"}'
         )
         mock_config["parsed_dir"] = str(parsed_dir)
-        with patch("app.load_config", return_value=mock_config):
+        with patch("app._get_active_config", return_value=mock_config):
             r = client.get("/parsed/Alice")
         assert r.status_code == 200
         assert r.json().get("student_name") == "Alice"
@@ -471,7 +507,7 @@ class TestExportEndpoint:
             '[{"student_name": "Alice", "questions": {"1.1": {"score": 1, "max": 1}}, "total_score": 1, "total_max": 1}]'
         )
         mock_config["output_dir"] = str(out)
-        with patch("app.load_config", return_value=mock_config), patch(
+        with patch("app._get_active_config", return_value=mock_config), patch(
             "app.export_all"
         ) as mock_export:
             mock_export.return_value = {
