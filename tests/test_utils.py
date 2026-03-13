@@ -181,29 +181,22 @@ prompts:
 
     class TestSetupAssignmentLogging:
         def test_switches_autograder_log_file(self, tmp_path):
-            root = logging.getLogger()
-            old_handlers = list(root.handlers)
-            for handler in list(root.handlers):
-                if isinstance(handler, logging.FileHandler):
-                    root.removeHandler(handler)
-                    handler.close()
+            first = setup_assignment_logging("one", tmp_path / "one")
+            second = setup_assignment_logging("two", tmp_path / "two")
 
-            try:
-                first = setup_assignment_logging(tmp_path / "one")
-                second = setup_assignment_logging(tmp_path / "two")
-                file_handlers = [
-                    h for h in root.handlers if isinstance(h, logging.FileHandler)
-                ]
+            logger_one = logging.getLogger("autograder.one")
+            logger_two = logging.getLogger("autograder.two")
 
-                assert first.name == "autograder.log"
-                assert second.name == "autograder.log"
-                assert len(file_handlers) == 1
-                assert Path(file_handlers[0].baseFilename).resolve() == second.resolve()
-            finally:
-                for handler in list(root.handlers):
-                    if isinstance(handler, logging.FileHandler):
-                        root.removeHandler(handler)
-                        handler.close()
-                for handler in old_handlers:
-                    if handler not in root.handlers:
-                        root.addHandler(handler)
+            file_handlers_one = [
+                h for h in logger_one.handlers if isinstance(h, logging.FileHandler)
+            ]
+            file_handlers_two = [
+                h for h in logger_two.handlers if isinstance(h, logging.FileHandler)
+            ]
+
+            assert first.name == "autograder.log"
+            assert second.name == "autograder.log"
+            assert len(file_handlers_one) == 1
+            assert len(file_handlers_two) == 1
+            assert Path(file_handlers_one[0].baseFilename).resolve() == first.resolve()
+            assert Path(file_handlers_two[0].baseFilename).resolve() == second.resolve()

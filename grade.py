@@ -23,6 +23,7 @@ from utils import (
     get_skipped_feedback,
     load_config,
     temperature_for_model,
+    get_job_logger,
 )
 
 logger = logging.getLogger(__name__)
@@ -87,10 +88,11 @@ def grade_group(
     Grade one question group. Retries up to MAX_VALIDATION_RETRIES times
     if the LLM response fails Pydantic validation.
     """
+    logger = get_job_logger(config, __name__)
     model = config.get("model") or DEFAULT_MODEL
     assignment_name = config.get("assignment_name")
     system_prompt = load_prompt("grade_system", assignment_name=assignment_name)
-    
+
     max_prompt_tokens = config.get("max_prompt_tokens", 80_000)
     max_completion_tokens = config.get("max_completion_tokens", 4_096)
     effective_max_completion = min(max_completion_tokens, max(2048, len(group) * 1024))
@@ -219,6 +221,7 @@ def grade_student(
     When merge_into is provided with grade_only, only grades grade_only questions
     and merges new grades into existing result (keeps other questions unchanged).
     """
+    logger = get_job_logger(config, __name__)
     if client is None:
         client = get_openai_client()
 

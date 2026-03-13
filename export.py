@@ -72,22 +72,29 @@ def _build_linter_summary_test(
     parsed_path = parsed_dir / f"{student_name}.json"
     if not parsed_path.exists():
         summary, _ = build_linter_summary(
-            found=[], required=sorted(required_qids, key=_sort_key_qid),
+            found=[],
+            required=sorted(required_qids, key=_sort_key_qid),
             missing=sorted(required_qids, key=_sort_key_qid),
-            unexpected=[], duplicates=[],
+            unexpected=[],
+            duplicates=[],
         )
-        summary = "\n".join([
-            "# Notebook Linter Summary",
-            "",
-            "Status: FAILED",
-            "",
-            f"Parsed notebook not found for `{student_name}`.",
-            "Cannot compute found/missing/duplicate question labels.",
-        ])
+        summary = "\n".join(
+            [
+                "# Notebook Linter Summary",
+                "",
+                "Status: FAILED",
+                "",
+                f"Parsed notebook not found for `{student_name}`.",
+                "Cannot compute found/missing/duplicate question labels.",
+            ]
+        )
         return {
             "name": "Notebook Format Lint",
-            "score": 0, "max_score": 0,
-            "output": summary, "output_format": "md", "visibility": "visible",
+            "score": 0,
+            "max_score": 0,
+            "output": summary,
+            "output_format": "md",
+            "visibility": "visible",
         }
 
     parsed = json.loads(parsed_path.read_text(encoding="utf-8"))
@@ -104,8 +111,11 @@ def _build_linter_summary_test(
     summary, _ = build_linter_summary(found, required, missing, unexpected, duplicates)
     return {
         "name": "Notebook Format Lint",
-        "score": 0, "max_score": 0,
-        "output": summary, "output_format": "md", "visibility": "visible",
+        "score": 0,
+        "max_score": 0,
+        "output": summary,
+        "output_format": "md",
+        "visibility": "visible",
     }
 
 

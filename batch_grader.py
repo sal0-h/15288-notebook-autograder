@@ -19,6 +19,7 @@ from utils import (
     get_openai_client,
     is_grade_only_merge_enabled,
     needs_grade_only_merge,
+    get_job_logger,
 )
 
 logger = logging.getLogger(__name__)
@@ -34,6 +35,8 @@ def grade_all_students(
     Yields progress events; saves graded_results.json after each student.
     When results_lock is provided (e.g. from app), uses it for thread-safe writes.
     """
+    logger = get_job_logger(config, __name__)
+
     # Import here to avoid circular dependency (grade imports batch_grader for main())
     from grade import grade_student  # noqa: PLC0415
 

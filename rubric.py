@@ -10,13 +10,19 @@ from pathlib import Path
 
 from openai import OpenAI
 
-from prompt_builder import get_question_data, parse_llm_json, truncate_output, load_prompt
+from prompt_builder import (
+    get_question_data,
+    parse_llm_json,
+    truncate_output,
+    load_prompt,
+)
 from utils import (
     get_openai_client,
     load_config,
     temperature_for_model,
     DEFAULT_MODEL,
     filter_groups_by_grade_only,
+    get_job_logger,
 )
 
 logger = logging.getLogger(__name__)
@@ -48,8 +54,6 @@ def _sanitize_llm_text(text: str) -> str:
     # Drop remaining control chars except whitespace controls
     text = "".join(c for c in text if ord(c) >= 32 or c in "\n\r\t")
     return text
-
-
 
 
 def _get_rubric_generation_prompt(config: dict) -> str:
@@ -99,6 +103,7 @@ def _generate_one_group(
         max_completion_tokens,
         client,
     ) = args
+    logger = get_job_logger(config, __name__)
     if client is None:
         client = get_openai_client()
     rubrics_for_group: dict[str, dict] = {}
@@ -177,14 +182,24 @@ def _generate_one_group(
 
 
 def _review_one_group(
-    args: tuple[list[str], dict, dict, str, str, int, OpenAI | None],
+    args: tuple[list[str], dict, dict, dict, str, str, int, OpenAI | None],
 ) -> dict[str, dict]:
     """Review rubrics for one group of questions against question text.
 
     Returns revised rubrics with softened wording where the criterion
     hardcoded reference-solution-specific values not required by the question.
     """
-    group, rubrics, solution_parsed, review_prompt, model, max_tokens, client = args
+    (
+        group,
+        rubrics,
+        solution_parsed,
+        config,
+        review_prompt,
+        model,
+        max_tokens,
+        client,
+    ) = args
+    logger = get_job_logger(config, __name__)
     if client is None:
         client = get_openai_client()
 
@@ -277,6 +292,7 @@ def review_rubrics(
     the question text doesn't explicitly require them.
     When groups_to_review is set, only reviews those groups (for partial generation).
     """
+    logger = get_job_logger(config, __name__)
     if client is None:
         client = get_openai_client()
 
@@ -300,6 +316,7 @@ def review_rubrics(
                 group,
                 rubrics,
                 solution_parsed,
+                config,
                 review_prompt,
                 model,
                 max_tokens,
@@ -329,6 +346,7 @@ def generate_rubrics(
     progress_callback(group_index, total_groups, group, rubrics_so_far) is called after each group.
     Returns a dict: { "qid": {"points": N, "items": [{"description": "...", "deduction": ...}], ...} }
     """
+    logger = get_job_logger(config, __name__)
     if client is None:
         client = get_openai_client()
 
