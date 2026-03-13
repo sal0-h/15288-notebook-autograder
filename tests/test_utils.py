@@ -142,6 +142,43 @@ prompts:
         root_cfg = load_config(config_path)
         assert root_cfg["assignment_name"] == "Lab #1"
 
+    def test_save_config_with_explicit_assignment_config_path(self, tmp_path):
+        assignment_config_path = tmp_path / "output" / "LabTest_3_S26" / "config.yaml"
+        (tmp_path / "archive").mkdir(parents=True)
+        (tmp_path / "archive" / "sol.ipynb").write_text("{}", encoding="utf-8")
+
+        cfg = {
+            "assignment_name": "LabTest_3_S26",
+            "model": "gpt-5-mini",
+            "rubric_model": "",
+            "rubric_review": True,
+            "include_reference_in_grading": False,
+            "solution_notebook": str(tmp_path / "archive" / "sol.ipynb"),
+            "output_dir": "output",
+            "workers": 1,
+            "rubrics": {},
+            "max_prompt_tokens": 80_000,
+            "max_completion_tokens": 4_096,
+            "parsing": {
+                "section_regex": r"\\d+",
+                "question_regex": r"Q\\d+",
+                "keep_images": True,
+            },
+            "grading": {"question_groups": [["1.1"]], "grade_only": None},
+            "prompts": {"system": "Grade"},
+        }
+
+        save_config(cfg, assignment_config_path)
+        assignment_cfg_text = assignment_config_path.read_text(encoding="utf-8")
+        assert "model: gpt-5-mini" in assignment_cfg_text
+        assert "solution_notebook:" in assignment_cfg_text
+        assert "parsing:" in assignment_cfg_text
+        assert "grading:" in assignment_cfg_text
+
+        root_cfg_text = (tmp_path / "config.yaml").read_text(encoding="utf-8")
+        assert "assignment_name: LabTest_3_S26" in root_cfg_text
+        assert "prompts:" in root_cfg_text
+
     class TestSetupAssignmentLogging:
         def test_switches_autograder_log_file(self, tmp_path):
             root = logging.getLogger()

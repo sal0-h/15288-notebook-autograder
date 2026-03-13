@@ -157,6 +157,7 @@ python main.py --solution path/to/solution.ipynb
 python main.py --submissions-dir path/to/submissions
 python main.py --config my_config.yaml
 python main.py --no-write-config
+python main.py --steps parse --config output/LabTest_3_S26/config.yaml --no-write-config
 ```
 
 Supported pipeline step names:
@@ -167,6 +168,24 @@ Supported pipeline step names:
 - grade
 - calibrate
 - export
+
+### Assignment config safety (important)
+
+If you keep hand-edited rubrics inside `output/{assignment_name}/config.yaml`, avoid rewriting that file unless you intend to.
+
+Recommended pattern for existing assignment configs:
+
+```bash
+python main.py --steps parse grade export --config output/LabTest_3_S26/config.yaml --no-write-config
+```
+
+Use `--no-write-config` when you want to run pipeline steps against the current assignment config as-is.
+
+It is also a good idea to keep a dated local backup before major reruns, for example:
+
+```bash
+cp output/LabTest_3_S26/config.yaml output/LabTest_3_S26/config.backup_YYYY-MM-DD.yaml
+```
 
 ### Option B: run the web app
 

@@ -238,12 +238,22 @@ def save_config(config: dict, config_path: Path | None = None) -> None:
     cfg.pop("submissions_dir", None)
     cfg.pop("parsed_dir", None)
 
-    project_root = _project_root(config_path)
+    input_path = (config_path or Path("config.yaml")).resolve()
     assignment_name = sanitize_assignment_name(cfg.get("assignment_name", "default"))
     base_output = cfg.get("output_dir", "output")
-    assignment_config_path = (
-        project_root / base_output / assignment_name / "config.yaml"
-    )
+
+    # If caller explicitly targets output/{assignment}/config.yaml, treat it as
+    # the assignment-scoped runtime config destination (full config goes there).
+    if config_path is not None and _is_assignment_config(input_path):
+        project_root = input_path.parent.parent.parent
+        assignment_config_path = input_path
+        root_path = project_root / "config.yaml"
+    else:
+        project_root = _project_root(config_path)
+        assignment_config_path = (
+            project_root / base_output / assignment_name / "config.yaml"
+        )
+        root_path = input_path
 
     # Relativize solution_notebook for portability (relative to project root)
     sol = cfg.get("solution_notebook", "")
@@ -267,7 +277,6 @@ def save_config(config: dict, config_path: Path | None = None) -> None:
         yaml.dump(assignment_cfg, f, default_flow_style=False, allow_unicode=True)
 
     # Save root config with assignment pointer + root-level controls.
-    root_path = (config_path or Path("config.yaml")).resolve()
     root_cfg = {
         "assignment_name": assignment_name,
         "output_dir": base_output,
@@ -373,6 +382,7 @@ class RubricEntry(BaseModel):
 class PromptsConfig(BaseModel):
     system: str
     rubric_system: str = ""
+    rubric_review_system: str = ""
 
 
 class AppConfig(BaseModel):

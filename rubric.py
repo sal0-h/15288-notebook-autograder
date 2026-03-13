@@ -50,24 +50,44 @@ def _sanitize_llm_text(text: str) -> str:
     return text
 
 
-DEFAULT_RUBRIC_SYSTEM_PROMPT = """You are an expert instructor creating grading rubrics for student lab work.
+DEFAULT_RUBRIC_SYSTEM_PROMPT = """You are an expert instructor creating LENIENT grading rubrics for student lab work.
 
 Given a question and its reference solution, produce structured grading criteria.
+Students complete these labs under significant time pressure. Rubrics must be fair
+and reward demonstrated understanding — not punish incomplete detail.
 
-CORE PRINCIPLE — QUESTION TEXT vs REFERENCE SOLUTION:
-The QUESTION TEXT defines what students must do. The REFERENCE SOLUTION is ONE correct
-implementation — it is NOT the specification. Apply this distinction carefully:
+CORE PRINCIPLE — ONLY GRADE WHAT THE QUESTION ASKS:
+The QUESTION TEXT is the sole specification. The REFERENCE SOLUTION is ONE possible
+approach — it is NOT the standard. Never require anything the question does not
+explicitly ask for.
 
-1. EXPLICIT REQUIREMENTS: If the question text explicitly requires specific values, methods,
-   or parameters (e.g. "use K=5", "use 10-fold cross-validation"), the rubric MUST require them.
-2. OPEN-ENDED CHOICES: If the question is open-ended (e.g. "try four different values",
-   "choose a classifier"), use flexible wording — do NOT hardcode the reference solution's
-   specific choices. Example: "four different values" not "[1, 3, 4, inf]".
-3. DATA-DEPENDENT RESULTS: For values that depend on preprocessing or data (dataset size, n,
-   accuracy, iterations), use flexible wording like "correctly computed from their data" —
-   do NOT hardcode the reference's specific numbers.
-4. IMPLEMENTATION DETAILS: For incidental choices (random_state, variable names, print format),
-   use flexible wording like "any fixed random_state".
+1. EXPLICIT REQUIREMENTS ONLY: Only require what the question text explicitly asks.
+   If the question says "use K=5", require K=5. If it says "comment on the result",
+   a brief, reasonable comment is sufficient.
+2. OPEN-ENDED CHOICES: For open-ended prompts ("try different values", "choose a
+   classifier"), use flexible wording. Never hardcode the reference solution's choices.
+3. DATA-DEPENDENT RESULTS: Never hardcode specific numbers from the reference.
+   Use "correctly computed from their data" or "reasonable value".
+4. IMPLEMENTATION DETAILS: Never require specific variable names, random_state values,
+   or print formatting.
+
+LENIENCY RULES — THESE ARE MANDATORY:
+5. WRITTEN ANSWERS: For "explain/comment/interpret/discuss" questions, a SHORT,
+   correct answer that addresses the core question earns FULL credit. Do NOT require:
+   - Suggestions for improvement or next steps (unless the question explicitly asks)
+   - Multiple perspectives or exhaustive analysis
+   - Technical jargon when plain language conveys understanding
+   - Length beyond what the question scope demands
+   A one-to-two sentence answer that correctly addresses the question IS full credit.
+6. PARTIAL UNDERSTANDING: If a student shows they understand the concept — even if
+   their wording is informal or brief — that is sufficient. Prefer ONE broad criterion
+   per question that captures "demonstrates understanding of the core concept".
+7. SIMPLIFY CRITERIA: Consolidate related expectations into fewer, broader items.
+   Aim for the MINIMUM number of criteria needed. For a 3-point question, prefer
+   1-2 broad criteria over 3 narrow ones.
+8. AVOID GIANT SINGLE ITEMS: For complex multi-step questions, do NOT collapse the
+    entire question into one giant criterion. Use a small number of broad, concept-level
+    items so partial credit is stable and feedback remains actionable.
 
 Return valid JSON only, no prose outside JSON.
 
@@ -84,36 +104,62 @@ For each question ID, output:
 
 Constraints:
 - The sum of all deduction values MUST equal the total points for that question exactly.
-- Group related minor deductions into a single item. Use at most 1 item per point
-  (e.g. a 1-point question gets 1 item; a 4-point question gets at most 4 items).
-- Phrase each criterion as what the student must do (positive), not what causes deduction.
+- MINIMIZE the number of items, but keep structure fair for partial credit.
+- For simple or single-skill questions, 1 broad item is acceptable.
+- For complex multi-step questions, use multiple broad concept-level items instead of
+    a single all-or-nothing item.
+- Phrase each criterion broadly and positively: what the student must demonstrate (not a
+  checklist of sub-details to hunt for).
 
-Be specific and actionable. The criteria should help another grader (or an LLM) consistently
-score student submissions."""
+The rubric should be easy to satisfy for a student who understood the material,
+even if they wrote a brief answer under time pressure."""
 
 
 # ---------------------------------------------------------------------------
 # Rubric review prompt (Idea #2) — optional second pass
 # ---------------------------------------------------------------------------
 
-RUBRIC_REVIEW_SYSTEM_PROMPT = """You are auditing auto-generated grading rubrics for fairness.
+RUBRIC_REVIEW_SYSTEM_PROMPT = """You are auditing auto-generated grading rubrics for LENIENCY and FAIRNESS.
 
-For each rubric criterion below, determine whether the specific values or requirements it
-mentions are EXPLICITLY required by the question text, or were merely copied from the
-reference solution.
+Students work under significant time pressure. Your job is to ensure rubrics are as
+generous as reasonably possible while still testing the core learning objective.
 
-Rules:
-- If the question text explicitly states a value (e.g. "use K=5"), keep the criterion as-is.
-- If the question text is open-ended (e.g. "try different values") and the criterion hardcodes
-  specific values from the reference solution, REWRITE the criterion description with flexible
-  wording (e.g. "uses at least 4 different values" instead of "uses values [1, 3, 4, inf]").
-- If the criterion tests a data-dependent result (dataset size, accuracy), ensure it says
-  "correctly computed from their data" rather than hardcoding a specific number.
-- Do NOT change criteria that are already flexible.
-- Do NOT change the number of items, point values, or deduction amounts — only rewrite
-  description text where needed.
+For each criterion, compare it against the QUESTION TEXT and apply these rules:
+
+1. REMOVE UNJUSTIFIED REQUIREMENTS: If the question does not explicitly ask for something
+   (e.g. "next steps", "suggestions for improvement", "discuss implications"), and the
+   criterion requires it, REWRITE the criterion to remove that requirement.
+2. SOFTEN EXPLANATION CRITERIA: For "explain/comment/interpret" questions, rewrite criteria
+   to accept a brief, correct answer. Replace language like "thoroughly explains" or
+   "discusses in detail" with "provides a reasonable interpretation" or "demonstrates
+   understanding of the core concept".
+3. REMOVE HARDCODED VALUES: If the question is open-ended and the criterion hardcodes values
+   from the reference solution, rewrite with flexible wording.
+4. REMOVE DATA-DEPENDENT NUMBERS: Replace specific numbers with "correctly computed" or
+   "reasonable value".
+5. CONSOLIDATE OVERLY GRANULAR CRITERIA: If multiple items test variations of the same
+   concept, note this (the structure cannot change, but soften each to be independently
+   satisfiable).
+6. REWARD DEMONSTRATED UNDERSTANDING: Rewrite criteria so that a student who shows they
+   understand the concept — even briefly or informally — would earn full or near-full credit.
+7. AVOID ALL-OR-NOTHING WORDING: If a criterion bundles many required steps into one
+    huge deduction, rewrite its description to make clear, broad sub-expectations so grading
+    can award partial credit consistently.
+
+Do NOT change the number of items, point values, or deduction amounts — only rewrite
+description text.
 
 Return the revised rubrics in the EXACT same JSON structure as the input."""
+
+
+def _get_rubric_generation_prompt(config: dict) -> str:
+    prompts = config.get("prompts", {})
+    return prompts.get("rubric_system") or DEFAULT_RUBRIC_SYSTEM_PROMPT
+
+
+def _get_rubric_review_prompt(config: dict) -> str:
+    prompts = config.get("prompts", {})
+    return prompts.get("rubric_review_system") or RUBRIC_REVIEW_SYSTEM_PROMPT
 
 
 def _build_group_prompt(group: list[str], solution_parsed: dict) -> str:
@@ -345,6 +391,8 @@ def review_rubrics(
     if groups_to_review is None and grade_only is not None:
         groups = filter_groups_by_grade_only(groups, grade_only)
 
+    review_prompt = _get_rubric_review_prompt(config)
+
     revised = dict(rubrics)  # start with copy
     for group in groups:
         result = _review_one_group(
@@ -352,7 +400,7 @@ def review_rubrics(
                 group,
                 rubrics,
                 solution_parsed,
-                RUBRIC_REVIEW_SYSTEM_PROMPT,
+                review_prompt,
                 model,
                 max_tokens,
                 client,
@@ -399,9 +447,7 @@ def generate_rubrics(
     model = config.get("rubric_model") or config.get("model") or DEFAULT_MODEL
     workers = config.get("workers", 1)
     max_completion_tokens = config.get("max_completion_tokens", 4096)
-    rubric_prompt = (
-        config.get("prompts", {}).get("rubric_system") or DEFAULT_RUBRIC_SYSTEM_PROMPT
-    )
+    rubric_prompt = _get_rubric_generation_prompt(config)
 
     # When group_indices: select those groups from the original grouping first.
     partial = group_indices is not None
