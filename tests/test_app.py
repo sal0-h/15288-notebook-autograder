@@ -53,7 +53,6 @@ def _full_config(tmp_path):
             "keep_images": True,
         },
         "grading": {"question_groups": [["1.1"]], "grade_only": None},
-        "prompts": {"system": "Grade."},
         "rubrics": {},
     }
 
@@ -112,7 +111,6 @@ class TestConfigEndpoints:
                 "keep_images": True,
             },
             "grading": {"question_groups": [["1.1"]]},
-            "prompts": {"system": "Grade."},
             "rubrics": {},
         }
 
@@ -134,7 +132,7 @@ class TestConfigEndpoints:
         assert saved["assignment_name"] == "LabTest_Demo"
         assert "parsing" in saved
         assert "grading" in saved
-        assert "prompts" in saved
+        assert "rubric_review" in saved
 
     def test_put_config_assignment_change_clears_solution_when_missing(
         self, client, tmp_path
@@ -157,7 +155,6 @@ class TestConfigEndpoints:
                 "keep_images": True,
             },
             "grading": {"question_groups": [["1.1"]]},
-            "prompts": {"system": "Grade."},
             "rubrics": {},
         }
 

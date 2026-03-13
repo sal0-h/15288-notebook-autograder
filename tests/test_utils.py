@@ -6,7 +6,15 @@ from pathlib import Path
 
 import pytest
 
-from utils import load_config, save_config, setup_assignment_logging
+from utils import (
+    AppConfig,
+    app_config_to_yaml_data,
+    ensure_app_config,
+    load_app_config,
+    load_config,
+    save_config,
+    setup_assignment_logging,
+)
 
 
 class TestLoadConfig:
@@ -22,8 +30,6 @@ parsing:
   question_regex: 'Q[0-9]+'
 grading:
   question_groups: [["1.1"]]
-prompts:
-  system: "Grade"
 """,
             encoding="utf-8",
         )
@@ -48,8 +54,6 @@ parsing:
   question_regex: 'Q[0-9]+'
 grading:
   question_groups: [["1.1"]]
-prompts:
-  system: "Grade"
 """,
             encoding="utf-8",
         )
@@ -69,8 +73,6 @@ parsing:
   question_regex: 'Q[0-9]+'
 grading:
   question_groups: [["1.1"]]
-prompts:
-  system: "Grade"
 """,
             encoding="utf-8",
         )
@@ -93,8 +95,6 @@ parsing:
   question_regex: "Q\\\\d+"
 grading:
   question_groups: [["1.1"]]
-prompts:
-  system: "Grade"
 """,
             encoding="utf-8",
         )
@@ -105,14 +105,44 @@ prompts:
         assert cfg2.get("assignment_name") == cfg.get("assignment_name")
         assert "submissions" in str(cfg2.get("submissions_dir", ""))
 
+    def test_save_config_accepts_appconfig(self, tmp_path):
+        config_path = tmp_path / "config.yaml"
+        cfg = AppConfig(assignment_name="LabTest_3_S26")
+
+        save_config(cfg, config_path)
+        loaded = load_config(config_path)
+
+        assert loaded["assignment_name"] == "LabTest_3_S26"
+
+    def test_load_app_config_returns_model(self, tmp_path):
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text("assignment_name: Demo\n", encoding="utf-8")
+
+        cfg = load_app_config(config_path)
+
+        assert isinstance(cfg, AppConfig)
+        assert cfg.assignment_name == "Demo"
+
+    def test_ensure_app_config_accepts_dict_and_model(self):
+        cfg_from_dict = ensure_app_config({"assignment_name": "Demo"})
+        cfg_from_model = ensure_app_config(cfg_from_dict)
+
+        assert isinstance(cfg_from_dict, AppConfig)
+        assert cfg_from_model is cfg_from_dict
+
+    def test_app_config_to_yaml_data_returns_plain_dict(self):
+        cfg = AppConfig(assignment_name="Demo")
+        data = app_config_to_yaml_data(cfg)
+
+        assert isinstance(data, dict)
+        assert data["assignment_name"] == "Demo"
+
     def test_save_config_preserves_hash_in_assignment_name(self, tmp_path):
         config_path = tmp_path / "config.yaml"
         config_path.write_text(
             """
 assignment_name: default
 output_dir: output
-prompts:
-  system: "Grade"
 """,
             encoding="utf-8",
         )
@@ -135,7 +165,6 @@ prompts:
                 "keep_images": True,
             },
             "grading": {"question_groups": [["1.1"]], "grade_only": None},
-            "prompts": {"system": "Grade"},
         }
 
         save_config(cfg, config_path)
@@ -165,7 +194,6 @@ prompts:
                 "keep_images": True,
             },
             "grading": {"question_groups": [["1.1"]], "grade_only": None},
-            "prompts": {"system": "Grade"},
         }
 
         save_config(cfg, assignment_config_path)
@@ -205,11 +233,6 @@ prompts:
                 "question_groups": [["1.1"]],
                 "grade_only": ["1.1"],
                 "grade_only_merge": True,
-            },
-            "prompts": {
-                "system": "Grade",
-                "rubric_system": "Rubric",
-                "rubric_review_system": "Review",
             },
         }
 
