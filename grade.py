@@ -11,6 +11,7 @@ from grading_models import GradingResponse, NO_SUBMISSION, QuestionGrade, SKIP_F
 from prompt_builder import (
     build_group_prompt,
     get_question_data,
+    load_prompt,
     parse_llm_json,
     validate_question_groups,
 )
@@ -87,9 +88,9 @@ def grade_group(
     if the LLM response fails Pydantic validation.
     """
     model = config.get("model") or DEFAULT_MODEL
-    system_prompt = config.get("prompts", {}).get(
-        "system", "You are a grading assistant."
-    )
+    assignment_name = config.get("assignment_name")
+    system_prompt = load_prompt("grade_system", assignment_name=assignment_name)
+    
     max_prompt_tokens = config.get("max_prompt_tokens", 80_000)
     max_completion_tokens = config.get("max_completion_tokens", 4_096)
     effective_max_completion = min(max_completion_tokens, max(2048, len(group) * 1024))
