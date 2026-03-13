@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from linter_export import build_linter_summary, fmt_qid_list
 from parse_notebook import _sort_key_qid
 from utils import load_config
 
@@ -62,12 +63,6 @@ else:
 '''
 
 
-def _fmt_qid_list(items: list[str]) -> str:
-    if not items:
-        return "(none)"
-    return ", ".join(f"`{q}`" for q in items)
-
-
 def _build_linter_summary_test(
     student_name: str,
     parsed_dir: Path,
@@ -76,23 +71,23 @@ def _build_linter_summary_test(
     """Build a single 0-pt linter test summary for one student."""
     parsed_path = parsed_dir / f"{student_name}.json"
     if not parsed_path.exists():
-        summary = "\n".join(
-            [
-                "# Notebook Linter Summary",
-                "",
-                "Status: FAILED",
-                "",
-                f"Parsed notebook not found for `{student_name}`.",
-                "Cannot compute found/missing/duplicate question labels.",
-            ]
+        summary, _ = build_linter_summary(
+            found=[], required=sorted(required_qids, key=_sort_key_qid),
+            missing=sorted(required_qids, key=_sort_key_qid),
+            unexpected=[], duplicates=[],
         )
+        summary = "\n".join([
+            "# Notebook Linter Summary",
+            "",
+            "Status: FAILED",
+            "",
+            f"Parsed notebook not found for `{student_name}`.",
+            "Cannot compute found/missing/duplicate question labels.",
+        ])
         return {
             "name": "Notebook Format Lint",
-            "score": 0,
-            "max_score": 0,
-            "output": summary,
-            "output_format": "md",
-            "visibility": "visible",
+            "score": 0, "max_score": 0,
+            "output": summary, "output_format": "md", "visibility": "visible",
         }
 
     parsed = json.loads(parsed_path.read_text(encoding="utf-8"))
@@ -106,40 +101,11 @@ def _build_linter_summary_test(
     unexpected = sorted(found_set - set(required), key=_sort_key_qid)
     duplicates = sorted(parsed.get("duplicate_qids") or [], key=_sort_key_qid)
 
-    ok = len(missing) == 0 and len(duplicates) == 0
-    summary = "\n".join(
-        [
-            "# Notebook Linter Summary",
-            "",
-            f"Status: {'PASSED' if ok else 'FAILED'}",
-            "",
-            f"Required questions: **{len(required)}**",
-            f"Questions found: **{len(found)}**",
-            f"Questions missing: **{len(missing)}**",
-            f"Duplicate labels: **{len(duplicates)}**",
-            f"Unexpected question labels: **{len(unexpected)}**",
-            "",
-            "## Questions Found",
-            _fmt_qid_list(found),
-            "",
-            "## Duplicates Found",
-            _fmt_qid_list(duplicates),
-            "",
-            "## Questions Missing",
-            _fmt_qid_list(missing),
-            "",
-            "## Unexpected Question Labels",
-            _fmt_qid_list(unexpected),
-        ]
-    )
-
+    summary, _ = build_linter_summary(found, required, missing, unexpected, duplicates)
     return {
         "name": "Notebook Format Lint",
-        "score": 0,
-        "max_score": 0,
-        "output": summary,
-        "output_format": "md",
-        "visibility": "visible",
+        "score": 0, "max_score": 0,
+        "output": summary, "output_format": "md", "visibility": "visible",
     }
 
 
