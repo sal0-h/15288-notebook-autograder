@@ -100,7 +100,7 @@ Supporting directories:
 The project uses an output-first assignment layout.
 
 Root-level config:
-- config.yaml stores the active assignment pointer and root-level controls such as prompts, rubric review, and whether the reference solution is included during grading.
+- `config.yaml` is a pure pointer: it stores only `assignment_name` and `output_dir`. All other settings (including `rubric_review` and `include_reference_in_grading`) live in the assignment config.
 
 Assignment runtime data:
 - output/{assignment_name}/config.yaml
@@ -224,15 +224,14 @@ Important fields in config.yaml:
 - grading.question_groups: question groupings for each grading call.
 - grading.grade_only: optional subset of questions for partial regrading.
 - grading.grade_only_merge: whether partial grading should merge into saved results.
-- prompts.system: grading system prompt.
-- prompts.rubric_system: rubric-generation prompt.
+- gradescope_title_mapping: optional mapping from question ID to display name in Gradescope output.
 - rubrics: optional question rubric map.
 
 In practice, the most important configuration work is getting three things right:
 
 - notebook question regexes,
 - grading question groups, and
-- prompt wording that is strict enough to be consistent but flexible enough to accept equivalent student solutions.
+- prompt quality (edit `prompts/{assignment_name}/*.md` or `prompts/DEFAULT/*.md`; prompts are loaded from the filesystem, not stored in config).
 
 ## Direct module entrypoints
 
