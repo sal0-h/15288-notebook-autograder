@@ -33,23 +33,52 @@ out_path = results_dir / "results.json"
 
 results_dir.mkdir(parents=True, exist_ok=True)
 
+
+def _fmt_list(items):
+    if not items:
+        return "(none)"
+    return ", ".join(f"`{{x}}`" for x in items)
+
+
+def _emit(summary, ok):
+    payload = {{
+        "score": 0,
+        "output": summary,
+        "tests": [
+            {{
+                "name": "Notebook Format Lint",
+                "status": "passed" if ok else "failed",
+                "score": 0,
+                "max_score": 0,
+                "visibility": "visible",
+                "output_format": "md",
+                "output": summary,
+            }}
+        ],
+    }}
+    with open(out_path, "w") as f:
+        json.dump(payload, f)
+
+
 # Find notebook
 nb_files = list(submission_dir.glob("*.ipynb"))
 if not nb_files:
-    with open(out_path, "w") as f:
-        json.dump({{
-            "score": 0,
-            "output": "No .ipynb file found in submission.",
-            "tests": [{{"name": "No notebook", "status": "failed", "output": "No .ipynb found"}}]
-        }}, f)
-    exit(0)
+    summary = "\n".join([
+        "# Notebook Linter Summary",
+        "",
+        "Status: FAILED",
+        "",
+        "No `.ipynb` file found in submission.",
+    ])
+    _emit(summary, ok=False)
+    raise SystemExit(0)
 
 nb_path = nb_files[0]
 nb = json.loads(nb_path.read_text(encoding="utf-8"))
 cells = nb.get("cells", [])
 
-# Collect all Q IDs found in markdown cells using the same regex as main pipeline
-found_ids = set()
+# Collect all Q IDs found in markdown cells and track duplicates.
+found_counts = {{}}
 for cell in cells:
     if cell.get("cell_type") != "markdown":
         continue
@@ -59,18 +88,45 @@ for cell in cells:
             sec_id, qnum = m.group(2), m.group(3)
         else:
             sec_id, qnum = m.group(1), m.group(2)
-        found_ids.add(f"{{sec_id}}.{{qnum}}")
+        qid = f"{{sec_id}}.{{qnum}}"
+        found_counts[qid] = found_counts.get(qid, 0) + 1
 
-# One test per required ID: Found Qx.y (passed) or Missing Qx.y (failed)
-tests = []
-for qid in REQUIRED_IDS:
-    if qid in found_ids:
-        tests.append({{"name": f"Found Q{{qid}}", "status": "passed", "score": 0, "max_score": 0}})
-    else:
-        tests.append({{"name": f"Missing Q{{qid}}", "status": "failed", "score": 0, "max_score": 0}})
+found_ids = sorted(found_counts.keys(), key=lambda q: tuple(int(x) for x in q.split(".")))
+required_set = set(REQUIRED_IDS)
+found_set = set(found_ids)
+missing = sorted(required_set - found_set, key=lambda q: tuple(int(x) for x in q.split(".")))
+unexpected = sorted(found_set - required_set, key=lambda q: tuple(int(x) for x in q.split(".")))
+duplicates = sorted([qid for qid, cnt in found_counts.items() if cnt > 1], key=lambda q: tuple(int(x) for x in q.split(".")))
 
-with open(out_path, "w") as f:
-    json.dump({{"score": 0, "tests": tests}}, f)
+dup_lines = [f"- `{{qid}}` appears **{{found_counts[qid]}}** times" for qid in duplicates]
+
+ok = len(missing) == 0 and len(duplicates) == 0
+summary_lines = [
+    "# Notebook Linter Summary",
+    "",
+    f"Status: {{'PASSED' if ok else 'FAILED'}}",
+    "",
+    f"Notebook: `{{nb_path.name}}`",
+    f"Required questions: **{{len(REQUIRED_IDS)}}**",
+    f"Questions found: **{{len(found_ids)}}**",
+    f"Questions missing: **{{len(missing)}}**",
+    f"Duplicate labels: **{{len(duplicates)}}**",
+    f"Unexpected question labels: **{{len(unexpected)}}**",
+    "",
+    "## Questions Found",
+    _fmt_list(found_ids),
+    "",
+    "## Duplicates Found",
+    "\\n".join(dup_lines) if dup_lines else "(none)",
+    "",
+    "## Questions Missing",
+    _fmt_list(missing),
+    "",
+    "## Unexpected Question Labels",
+    _fmt_list(unexpected),
+]
+summary = "\\n".join(summary_lines)
+_emit(summary, ok=ok)
 '''
 
 

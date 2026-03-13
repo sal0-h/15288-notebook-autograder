@@ -19,6 +19,30 @@ def _make_config(tmp_path: Path, output_dir: Path) -> dict:
     }
 
 
+def _write_parsed_student(tmp_path: Path, student_name: str, qids: list[str]) -> None:
+    parsed_dir = tmp_path / "parsed"
+    parsed_dir.mkdir(parents=True, exist_ok=True)
+    questions = {
+        qid: {
+            "points": 0,
+            "question_markdown": "",
+            "answer_cells": [],
+            "answer_code_concat": "",
+            "answer_text_concat": "",
+            "answer_markdown_concat": "",
+        }
+        for qid in qids
+    }
+    parsed = {
+        "sections": {"1": {"overview_markdown": "", "questions": questions}},
+        "duplicate_qids": [],
+        "student_name": student_name,
+    }
+    (parsed_dir / f"{student_name}.json").write_text(
+        json.dumps(parsed, indent=2), encoding="utf-8"
+    )
+
+
 class TestExportAll:
     def test_missing_graded_results_raises(self, tmp_path):
         config = _make_config(tmp_path, tmp_path)
@@ -45,6 +69,7 @@ class TestExportAll:
         ]
         graded_path = tmp_path / "graded_results.json"
         graded_path.write_text(json.dumps(results, indent=2), encoding="utf-8")
+        _write_parsed_student(tmp_path, "Alice", ["1.1"])
         config = _make_config(tmp_path, tmp_path)
         summary = export_all(config)
         assert summary["students"] == 1
@@ -52,12 +77,14 @@ class TestExportAll:
         assert gs_path.exists()
         gs_data = json.loads(gs_path.read_text(encoding="utf-8"))
         assert "tests" in gs_data
-        assert len(gs_data["tests"]) == 1
+        assert len(gs_data["tests"]) == 2
         assert (
             gs_data["tests"][0]["name"] == "1.1"
         )  # qid as-is (no Q prefix) for Gradescope outline match
         assert gs_data["tests"][0]["score"] == 2
         assert gs_data["tests"][0]["max_score"] == 2
+        assert gs_data["tests"][-1]["name"] == "Notebook Format Lint"
+        assert gs_data["tests"][-1]["max_score"] == 0
 
     def test_excel_columns(self, tmp_path):
         results = [
@@ -71,6 +98,7 @@ class TestExportAll:
         ]
         graded_path = tmp_path / "graded_results.json"
         graded_path.write_text(json.dumps(results, indent=2), encoding="utf-8")
+        _write_parsed_student(tmp_path, "Alice", ["1.1"])
         config = _make_config(tmp_path, tmp_path)
         summary = export_all(config)
         excel_path = tmp_path / "Final_Grades.xlsx"
@@ -123,12 +151,14 @@ class TestExportAll:
         (tmp_path / "graded_results.json").write_text(
             json.dumps(results, indent=2), encoding="utf-8"
         )
+        _write_parsed_student(tmp_path, "Bob", ["8.1", "9.1"])
         config = _make_config(tmp_path, tmp_path)
         config["grading"] = {"grade_only": ["8.1", "9.1"]}
         export_all(config)
         gs_data = json.loads((tmp_path / "gradescope" / "Bob.json").read_text())
         names = [t["name"] for t in gs_data["tests"]]
-        assert names == ["8.1", "9.1"]
+        assert names[:-1] == ["8.1", "9.1"]
+        assert names[-1] == "Notebook Format Lint"
         assert "1.1" not in names
 
     def test_gradescope_title_mapping(self, tmp_path):
@@ -144,11 +174,33 @@ class TestExportAll:
         (tmp_path / "graded_results.json").write_text(
             json.dumps(results, indent=2), encoding="utf-8"
         )
+        _write_parsed_student(tmp_path, "Carol", ["8.1"])
         config = _make_config(tmp_path, tmp_path)
         config["gradescope_title_mapping"] = {"8.1": "Outline Item 5"}
         export_all(config)
         gs_data = json.loads((tmp_path / "gradescope" / "Carol.json").read_text())
         assert gs_data["tests"][0]["name"] == "Outline Item 5"
+        assert gs_data["tests"][-1]["name"] == "Notebook Format Lint"
+
+    def test_linter_summary_present_when_parsed_missing(self, tmp_path):
+        results = [
+            {
+                "student_name": "Dana",
+                "questions": {"1.1": {"score": 1, "max": 2, "feedback": ""}},
+                "total_score": 1,
+                "total_max": 2,
+                "summary_feedback": "",
+            },
+        ]
+        (tmp_path / "graded_results.json").write_text(
+            json.dumps(results, indent=2), encoding="utf-8"
+        )
+        config = _make_config(tmp_path, tmp_path)
+        export_all(config)
+        gs_data = json.loads((tmp_path / "gradescope" / "Dana.json").read_text())
+        lint = gs_data["tests"][-1]
+        assert lint["name"] == "Notebook Format Lint"
+        assert "Parsed notebook not found" in lint["output"]
 
 
 class TestExportAutograderZip:
