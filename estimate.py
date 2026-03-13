@@ -4,8 +4,8 @@ import json
 from pathlib import Path
 
 from grading_models import MODEL_PRICING
-from prompt_builder import build_group_prompt, estimate_tokens
-from rubric import _build_group_prompt, RUBRIC_REVIEW_SYSTEM_PROMPT
+from prompt_builder import build_group_prompt, estimate_tokens, load_prompt
+from rubric import _build_group_prompt
 from utils import DEFAULT_MODEL, get_effective_question_groups, load_config
 
 RUBRIC_SYSTEM_LEN = 800  # approx chars
@@ -128,7 +128,10 @@ def estimate_grade(config: dict, student_name: str | None = None) -> dict:
         }
 
     model = config.get("model") or DEFAULT_MODEL
-    system_prompt = config.get("prompts", {}).get("system", "Grade.")
+    
+    assignment_name = config.get("assignment_name")
+    system_prompt = load_prompt("grade_system", assignment_name=assignment_name)
+    
     max_prompt_tokens = config.get("max_prompt_tokens", 80_000)
     rubrics = config.get("rubrics", {})
 

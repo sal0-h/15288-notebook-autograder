@@ -26,7 +26,7 @@ def _solution_parsed(qids: list[str]) -> dict:
 
 
 class TestGenerateRubrics:
-    def test_uses_configured_rubric_generation_prompt(self, tmp_path):
+    def test_uses_configured_rubric_generation_prompt(self, tmp_path, monkeypatch):
         """Rubric generation should use prompts.rubric_system when provided."""
         sol = _solution_parsed(["1.1"])
         (tmp_path / "solution_parsed.json").write_text(
@@ -34,6 +34,9 @@ class TestGenerateRubrics:
         )
 
         custom_prompt = "CUSTOM RUBRIC SYSTEM PROMPT"
+        
+        monkeypatch.setattr("rubric.load_prompt", lambda name, assignment_name=None: custom_prompt)
+        
         config = {
             "output_dir": str(tmp_path),
             "grading": {"question_groups": [["1.1"]]},
@@ -61,7 +64,7 @@ class TestGenerateRubrics:
         call = mock_client.chat.completions.create.call_args
         assert call.kwargs["messages"][0]["content"] == custom_prompt
 
-    def test_uses_configured_rubric_review_prompt(self, tmp_path):
+    def test_uses_configured_rubric_review_prompt(self, tmp_path, monkeypatch):
         """Rubric review second pass should use prompts.rubric_review_system when provided."""
         sol = {
             "sections": {
@@ -83,6 +86,8 @@ class TestGenerateRubrics:
         )
 
         custom_review_prompt = "CUSTOM RUBRIC REVIEW PROMPT"
+        monkeypatch.setattr("rubric.load_prompt", lambda name, assignment_name=None: custom_review_prompt if name == "review_system" else "OTHER")
+        
         config = {
             "output_dir": str(tmp_path),
             "grading": {"question_groups": [["1.1"]]},

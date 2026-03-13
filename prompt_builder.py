@@ -4,6 +4,7 @@ import json
 import logging
 import re
 import threading
+from pathlib import Path
 
 import tiktoken
 
@@ -20,6 +21,33 @@ TOKENS_PER_IMAGE = 1_000  # typical matplotlib plot at high detail
 
 _enc_cache: dict[str, object] = {}
 _enc_lock = threading.Lock()
+
+# ---------------------------------------------------------------------------
+# Prompt Loading
+# ---------------------------------------------------------------------------
+
+def load_prompt(prompt_name: str, assignment_name: str | None = None) -> str:
+    """
+    Load a prompt template from the filesystem.
+    Checks `prompts/{assignment_name}/{prompt_name}.md` first if assignment_name is provided.
+    Falls back to `prompts/DEFAULT/{prompt_name}.md`.
+    Strictly raises FileNotFoundError if not found in either location.
+    """
+    base_dir = Path("prompts")
+    if not prompt_name.endswith(".md"):
+        prompt_name += ".md"
+        
+    if assignment_name:
+        assignment_path = base_dir / assignment_name / prompt_name
+        if assignment_path.exists():
+            return assignment_path.read_text(encoding="utf-8")
+            
+    default_path = base_dir / "DEFAULT" / prompt_name
+    if default_path.exists():
+        return default_path.read_text(encoding="utf-8")
+        
+    raise FileNotFoundError(f"Missing required prompt '{prompt_name}'. Looked in "
+                            f"{f'prompts/{assignment_name}/ and ' if assignment_name else ''}prompts/DEFAULT/.")
 
 # ---------------------------------------------------------------------------
 # Token / text utilities
