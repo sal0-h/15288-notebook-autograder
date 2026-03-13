@@ -205,7 +205,8 @@ output_dir: output
 
         root_cfg_text = (tmp_path / "config.yaml").read_text(encoding="utf-8")
         assert "assignment_name: LabTest_3_S26" in root_cfg_text
-        assert "rubric_review:" in root_cfg_text
+        assert "rubric_review:" not in root_cfg_text
+        assert "rubric_review:" in assignment_cfg_text
 
     def test_save_load_preserves_grade_flags_and_review_controls(self, tmp_path):
         config_path = tmp_path / "config.yaml"

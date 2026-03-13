@@ -159,13 +159,12 @@ def _merge_root_controls(
     cfg: dict,
     root_cfg: dict,
 ) -> dict:
+    """Merge root config fields into assignment config as fallback values only.
+    Assignment config is authoritative; root fields only fill gaps."""
     merged = dict(cfg)
-    if "rubric_review" in root_cfg:
-        merged["rubric_review"] = root_cfg["rubric_review"]
-    if "include_reference_in_grading" in root_cfg:
-        merged["include_reference_in_grading"] = root_cfg[
-            "include_reference_in_grading"
-        ]
+    for key in ("rubric_review", "include_reference_in_grading"):
+        if key not in merged and key in root_cfg:
+            merged[key] = root_cfg[key]
     return merged
 
 
@@ -321,22 +320,19 @@ def save_config(config: dict | "AppConfig", config_path: Path | None = None) -> 
                 pass
 
     # Save full config to output/{assignment_name}/config.yaml
-    # Root-only controls are excluded to keep assignment config focused on runtime artifacts.
     assignment_cfg = {
         k: v
         for k, v in cfg.items()
-        if k not in ("prompts", "rubric_review", "include_reference_in_grading")
+        if k not in ("prompts",)
     }
     assignment_config_path.parent.mkdir(parents=True, exist_ok=True)
     with open(assignment_config_path, "w", encoding="utf-8") as f:
         yaml.dump(assignment_cfg, f, default_flow_style=False, allow_unicode=True)
 
-    # Save root config with assignment pointer + root-level controls.
+    # Save root config as assignment pointer only.
     root_cfg = {
         "assignment_name": assignment_name,
         "output_dir": base_output,
-        "rubric_review": cfg.get("rubric_review", True),
-        "include_reference_in_grading": cfg.get("include_reference_in_grading", False),
     }
     with open(root_path, "w", encoding="utf-8") as f:
         yaml.dump(root_cfg, f, default_flow_style=False, allow_unicode=True)
