@@ -49,7 +49,7 @@ Use **gpt-4.1-mini** or **gpt-4o-mini** if you need consistent scores on regrade
 
 ## Recommended for Final Grading
 
-**Use `gpt-5-mini`** — low cost, full vision, good for structured grading. Already set in your `config.yaml`.
+**Use `gpt-5-mini`** — low cost, full vision, good for structured grading. Set it in your assignment config at `output/{assignment_name}/config.yaml`.
 
 | Scenario | Model |
 |----------|--------|
