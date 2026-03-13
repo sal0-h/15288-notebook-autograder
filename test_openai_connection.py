@@ -3,14 +3,15 @@
 import argparse
 from pathlib import Path
 
-from utils import get_openai_client, load_config, DEFAULT_MODEL
+from utils import AppConfig, get_openai_client, load_config, DEFAULT_MODEL
 
 
 def test_llm_connection() -> str:
     """Send a basic prompt and return the confirmation response."""
     client = get_openai_client()
     config = load_config(Path("config.yaml"))
-    model = config.get("model") or DEFAULT_MODEL
+    cfg = AppConfig.model_validate(config)
+    model = cfg.model or DEFAULT_MODEL
 
     response = client.chat.completions.create(
         model=model,

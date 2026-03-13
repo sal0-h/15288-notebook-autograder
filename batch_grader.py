@@ -13,6 +13,7 @@ from openai import OpenAI
 from grading_models import MODEL_PRICING
 from prompt_builder import validate_question_groups
 from utils import (
+    AppConfig,
     DEFAULT_MODEL,
     get_active_grade_only,
     get_effective_question_groups,
@@ -36,6 +37,7 @@ def grade_all_students(
     When results_lock is provided (e.g. from app), uses it for thread-safe writes.
     """
     logger = get_job_logger(config, __name__)
+    cfg = AppConfig.model_validate(config)
 
     # Import here to avoid circular dependency (grade imports batch_grader for main())
     from grade import grade_student  # noqa: PLC0415
@@ -43,8 +45,8 @@ def grade_all_students(
     if client is None:
         client = get_openai_client()
 
-    output_dir = Path(config.get("output_dir", "output"))
-    parsed_dir = Path(config.get("parsed_dir", "output/parsed"))
+    output_dir = Path(cfg.output_dir)
+    parsed_dir = Path(cfg.parsed_dir)
     solution_path = output_dir / "solution_parsed.json"
 
     if not solution_path.exists():
@@ -98,7 +100,7 @@ def grade_all_students(
     else:
         raw = _read_results()
 
-    grading_config = config.get("grading", {})
+    grading_config = cfg.grading
 
     if isinstance(raw, list):
         results: list[dict] = raw
@@ -162,9 +164,9 @@ def grade_all_students(
             logger.warning("Questions not in any group (will score 0): %s", ungrouped)
         logger.info("Grading %d students", len(to_grade))
 
-    workers = config.get("workers", 1)
+    workers = cfg.workers
     usage_total = {"prompt_tokens": 0, "completion_tokens": 0}
-    model = config.get("model") or DEFAULT_MODEL
+    model = cfg.model or DEFAULT_MODEL
 
     if workers <= 1 or len(to_grade) <= 1:
         # Sequential grading

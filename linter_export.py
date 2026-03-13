@@ -5,7 +5,7 @@ import zipfile
 from pathlib import Path
 
 from parse_notebook import get_all_question_ids, parse_notebook
-from utils import load_config
+from utils import AppConfig, load_config
 
 LINTER_SETUP_SH = """#!/bin/bash
 # Python 3 is available on Gradescope; no setup required
@@ -191,8 +191,9 @@ def export_linter_zip(config_path: Path | None = None) -> Path:
     Returns path to the created zip file.
     """
     config = load_config(config_path)
-    output_dir = Path(config.get("output_dir", "output"))
-    solution_path = Path(config.get("solution_notebook", ""))
+    cfg = AppConfig.model_validate(config)
+    output_dir = Path(cfg.output_dir)
+    solution_path = Path(cfg.solution_notebook)
 
     if not solution_path or not solution_path.exists():
         raise FileNotFoundError(
@@ -204,11 +205,7 @@ def export_linter_zip(config_path: Path | None = None) -> Path:
     if not required_ids:
         raise ValueError("Solution has no questions; cannot build linter.")
 
-    parsing = config.get("parsing", {})
-    question_regex = parsing.get(
-        "question_regex",
-        r"(?i)^\s*(-\s*)?Q(\d+)\.(\d+)\s*.*?\[\s*(\d+)\s*PTS\s*\]",
-    )
+    question_regex = cfg.parsing.question_regex
 
     run_autograder = _build_run_autograder(required_ids, question_regex)
     zip_path = output_dir / "linter_autograder.zip"

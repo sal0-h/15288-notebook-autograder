@@ -4,6 +4,7 @@ import logging
 import os
 import threading
 import re
+from typing import Any
 from pathlib import Path
 
 import yaml
@@ -11,7 +12,7 @@ from dotenv import load_dotenv
 
 from grading_models import SKIP_FEEDBACKS
 from openai import OpenAI
-from pydantic import BaseModel, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 # Default model for grading when not specified in config
 DEFAULT_MODEL = "gpt-5-mini"
@@ -36,20 +37,21 @@ def filter_groups_by_grade_only(
     ]
 
 
-def get_active_grade_only(grading_config: dict) -> list[str] | None:
-    grade_only = grading_config.get("grade_only")
+def get_active_grade_only(grading_config: dict | BaseModel) -> list[str] | None:
+    grade_only = _config_get(grading_config, "grade_only")
     return grade_only if grade_only else None
 
 
-def get_effective_question_groups(grading_config: dict) -> list[list[str]]:
-    groups = grading_config.get("question_groups", [])
+def get_effective_question_groups(grading_config: dict | BaseModel) -> list[list[str]]:
+    groups = _config_get(grading_config, "question_groups", [])
     grade_only = get_active_grade_only(grading_config)
     return filter_groups_by_grade_only(groups, grade_only)
 
 
-def is_grade_only_merge_enabled(grading_config: dict) -> bool:
+def is_grade_only_merge_enabled(grading_config: dict | BaseModel) -> bool:
     return bool(
-        grading_config.get("grade_only_merge") and get_active_grade_only(grading_config)
+        _config_get(grading_config, "grade_only_merge")
+        and get_active_grade_only(grading_config)
     )
 
 
@@ -74,6 +76,18 @@ def needs_grade_only_merge(
 
 def get_skipped_feedback(grade_only: list[str] | None) -> str:
     return SKIP_FEEDBACKS[0] if grade_only else SKIP_FEEDBACKS[1]
+
+
+def _config_get(config: dict | BaseModel, key: str, default: Any = None) -> Any:
+    if isinstance(config, BaseModel):
+        return getattr(config, key, default)
+    return config.get(key, default)
+
+
+def _as_dict(config: dict | BaseModel | None) -> dict:
+    if isinstance(config, BaseModel):
+        return config.model_dump()
+    return dict(config or {})
 
 
 _configured_loggers = set()
@@ -112,9 +126,9 @@ def setup_assignment_logging(assignment_name: str, output_dir: str | Path) -> Pa
     return log_path
 
 
-def get_job_logger(config: dict, module_name: str) -> logging.Logger:
+def get_job_logger(config: dict | BaseModel, module_name: str) -> logging.Logger:
     """Get a logger scoped to the current assignment to prevent interleaved logs."""
-    assignment_name = config.get("assignment_name", "DEFAULT")
+    assignment_name = _config_get(config, "assignment_name", "DEFAULT")
     return logging.getLogger(f"autograder.{assignment_name}.{module_name}")
 
 
@@ -144,16 +158,8 @@ def _read_yaml_dict(path: Path) -> dict:
 def _merge_root_controls(
     cfg: dict,
     root_cfg: dict,
-    *,
-    ensure_default_prompts: bool = False,
 ) -> dict:
     merged = dict(cfg)
-    if root_cfg.get("prompts"):
-        merged["prompts"] = root_cfg["prompts"]
-    elif ensure_default_prompts and not merged.get("prompts"):
-        merged["prompts"] = {
-            "system": "You are an expert instructor. Return valid JSON only."
-        }
     if "rubric_review" in root_cfg:
         merged["rubric_review"] = root_cfg["rubric_review"]
     if "include_reference_in_grading" in root_cfg:
@@ -173,7 +179,7 @@ def _load_explicit_assignment_config(
     if Path(base_output).is_absolute():
         base_output = "output"
     root_cfg = _read_yaml_dict(project_root / "config.yaml")
-    cfg = _merge_root_controls(cfg, root_cfg, ensure_default_prompts=True)
+    cfg = _merge_root_controls(cfg, root_cfg)
     return cfg, project_root, project_root, assignment_name, base_output
 
 
@@ -208,6 +214,36 @@ def _resolve_config_paths(cfg: dict, config_root: Path) -> dict:
     return resolved
 
 
+def _apply_config_defaults(cfg: dict) -> dict:
+    """Ensure all required config fields exist before validation."""
+    normalized = dict(cfg or {})
+    normalized.setdefault("model", DEFAULT_MODEL)
+    normalized.setdefault("rubric_model", "")
+    normalized.setdefault("rubric_review", True)
+    normalized.setdefault("include_reference_in_grading", False)
+    normalized.setdefault("solution_notebook", "")
+    normalized.setdefault("workers", 1)
+    normalized.setdefault("rubrics", {})
+    normalized.setdefault("max_prompt_tokens", 80_000)
+    normalized.setdefault("max_completion_tokens", 4_096)
+
+    parsing = dict(normalized.get("parsing") or {})
+    parsing.setdefault("section_regex", r"(?m)^\s*#\s*<font[^>]*>\s*(\d+)\b")
+    parsing.setdefault(
+        "question_regex",
+        r"(?i)^\s*(-\s*)?Q(\d+)\.(\d+)\s*.*?\[\s*(\d+)\s*PTS\s*\]",
+    )
+    parsing.setdefault("keep_images", True)
+    normalized["parsing"] = parsing
+
+    grading = dict(normalized.get("grading") or {})
+    grading.setdefault("question_groups", [])
+    grading.setdefault("grade_only", None)
+    grading.setdefault("grade_only_merge", False)
+    normalized["grading"] = grading
+    return normalized
+
+
 def load_config(config_path: Path | None = None) -> dict:
     """Load config. Uses output-first layout when available:
     - Root config.yaml: minimal pointer (assignment_name, output_dir)
@@ -229,6 +265,7 @@ def load_config(config_path: Path | None = None) -> dict:
             _load_root_or_assignment_config(root_path)
         )
 
+    cfg = _apply_config_defaults(cfg)
     cfg = _resolve_config_paths(cfg, config_root)
 
     # Output dir is always output/{assignment_name}/
@@ -237,7 +274,8 @@ def load_config(config_path: Path | None = None) -> dict:
     cfg["submissions_dir"] = str(assignment_root / "submissions")
     cfg["parsed_dir"] = str(assignment_root / "parsed")
     cfg["assignment_name"] = assignment_name
-    return cfg
+    cfg = _apply_config_defaults(cfg)
+    return AppConfig.model_validate(cfg).model_dump()
 
 
 def save_config(config: dict, config_path: Path | None = None) -> None:
@@ -294,7 +332,6 @@ def save_config(config: dict, config_path: Path | None = None) -> None:
         "output_dir": base_output,
         "rubric_review": cfg.get("rubric_review", True),
         "include_reference_in_grading": cfg.get("include_reference_in_grading", False),
-        "prompts": cfg.get("prompts", {}),
     }
     with open(root_path, "w", encoding="utf-8") as f:
         yaml.dump(root_cfg, f, default_flow_style=False, allow_unicode=True)
@@ -348,9 +385,12 @@ class ParsingConfig(BaseModel):
 
 
 class GradingConfig(BaseModel):
-    question_groups: list[list[str]]
+    question_groups: list[list[str]] = Field(default_factory=list)
     grade_only: list[str] | None = (
         None  # If set, only grade these question IDs; others get 0 [skipped]
+    )
+    grade_only_merge: bool = (
+        False  # If True + grade_only set, merge regraded questions into existing results
     )
 
 
@@ -391,15 +431,11 @@ class RubricEntry(BaseModel):
         return self
 
 
-class PromptsConfig(BaseModel):
-    system: str
-    rubric_system: str = ""
-    rubric_review_system: str = ""
-
-
 class AppConfig(BaseModel):
-    assignment_name: str
-    model: str
+    model_config = ConfigDict(extra="allow")
+
+    assignment_name: str = "default"
+    model: str = DEFAULT_MODEL
     rubric_model: str = ""  # If set, used for rubric generation; else uses model
     rubric_review: bool = (
         True  # If True, run optional second LLM pass to soften rubric wording
@@ -407,17 +443,22 @@ class AppConfig(BaseModel):
     include_reference_in_grading: bool = (
         False  # If True, include raw reference solution in grading prompt
     )
-    solution_notebook: str
+    solution_notebook: str = ""
     submissions_dir: str = "output/submissions"
     parsed_dir: str = "output/parsed"
     output_dir: str = "output"
     workers: int = 1
-    rubrics: dict[str, RubricEntry] = {}
+    rubrics: dict[str, RubricEntry] = Field(default_factory=dict)
     max_prompt_tokens: int = 80_000
     max_completion_tokens: int = 4_096
-    parsing: ParsingConfig
-    grading: GradingConfig
-    prompts: PromptsConfig
+    parsing: ParsingConfig = Field(
+        default_factory=lambda: ParsingConfig(
+            section_regex=r"(?m)^\s*#\s*<font[^>]*>\s*(\d+)\b",
+            question_regex=r"(?i)^\s*(-\s*)?Q(\d+)\.(\d+)\s*.*?\[\s*(\d+)\s*PTS\s*\]",
+            keep_images=True,
+        )
+    )
+    grading: GradingConfig = Field(default_factory=GradingConfig)
 
     @field_validator("workers")
     @classmethod

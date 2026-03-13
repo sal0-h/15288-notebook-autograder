@@ -6,7 +6,7 @@ from pathlib import Path
 from grading_models import MODEL_PRICING
 from prompt_builder import build_group_prompt, estimate_tokens, load_prompt
 from rubric import _build_group_prompt
-from utils import DEFAULT_MODEL, get_effective_question_groups, load_config
+from utils import AppConfig, DEFAULT_MODEL, get_effective_question_groups, load_config
 
 RUBRIC_SYSTEM_LEN = 800  # approx chars
 RUBRIC_REVIEW_SYSTEM_LEN = 700  # approx chars for review pass
@@ -41,7 +41,8 @@ def _tokens_from_messages(messages: list, model: str) -> int:
 
 def estimate_rubrics(config: dict) -> dict:
     """Estimate tokens and cost for rubric generation."""
-    output_dir = Path(config.get("output_dir", "output"))
+    cfg = AppConfig.model_validate(config)
+    output_dir = Path(cfg.output_dir)
     solution_path = output_dir / "solution_parsed.json"
     if not solution_path.exists():
         return {
@@ -52,9 +53,9 @@ def estimate_rubrics(config: dict) -> dict:
         }
 
     solution_parsed = json.loads(solution_path.read_text(encoding="utf-8"))
-    grading_config = config.get("grading", {})
+    grading_config = cfg.grading
     groups = get_effective_question_groups(grading_config)
-    model = config.get("rubric_model") or config.get("model") or DEFAULT_MODEL
+    model = cfg.rubric_model or cfg.model or DEFAULT_MODEL
 
     prompt_tokens = estimate_tokens(" " * RUBRIC_SYSTEM_LEN, 0, model)
     completion_tokens = 0
@@ -66,7 +67,7 @@ def estimate_rubrics(config: dict) -> dict:
         completion_tokens += OUTPUT_TOKENS_PER_GROUP
 
     # Rubric review pass (when enabled) adds one LLM call per group
-    rubric_review = config.get("rubric_review", False)
+    rubric_review = cfg.rubric_review
     if rubric_review:
         review_prompt = 0
         for group in groups:
@@ -94,8 +95,9 @@ def estimate_rubrics(config: dict) -> dict:
 
 def estimate_grade(config: dict, student_name: str | None = None) -> dict:
     """Estimate tokens and cost for grading. If student_name is None, estimates for all students."""
-    output_dir = Path(config.get("output_dir", "output"))
-    parsed_dir = Path(config.get("parsed_dir", output_dir / "parsed"))
+    cfg = AppConfig.model_validate(config)
+    output_dir = Path(cfg.output_dir)
+    parsed_dir = Path(cfg.parsed_dir)
     solution_path = output_dir / "solution_parsed.json"
     if not solution_path.exists():
         return {
@@ -113,7 +115,7 @@ def estimate_grade(config: dict, student_name: str | None = None) -> dict:
         }
 
     solution_parsed = json.loads(solution_path.read_text(encoding="utf-8"))
-    grading_config = config.get("grading", {})
+    grading_config = cfg.grading
     groups = get_effective_question_groups(grading_config)
 
     student_files = sorted(parsed_dir.glob("*.json"))
@@ -127,13 +129,13 @@ def estimate_grade(config: dict, student_name: str | None = None) -> dict:
             "cost_usd": 0,
         }
 
-    model = config.get("model") or DEFAULT_MODEL
+    model = cfg.model or DEFAULT_MODEL
 
-    assignment_name = config.get("assignment_name")
+    assignment_name = cfg.assignment_name
     system_prompt = load_prompt("grade_system", assignment_name=assignment_name)
 
-    max_prompt_tokens = config.get("max_prompt_tokens", 80_000)
-    rubrics = config.get("rubrics", {})
+    max_prompt_tokens = cfg.max_prompt_tokens
+    rubrics = cfg.rubrics
 
     # Sample up to 5 students and use max for conservative input estimate (variance in answer length/images)
     sample_count = min(5, len(student_files))

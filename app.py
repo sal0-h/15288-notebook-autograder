@@ -221,6 +221,7 @@ def _default_config() -> dict:
         "assignment_name": "default",
         "model": DEFAULT_MODEL,
         "rubric_model": "",
+        "rubric_review": True,
         "include_reference_in_grading": False,
         "solution_notebook": "",
         "output_dir": "output",
@@ -232,11 +233,10 @@ def _default_config() -> dict:
             "question_regex": r"(?i)^\s*(-\s*)?Q(\d+)\.(\d+)\s*.*?\[\s*(\d+)\s*PTS\s*\]",
             "keep_images": True,
         },
-        "grading": {"question_groups": []},
-        "prompts": {
-            "system": "You are an expert Python instructor grading student lab work.\n\nReturn valid JSON only.",
-            "rubric_system": "",
-            "rubric_review_system": "",
+        "grading": {
+            "question_groups": [],
+            "grade_only": None,
+            "grade_only_merge": False,
         },
         "rubrics": {},
     }
