@@ -17,6 +17,7 @@ from prompt_builder import (
     load_prompt,
 )
 from utils import (
+    AppConfig,
     get_openai_client,
     load_config,
     temperature_for_model,
@@ -57,12 +58,14 @@ def _sanitize_llm_text(text: str) -> str:
 
 
 def _get_rubric_generation_prompt(config: dict) -> str:
-    assignment_name = config.get("assignment_name")
+    cfg = AppConfig.model_validate(config)
+    assignment_name = cfg.assignment_name
     return load_prompt("rubric_system", assignment_name=assignment_name)
 
 
 def _get_rubric_review_prompt(config: dict) -> str:
-    assignment_name = config.get("assignment_name")
+    cfg = AppConfig.model_validate(config)
+    assignment_name = cfg.assignment_name
     return load_prompt("review_system", assignment_name=assignment_name)
 
 
@@ -293,16 +296,15 @@ def review_rubrics(
     When groups_to_review is set, only reviews those groups (for partial generation).
     """
     logger = get_job_logger(config, __name__)
+    cfg = AppConfig.model_validate(config)
     if client is None:
         client = get_openai_client()
 
-    model = config.get("rubric_model") or config.get("model") or DEFAULT_MODEL
-    max_tokens = config.get("max_completion_tokens", 4096)
-    grading_config = config.get("grading", {})
-    groups: list[list[str]] = groups_to_review or grading_config.get(
-        "question_groups", []
-    )
-    grade_only: list[str] | None = grading_config.get("grade_only")
+    model = cfg.rubric_model or cfg.model or DEFAULT_MODEL
+    max_tokens = cfg.max_completion_tokens
+    grading_config = cfg.grading
+    groups: list[list[str]] = groups_to_review or grading_config.question_groups
+    grade_only: list[str] | None = grading_config.grade_only
 
     if groups_to_review is None and grade_only is not None:
         groups = filter_groups_by_grade_only(groups, grade_only)
@@ -347,10 +349,11 @@ def generate_rubrics(
     Returns a dict: { "qid": {"points": N, "items": [{"description": "...", "deduction": ...}], ...} }
     """
     logger = get_job_logger(config, __name__)
+    cfg = AppConfig.model_validate(config)
     if client is None:
         client = get_openai_client()
 
-    output_dir = Path(config.get("output_dir", "output"))
+    output_dir = Path(cfg.output_dir)
     solution_path = output_dir / "solution_parsed.json"
 
     if not solution_path.exists():
@@ -359,12 +362,12 @@ def generate_rubrics(
         )
 
     solution_parsed = json.loads(solution_path.read_text(encoding="utf-8"))
-    grading_config = config.get("grading", {})
-    all_groups: list[list[str]] = grading_config.get("question_groups", [])
-    grade_only: list[str] | None = grading_config.get("grade_only")
-    model = config.get("rubric_model") or config.get("model") or DEFAULT_MODEL
-    workers = config.get("workers", 1)
-    max_completion_tokens = config.get("max_completion_tokens", 4096)
+    grading_config = cfg.grading
+    all_groups: list[list[str]] = grading_config.question_groups
+    grade_only: list[str] | None = grading_config.grade_only
+    model = cfg.rubric_model or cfg.model or DEFAULT_MODEL
+    workers = cfg.workers
+    max_completion_tokens = cfg.max_completion_tokens
     rubric_prompt = _get_rubric_generation_prompt(config)
 
     # When group_indices: select those groups from the original grouping first.
@@ -382,7 +385,11 @@ def generate_rubrics(
     if grade_only is not None:
         groups = filter_groups_by_grade_only(groups, grade_only)
 
-    rubrics: dict[str, dict] = dict(config.get("rubrics", {})) if partial else {}
+    rubrics: dict[str, dict] = (
+        {qid: entry.model_dump() for qid, entry in cfg.rubrics.items()}
+        if partial
+        else {}
+    )
     rubrics_lock = threading.Lock()
     total = len(groups)
     to_process = [
@@ -429,7 +436,7 @@ def generate_rubrics(
                     progress_callback(idx + 1, total, group, rubrics_snapshot)
 
     # Optional rubric review pass (Idea #2)
-    if config.get("rubric_review", False):
+    if cfg.rubric_review:
         logger.info("Running rubric review pass...")
         rubrics = review_rubrics(
             rubrics,

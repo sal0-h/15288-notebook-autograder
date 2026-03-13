@@ -177,7 +177,49 @@ prompts:
 
         root_cfg_text = (tmp_path / "config.yaml").read_text(encoding="utf-8")
         assert "assignment_name: LabTest_3_S26" in root_cfg_text
-        assert "prompts:" in root_cfg_text
+        assert "rubric_review:" in root_cfg_text
+
+    def test_save_load_preserves_grade_flags_and_review_controls(self, tmp_path):
+        config_path = tmp_path / "config.yaml"
+        (tmp_path / "archive").mkdir(parents=True)
+        (tmp_path / "archive" / "sol.ipynb").write_text("{}", encoding="utf-8")
+
+        cfg = {
+            "assignment_name": "LabTest_3_S26",
+            "model": "gpt-5-mini",
+            "rubric_model": "",
+            "rubric_review": True,
+            "include_reference_in_grading": True,
+            "solution_notebook": str(tmp_path / "archive" / "sol.ipynb"),
+            "output_dir": "output",
+            "workers": 1,
+            "rubrics": {},
+            "max_prompt_tokens": 80_000,
+            "max_completion_tokens": 4_096,
+            "parsing": {
+                "section_regex": r"\\d+",
+                "question_regex": r"Q\\d+",
+                "keep_images": True,
+            },
+            "grading": {
+                "question_groups": [["1.1"]],
+                "grade_only": ["1.1"],
+                "grade_only_merge": True,
+            },
+            "prompts": {
+                "system": "Grade",
+                "rubric_system": "Rubric",
+                "rubric_review_system": "Review",
+            },
+        }
+
+        save_config(cfg, config_path)
+        loaded = load_config(config_path)
+
+        assert loaded["rubric_review"] is True
+        assert loaded["include_reference_in_grading"] is True
+        assert loaded["grading"]["grade_only"] == ["1.1"]
+        assert loaded["grading"]["grade_only_merge"] is True
 
     class TestSetupAssignmentLogging:
         def test_switches_autograder_log_file(self, tmp_path):

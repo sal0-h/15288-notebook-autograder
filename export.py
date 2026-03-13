@@ -8,7 +8,7 @@ import pandas as pd
 
 from linter_export import build_linter_summary, fmt_qid_list
 from parse_notebook import _sort_key_qid
-from utils import load_config
+from utils import AppConfig, load_config
 
 # Gradescope expects these at the root of the autograder zip
 SETUP_SH = """#!/bin/bash
@@ -127,8 +127,9 @@ def export_all(config: dict) -> dict[str, str | int]:
 
     Returns summary dict with paths and counts.
     """
-    output_dir = Path(config.get("output_dir", "output"))
-    parsed_dir = Path(config.get("parsed_dir", output_dir / "parsed"))
+    cfg = AppConfig.model_validate(config)
+    output_dir = Path(cfg.output_dir)
+    parsed_dir = Path(cfg.parsed_dir)
     graded_path = output_dir / "graded_results.json"
     gradescope_dir = output_dir / "gradescope"
 
@@ -148,7 +149,7 @@ def export_all(config: dict) -> dict[str, str | int]:
     q_cols = sorted(all_qids, key=_sort_key_qid)
 
     # For Gradescope: only include grade_only questions if set; use optional title mapping
-    grade_only = (config.get("grading") or {}).get("grade_only")
+    grade_only = cfg.grading.grade_only
     gs_title_mapping = config.get("gradescope_title_mapping") or {}
 
     if grade_only:
@@ -233,7 +234,8 @@ def export_autograder_zip(config: dict) -> Path:
 
     Returns path to the created zip file.
     """
-    output_dir = Path(config.get("output_dir", "output"))
+    cfg = AppConfig.model_validate(config)
+    output_dir = Path(cfg.output_dir)
     gradescope_dir = output_dir / "gradescope"
     zip_path = output_dir / "gradescope_autograder.zip"
 

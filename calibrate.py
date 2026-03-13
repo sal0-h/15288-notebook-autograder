@@ -4,7 +4,7 @@ import json
 import math
 from pathlib import Path
 
-from utils import load_config
+from utils import AppConfig, load_config
 
 
 def run_calibration(config: dict) -> list[dict[str, str | float]]:
@@ -15,7 +15,8 @@ def run_calibration(config: dict) -> list[dict[str, str | float]]:
     Returns a list of flagged entries:
     {student_name, qid, score, mean, std, z_score, flag_reason}
     """
-    output_dir = Path(config.get("output_dir", "output"))
+    cfg = AppConfig.model_validate(config)
+    output_dir = Path(cfg.output_dir)
     graded_path = output_dir / "graded_results.json"
 
     if not graded_path.exists():

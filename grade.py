@@ -16,6 +16,7 @@ from prompt_builder import (
     validate_question_groups,
 )
 from utils import (
+    AppConfig,
     DEFAULT_MODEL,
     get_active_grade_only,
     get_openai_client,
@@ -89,16 +90,17 @@ def grade_group(
     if the LLM response fails Pydantic validation.
     """
     logger = get_job_logger(config, __name__)
-    model = config.get("model") or DEFAULT_MODEL
-    assignment_name = config.get("assignment_name")
+    cfg = AppConfig.model_validate(config)
+    model = cfg.model or DEFAULT_MODEL
+    assignment_name = cfg.assignment_name
     system_prompt = load_prompt("grade_system", assignment_name=assignment_name)
 
-    max_prompt_tokens = config.get("max_prompt_tokens", 80_000)
-    max_completion_tokens = config.get("max_completion_tokens", 4_096)
+    max_prompt_tokens = cfg.max_prompt_tokens
+    max_completion_tokens = cfg.max_completion_tokens
     effective_max_completion = min(max_completion_tokens, max(2048, len(group) * 1024))
 
-    rubrics = config.get("rubrics", {})
-    include_reference = config.get("include_reference_in_grading", False)
+    rubrics = cfg.rubrics
+    include_reference = cfg.include_reference_in_grading
     messages, qid_to_max = build_group_prompt(
         group,
         solution_parsed,
@@ -222,10 +224,11 @@ def grade_student(
     and merges new grades into existing result (keeps other questions unchanged).
     """
     logger = get_job_logger(config, __name__)
+    cfg = AppConfig.model_validate(config)
     if client is None:
         client = get_openai_client()
 
-    grading_config = config.get("grading", {})
+    grading_config = cfg.grading
     groups = get_effective_question_groups(grading_config)
     grade_only = get_active_grade_only(grading_config)
     student_name = student_parsed.get("student_name", "Unknown")
