@@ -13,9 +13,11 @@ def _setup_file_logging() -> None:
     try:
         cfg = load_config()
         out_dir = Path(cfg.get("output_dir", "output"))
+        assignment_name = cfg.get("assignment_name", "DEFAULT")
     except Exception:
         out_dir = Path("output")
-    log_path = setup_assignment_logging(out_dir)
+        assignment_name = "DEFAULT"
+    log_path = setup_assignment_logging(assignment_name, out_dir)
     logger.info("Logging to %s", log_path)
 
 

@@ -34,9 +34,11 @@ class TestGenerateRubrics:
         )
 
         custom_prompt = "CUSTOM RUBRIC SYSTEM PROMPT"
-        
-        monkeypatch.setattr("rubric.load_prompt", lambda name, assignment_name=None: custom_prompt)
-        
+
+        monkeypatch.setattr(
+            "rubric.load_prompt", lambda name, assignment_name=None: custom_prompt
+        )
+
         config = {
             "output_dir": str(tmp_path),
             "grading": {"question_groups": [["1.1"]]},
@@ -86,8 +88,13 @@ class TestGenerateRubrics:
         )
 
         custom_review_prompt = "CUSTOM RUBRIC REVIEW PROMPT"
-        monkeypatch.setattr("rubric.load_prompt", lambda name, assignment_name=None: custom_review_prompt if name == "review_system" else "OTHER")
-        
+        monkeypatch.setattr(
+            "rubric.load_prompt",
+            lambda name, assignment_name=None: (
+                custom_review_prompt if name == "review_system" else "OTHER"
+            ),
+        )
+
         config = {
             "output_dir": str(tmp_path),
             "grading": {"question_groups": [["1.1"]]},

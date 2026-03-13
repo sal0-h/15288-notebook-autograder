@@ -2,6 +2,7 @@
 
 import logging
 import os
+import threading
 import re
 from pathlib import Path
 
@@ -75,35 +76,46 @@ def get_skipped_feedback(grade_only: list[str] | None) -> str:
     return SKIP_FEEDBACKS[0] if grade_only else SKIP_FEEDBACKS[1]
 
 
-def setup_assignment_logging(output_dir: str | Path) -> Path:
-    """Ensure the root logger writes to output_dir/autograder.log."""
-    root = logging.getLogger()
+_configured_loggers = set()
+_log_lock = threading.Lock()
+
+
+def setup_assignment_logging(assignment_name: str, output_dir: str | Path) -> Path:
+    """Ensure the assignment-specific logger writes to output_dir/autograder.log."""
     out_dir = Path(output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     log_path = (out_dir / "autograder.log").resolve()
 
-    current_handlers = [
-        h
-        for h in root.handlers
-        if isinstance(h, logging.FileHandler)
-        and getattr(h, "baseFilename", "").endswith("autograder.log")
-    ]
-    if any(Path(h.baseFilename).resolve() == log_path for h in current_handlers):
+    global _configured_loggers
+    if assignment_name in _configured_loggers:
         return log_path
 
-    for handler in current_handlers:
-        root.removeHandler(handler)
-        handler.close()
+    with _log_lock:
+        if assignment_name in _configured_loggers:
+            return log_path
 
-    handler = logging.FileHandler(log_path, encoding="utf-8")
-    handler.setFormatter(
-        logging.Formatter("%(asctime)s %(levelname)s [%(name)s] %(message)s")
-    )
-    root.addHandler(handler)
-    root.setLevel(min(root.level, logging.INFO))
-    logging.getLogger("httpx").setLevel(logging.WARNING)
-    logging.getLogger("httpcore").setLevel(logging.WARNING)
+        logger = logging.getLogger(f"autograder.{assignment_name}")
+        logger.setLevel(logging.INFO)
+
+        handler = logging.FileHandler(log_path, encoding="utf-8")
+        handler.setFormatter(
+            logging.Formatter("%(asctime)s %(levelname)s [%(name)s] %(message)s")
+        )
+        logger.addHandler(handler)
+
+        # Suppress noisy HTTP logs globally just to be safe
+        logging.getLogger("httpx").setLevel(logging.WARNING)
+        logging.getLogger("httpcore").setLevel(logging.WARNING)
+
+        _configured_loggers.add(assignment_name)
+
     return log_path
+
+
+def get_job_logger(config: dict, module_name: str) -> logging.Logger:
+    """Get a logger scoped to the current assignment to prevent interleaved logs."""
+    assignment_name = config.get("assignment_name", "DEFAULT")
+    return logging.getLogger(f"autograder.{assignment_name}.{module_name}")
 
 
 # ---------------------------------------------------------------------------

@@ -139,7 +139,8 @@ Examples:
 
     # Set up file logging to output_dir/autograder.log (same as web app)
     out_dir = Path(config.get("output_dir", "output"))
-    log_path = setup_assignment_logging(out_dir)
+    assign_name = config.get("assignment_name", "DEFAULT")
+    log_path = setup_assignment_logging(assign_name, out_dir)
     logging.info("Logging to %s", log_path)
 
     if args.config_only:

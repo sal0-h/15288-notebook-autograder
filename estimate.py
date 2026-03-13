@@ -128,10 +128,10 @@ def estimate_grade(config: dict, student_name: str | None = None) -> dict:
         }
 
     model = config.get("model") or DEFAULT_MODEL
-    
+
     assignment_name = config.get("assignment_name")
     system_prompt = load_prompt("grade_system", assignment_name=assignment_name)
-    
+
     max_prompt_tokens = config.get("max_prompt_tokens", 80_000)
     rubrics = config.get("rubrics", {})
 

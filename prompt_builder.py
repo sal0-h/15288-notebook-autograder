@@ -26,6 +26,7 @@ _enc_lock = threading.Lock()
 # Prompt Loading
 # ---------------------------------------------------------------------------
 
+
 def load_prompt(prompt_name: str, assignment_name: str | None = None) -> str:
     """
     Load a prompt template from the filesystem.
@@ -36,18 +37,21 @@ def load_prompt(prompt_name: str, assignment_name: str | None = None) -> str:
     base_dir = Path("prompts")
     if not prompt_name.endswith(".md"):
         prompt_name += ".md"
-        
+
     if assignment_name:
         assignment_path = base_dir / assignment_name / prompt_name
         if assignment_path.exists():
             return assignment_path.read_text(encoding="utf-8")
-            
+
     default_path = base_dir / "DEFAULT" / prompt_name
     if default_path.exists():
         return default_path.read_text(encoding="utf-8")
-        
-    raise FileNotFoundError(f"Missing required prompt '{prompt_name}'. Looked in "
-                            f"{f'prompts/{assignment_name}/ and ' if assignment_name else ''}prompts/DEFAULT/.")
+
+    raise FileNotFoundError(
+        f"Missing required prompt '{prompt_name}'. Looked in "
+        f"{f'prompts/{assignment_name}/ and ' if assignment_name else ''}prompts/DEFAULT/."
+    )
+
 
 # ---------------------------------------------------------------------------
 # Token / text utilities
@@ -204,11 +208,13 @@ def build_group_prompt(
     model: str | None = None,
     rubrics: dict | None = None,
     include_reference: bool = False,
+    logger: logging.Logger | None = None,
 ) -> tuple[list[dict], dict[str, int]]:
     """
     Build messages for one question group with inline image labeling.
     Returns (messages, qid_to_max_pts).
     """
+    logger = logger or logging.getLogger(__name__)
     model = model or DEFAULT_MODEL
     rubrics = rubrics or {}
     qid_to_max: dict[str, int] = {}
