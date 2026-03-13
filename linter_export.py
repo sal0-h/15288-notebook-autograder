@@ -130,6 +130,56 @@ _emit(summary, ok=ok)
 '''
 
 
+def fmt_qid_list(items: list[str]) -> str:
+    """Format a list of question IDs as a markdown inline list, or '(none)'."""
+    if not items:
+        return "(none)"
+    return ", ".join(f"`{q}`" for q in items)
+
+
+def build_linter_summary(
+    found: list[str],
+    required: list[str],
+    missing: list[str],
+    unexpected: list[str],
+    duplicates: list[str],
+    notebook_name: str = "",
+) -> tuple[str, bool]:
+    """
+    Build the linter markdown summary string and pass/fail status.
+    Returns (summary_str, ok).
+    """
+    ok = len(missing) == 0 and len(duplicates) == 0
+    lines = [
+        "# Notebook Linter Summary",
+        "",
+        f"Status: {'PASSED' if ok else 'FAILED'}",
+        "",
+    ]
+    if notebook_name:
+        lines += [f"Notebook: `{notebook_name}`", ""]
+    lines += [
+        f"Required questions: **{len(required)}**",
+        f"Questions found: **{len(found)}**",
+        f"Questions missing: **{len(missing)}**",
+        f"Duplicate labels: **{len(duplicates)}**",
+        f"Unexpected question labels: **{len(unexpected)}**",
+        "",
+        "## Questions Found",
+        fmt_qid_list(found),
+        "",
+        "## Duplicates Found",
+        fmt_qid_list(duplicates),
+        "",
+        "## Questions Missing",
+        fmt_qid_list(missing),
+        "",
+        "## Unexpected Question Labels",
+        fmt_qid_list(unexpected),
+    ]
+    return "\n".join(lines), ok
+
+
 def export_linter_zip(config_path: Path | None = None) -> Path:
     """
     Create linter_autograder.zip for pre-deadline format validation.
