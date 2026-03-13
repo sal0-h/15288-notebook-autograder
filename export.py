@@ -62,6 +62,87 @@ else:
 '''
 
 
+def _fmt_qid_list(items: list[str]) -> str:
+    if not items:
+        return "(none)"
+    return ", ".join(f"`{q}`" for q in items)
+
+
+def _build_linter_summary_test(
+    student_name: str,
+    parsed_dir: Path,
+    required_qids: list[str],
+) -> dict:
+    """Build a single 0-pt linter test summary for one student."""
+    parsed_path = parsed_dir / f"{student_name}.json"
+    if not parsed_path.exists():
+        summary = "\n".join(
+            [
+                "# Notebook Linter Summary",
+                "",
+                "Status: FAILED",
+                "",
+                f"Parsed notebook not found for `{student_name}`.",
+                "Cannot compute found/missing/duplicate question labels.",
+            ]
+        )
+        return {
+            "name": "Notebook Format Lint",
+            "score": 0,
+            "max_score": 0,
+            "output": summary,
+            "output_format": "md",
+            "visibility": "visible",
+        }
+
+    parsed = json.loads(parsed_path.read_text(encoding="utf-8"))
+    found_set: set[str] = set()
+    for sec_data in (parsed.get("sections") or {}).values():
+        found_set.update((sec_data.get("questions") or {}).keys())
+
+    found = sorted(found_set, key=_sort_key_qid)
+    required = sorted(set(required_qids), key=_sort_key_qid)
+    missing = sorted(set(required) - found_set, key=_sort_key_qid)
+    unexpected = sorted(found_set - set(required), key=_sort_key_qid)
+    duplicates = sorted(parsed.get("duplicate_qids") or [], key=_sort_key_qid)
+
+    ok = len(missing) == 0 and len(duplicates) == 0
+    summary = "\n".join(
+        [
+            "# Notebook Linter Summary",
+            "",
+            f"Status: {'PASSED' if ok else 'FAILED'}",
+            "",
+            f"Required questions: **{len(required)}**",
+            f"Questions found: **{len(found)}**",
+            f"Questions missing: **{len(missing)}**",
+            f"Duplicate labels: **{len(duplicates)}**",
+            f"Unexpected question labels: **{len(unexpected)}**",
+            "",
+            "## Questions Found",
+            _fmt_qid_list(found),
+            "",
+            "## Duplicates Found",
+            _fmt_qid_list(duplicates),
+            "",
+            "## Questions Missing",
+            _fmt_qid_list(missing),
+            "",
+            "## Unexpected Question Labels",
+            _fmt_qid_list(unexpected),
+        ]
+    )
+
+    return {
+        "name": "Notebook Format Lint",
+        "score": 0,
+        "max_score": 0,
+        "output": summary,
+        "output_format": "md",
+        "visibility": "visible",
+    }
+
+
 def export_all(config: dict) -> dict[str, str | int]:
     """
     Read graded_results.json and write:
@@ -71,6 +152,7 @@ def export_all(config: dict) -> dict[str, str | int]:
     Returns summary dict with paths and counts.
     """
     output_dir = Path(config.get("output_dir", "output"))
+    parsed_dir = Path(config.get("parsed_dir", output_dir / "parsed"))
     graded_path = output_dir / "graded_results.json"
     gradescope_dir = output_dir / "gradescope"
 
@@ -117,6 +199,9 @@ def export_all(config: dict) -> dict[str, str | int]:
                     "visibility": "visible",
                 }
             )
+
+        # Keep linter summary as the last test case for quick format diagnostics.
+        tests.append(_build_linter_summary_test(student_name, parsed_dir, gs_q_cols))
 
         gs_data = {"tests": tests}
         safe_name = (
