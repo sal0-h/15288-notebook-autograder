@@ -331,6 +331,8 @@ document.getElementById("parseBtn").onclick = async () => {
         const r = await fetch(API + "/parse", { method: "POST" });
         const data = await r.json();
         if (data.detail) throw new Error(data.detail);
+        // Parsed artifacts changed on disk; avoid showing stale cached answers in Review.
+        parsedCache = {};
         const report = data.report || [];
         const ok = report.filter(x => x.status === "ok").length;
         const dupes = data.solution_duplicate_qids || [];
@@ -962,6 +964,8 @@ document.getElementById("reviewLoadBtn").onclick = async () => {
     msgDiv.innerHTML = "";
     try {
         await loadReviewAndCalibration();
+        // Reload parsed notebooks from API every time results are reloaded.
+        parsedCache = {};
         document.getElementById("reviewLayout").classList.remove("hidden");
         renderStudentList();
         if (reviewData.length) showReviewDetail(0);
