@@ -27,7 +27,7 @@ def _solution_parsed(qids: list[str]) -> dict:
 
 class TestGenerateRubrics:
     def test_uses_configured_rubric_generation_prompt(self, tmp_path, monkeypatch):
-        """Rubric generation should use prompts.rubric_system when provided."""
+        """Rubric generation should use the prompt text returned by load_prompt."""
         sol = _solution_parsed(["1.1"])
         (tmp_path / "solution_parsed.json").write_text(
             json.dumps(sol), encoding="utf-8"
@@ -44,7 +44,6 @@ class TestGenerateRubrics:
             "grading": {"question_groups": [["1.1"]]},
             "model": "gpt-4o",
             "max_completion_tokens": 4096,
-            "prompts": {"rubric_system": custom_prompt},
         }
 
         mock_response = MagicMock()
@@ -67,7 +66,7 @@ class TestGenerateRubrics:
         assert call.kwargs["messages"][0]["content"] == custom_prompt
 
     def test_uses_configured_rubric_review_prompt(self, tmp_path, monkeypatch):
-        """Rubric review second pass should use prompts.rubric_review_system when provided."""
+        """Rubric review second pass should use review_system prompt from load_prompt."""
         sol = {
             "sections": {
                 "1": {
@@ -101,7 +100,6 @@ class TestGenerateRubrics:
             "model": "gpt-4o",
             "max_completion_tokens": 4096,
             "rubric_review": True,
-            "prompts": {"rubric_review_system": custom_review_prompt},
         }
 
         gen_response = MagicMock()

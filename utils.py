@@ -275,15 +275,20 @@ def load_config(config_path: Path | None = None) -> dict:
     cfg["parsed_dir"] = str(assignment_root / "parsed")
     cfg["assignment_name"] = assignment_name
     cfg = _apply_config_defaults(cfg)
-    return AppConfig.model_validate(cfg).model_dump()
+    return ensure_app_config(cfg).model_dump()
 
 
-def save_config(config: dict, config_path: Path | None = None) -> None:
+def load_app_config(config_path: Path | None = None) -> "AppConfig":
+    """Load and validate configuration, returning an AppConfig object."""
+    return ensure_app_config(load_config(config_path))
+
+
+def save_config(config: dict | "AppConfig", config_path: Path | None = None) -> None:
     """Save config using output-first layout:
     - Full config → output/{assignment_name}/config.yaml
     - Root config.yaml → minimal pointer (assignment_name, output_dir)"""
-    validated = AppConfig.model_validate(config)
-    cfg = validated.model_dump()
+    validated = ensure_app_config(config)
+    cfg = app_config_to_yaml_data(validated)
     cfg["output_dir"] = "output"
     cfg.pop("submissions_dir", None)
     cfg.pop("parsed_dir", None)
@@ -466,3 +471,15 @@ class AppConfig(BaseModel):
         if v < 1:
             raise ValueError("workers must be >= 1")
         return v
+
+
+def ensure_app_config(config: dict | AppConfig) -> AppConfig:
+    """Normalize a dict/AppConfig input into an AppConfig object."""
+    if isinstance(config, AppConfig):
+        return config
+    return AppConfig.model_validate(config)
+
+
+def app_config_to_yaml_data(config: AppConfig) -> dict:
+    """Convert AppConfig into plain Python data suitable for YAML dumping."""
+    return config.model_dump(mode="python", exclude_none=True)
