@@ -63,7 +63,7 @@ def _emit(summary, ok):
 # Find notebook
 nb_files = list(submission_dir.glob("*.ipynb"))
 if not nb_files:
-    summary = "\n".join([
+    summary = "\\n".join([
         "# Notebook Linter Summary",
         "",
         "Status: FAILED",
