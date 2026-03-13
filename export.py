@@ -8,7 +8,7 @@ import pandas as pd
 
 from linter_export import build_linter_summary, fmt_qid_list
 from parse_notebook import _sort_key_qid
-from utils import AppConfig, load_config
+from utils import AppConfig, ensure_app_config, load_config
 
 # Gradescope expects these at the root of the autograder zip
 SETUP_SH = """#!/bin/bash
@@ -119,7 +119,7 @@ def _build_linter_summary_test(
     }
 
 
-def export_all(config: dict) -> dict[str, str | int]:
+def export_all(config: AppConfig | dict) -> dict[str, str | int]:
     """
     Read graded_results.json and write:
     - output/gradescope/{StudentName}.json (Gradescope autograder format)
@@ -127,7 +127,7 @@ def export_all(config: dict) -> dict[str, str | int]:
 
     Returns summary dict with paths and counts.
     """
-    cfg = AppConfig.model_validate(config)
+    cfg = ensure_app_config(config)
     output_dir = Path(cfg.output_dir)
     parsed_dir = Path(cfg.parsed_dir)
     graded_path = output_dir / "graded_results.json"
@@ -150,7 +150,7 @@ def export_all(config: dict) -> dict[str, str | int]:
 
     # For Gradescope: only include grade_only questions if set; use optional title mapping
     grade_only = cfg.grading.grade_only
-    gs_title_mapping = config.get("gradescope_title_mapping") or {}
+    gs_title_mapping = cfg.gradescope_title_mapping
 
     if grade_only:
         gs_q_cols = [q for q in grade_only if q in all_qids]
@@ -227,14 +227,14 @@ def export_all(config: dict) -> dict[str, str | int]:
     }
 
 
-def export_autograder_zip(config: dict) -> Path:
+def export_autograder_zip(config: AppConfig | dict) -> Path:
     """
     Create a Gradescope autograder zip that outputs pre-computed results.
     Run export_all first to ensure gradescope/*.json exist.
 
     Returns path to the created zip file.
     """
-    cfg = AppConfig.model_validate(config)
+    cfg = ensure_app_config(config)
     output_dir = Path(cfg.output_dir)
     gradescope_dir = output_dir / "gradescope"
     zip_path = output_dir / "gradescope_autograder.zip"

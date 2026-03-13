@@ -6,7 +6,13 @@ from pathlib import Path
 from grading_models import MODEL_PRICING
 from prompt_builder import build_group_prompt, estimate_tokens, load_prompt
 from rubric import _build_group_prompt
-from utils import AppConfig, DEFAULT_MODEL, get_effective_question_groups, load_config
+from utils import (
+    AppConfig,
+    ensure_app_config,
+    DEFAULT_MODEL,
+    get_effective_question_groups,
+    load_config,
+)
 
 RUBRIC_SYSTEM_LEN = 800  # approx chars
 RUBRIC_REVIEW_SYSTEM_LEN = 700  # approx chars for review pass
@@ -39,9 +45,9 @@ def _tokens_from_messages(messages: list, model: str) -> int:
     return total
 
 
-def estimate_rubrics(config: dict) -> dict:
+def estimate_rubrics(config: AppConfig | dict) -> dict:
     """Estimate tokens and cost for rubric generation."""
-    cfg = AppConfig.model_validate(config)
+    cfg = ensure_app_config(config)
     output_dir = Path(cfg.output_dir)
     solution_path = output_dir / "solution_parsed.json"
     if not solution_path.exists():
@@ -93,9 +99,9 @@ def estimate_rubrics(config: dict) -> dict:
     }
 
 
-def estimate_grade(config: dict, student_name: str | None = None) -> dict:
+def estimate_grade(config: AppConfig | dict, student_name: str | None = None) -> dict:
     """Estimate tokens and cost for grading. If student_name is None, estimates for all students."""
-    cfg = AppConfig.model_validate(config)
+    cfg = ensure_app_config(config)
     output_dir = Path(cfg.output_dir)
     parsed_dir = Path(cfg.parsed_dir)
     solution_path = output_dir / "solution_parsed.json"

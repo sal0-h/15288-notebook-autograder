@@ -17,6 +17,7 @@ from prompt_builder import (
 )
 from utils import (
     AppConfig,
+    ensure_app_config,
     DEFAULT_MODEL,
     get_active_grade_only,
     get_openai_client,
@@ -81,7 +82,7 @@ def grade_group(
     group: list[str],
     solution_parsed: dict,
     student_parsed: dict,
-    config: dict,
+    config: AppConfig,
     client: OpenAI,
     student_name: str | None = None,
 ) -> tuple[GradingResponse, dict[str, int], dict]:
@@ -90,7 +91,7 @@ def grade_group(
     if the LLM response fails Pydantic validation.
     """
     logger = get_job_logger(config, __name__)
-    cfg = AppConfig.model_validate(config)
+    cfg = config
     model = cfg.model or DEFAULT_MODEL
     assignment_name = cfg.assignment_name
     system_prompt = load_prompt("grade_system", assignment_name=assignment_name)
@@ -213,7 +214,7 @@ def grade_group(
 def grade_student(
     student_parsed: dict,
     solution_parsed: dict,
-    config: dict,
+    config: AppConfig | dict,
     client: OpenAI | None = None,
     ungrouped: list[str] | None = None,
     merge_into: dict | None = None,
@@ -224,7 +225,7 @@ def grade_student(
     and merges new grades into existing result (keeps other questions unchanged).
     """
     logger = get_job_logger(config, __name__)
-    cfg = AppConfig.model_validate(config)
+    cfg = ensure_app_config(config)
     if client is None:
         client = get_openai_client()
 
@@ -280,7 +281,7 @@ def grade_student(
                 group,
                 solution_parsed,
                 student_parsed,
-                config,
+                cfg,
                 client,
                 student_name=student_name,
             )
