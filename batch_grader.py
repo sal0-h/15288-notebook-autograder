@@ -14,6 +14,7 @@ from grading_models import MODEL_PRICING
 from prompt_builder import validate_question_groups
 from utils import (
     AppConfig,
+    ensure_app_config,
     DEFAULT_MODEL,
     get_active_grade_only,
     get_effective_question_groups,
@@ -27,7 +28,7 @@ logger = logging.getLogger(__name__)
 
 
 def grade_all_students(
-    config: dict,
+    config: AppConfig | dict,
     client: OpenAI | None = None,
     results_lock=None,
 ) -> Generator[dict, None, None]:
@@ -37,7 +38,7 @@ def grade_all_students(
     When results_lock is provided (e.g. from app), uses it for thread-safe writes.
     """
     logger = get_job_logger(config, __name__)
-    cfg = AppConfig.model_validate(config)
+    cfg = ensure_app_config(config)
 
     # Import here to avoid circular dependency (grade imports batch_grader for main())
     from grade import grade_student  # noqa: PLC0415
@@ -191,7 +192,7 @@ def grade_all_students(
                 result = grade_student(
                     student_parsed,
                     solution_parsed,
-                    config,
+                    cfg,
                     client,
                     ungrouped=ungrouped,
                     merge_into=merge_into,
@@ -258,7 +259,7 @@ def grade_all_students(
                 result = grade_student(
                     student_parsed,
                     solution_parsed,
-                    config,
+                    cfg,
                     client,
                     ungrouped=ungrouped,
                     merge_into=merge_into,

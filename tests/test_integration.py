@@ -66,7 +66,6 @@ class TestIntegrationPipeline:
                 "keep_images": True,
             },
             "grading": {"question_groups": [["1.1"]], "grade_only": None},
-            "prompts": {"system": "Grade."},
             "rubrics": {},
         }
 

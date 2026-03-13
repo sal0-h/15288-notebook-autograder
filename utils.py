@@ -437,7 +437,7 @@ class RubricEntry(BaseModel):
 
 
 class AppConfig(BaseModel):
-    model_config = ConfigDict(extra="allow")
+    model_config = ConfigDict(extra="ignore")
 
     assignment_name: str = "default"
     model: str = DEFAULT_MODEL
@@ -456,6 +456,7 @@ class AppConfig(BaseModel):
     rubrics: dict[str, RubricEntry] = Field(default_factory=dict)
     max_prompt_tokens: int = 80_000
     max_completion_tokens: int = 4_096
+    gradescope_title_mapping: dict[str, str] = Field(default_factory=dict)
     parsing: ParsingConfig = Field(
         default_factory=lambda: ParsingConfig(
             section_regex=r"(?m)^\s*#\s*<font[^>]*>\s*(\d+)\b",

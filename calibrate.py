@@ -4,10 +4,10 @@ import json
 import math
 from pathlib import Path
 
-from utils import AppConfig, load_config
+from utils import AppConfig, ensure_app_config, load_config
 
 
-def run_calibration(config: dict) -> list[dict[str, str | float]]:
+def run_calibration(config: AppConfig | dict) -> list[dict[str, str | float]]:
     """
     Read graded_results.json and flag student-question pairs where the score
     is more than 2 standard deviations from the mean for that question.
@@ -15,7 +15,7 @@ def run_calibration(config: dict) -> list[dict[str, str | float]]:
     Returns a list of flagged entries:
     {student_name, qid, score, mean, std, z_score, flag_reason}
     """
-    cfg = AppConfig.model_validate(config)
+    cfg = ensure_app_config(config)
     output_dir = Path(cfg.output_dir)
     graded_path = output_dir / "graded_results.json"
 

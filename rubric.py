@@ -18,6 +18,7 @@ from prompt_builder import (
 )
 from utils import (
     AppConfig,
+    ensure_app_config,
     get_openai_client,
     load_config,
     temperature_for_model,
@@ -57,16 +58,12 @@ def _sanitize_llm_text(text: str) -> str:
     return text
 
 
-def _get_rubric_generation_prompt(config: dict) -> str:
-    cfg = AppConfig.model_validate(config)
-    assignment_name = cfg.assignment_name
-    return load_prompt("rubric_system", assignment_name=assignment_name)
+def _get_rubric_generation_prompt(config: AppConfig) -> str:
+    return load_prompt("rubric_system", assignment_name=config.assignment_name)
 
 
-def _get_rubric_review_prompt(config: dict) -> str:
-    cfg = AppConfig.model_validate(config)
-    assignment_name = cfg.assignment_name
-    return load_prompt("review_system", assignment_name=assignment_name)
+def _get_rubric_review_prompt(config: AppConfig) -> str:
+    return load_prompt("review_system", assignment_name=config.assignment_name)
 
 
 def _build_group_prompt(group: list[str], solution_parsed: dict) -> str:
@@ -284,7 +281,7 @@ def _review_one_group(
 
 def review_rubrics(
     rubrics: dict[str, dict],
-    config: dict,
+    config: AppConfig | dict,
     solution_parsed: dict,
     client: OpenAI | None = None,
     groups_to_review: list[list[str]] | None = None,
@@ -296,7 +293,7 @@ def review_rubrics(
     When groups_to_review is set, only reviews those groups (for partial generation).
     """
     logger = get_job_logger(config, __name__)
-    cfg = AppConfig.model_validate(config)
+    cfg = ensure_app_config(config)
     if client is None:
         client = get_openai_client()
 
@@ -309,7 +306,7 @@ def review_rubrics(
     if groups_to_review is None and grade_only is not None:
         groups = filter_groups_by_grade_only(groups, grade_only)
 
-    review_prompt = _get_rubric_review_prompt(config)
+    review_prompt = _get_rubric_review_prompt(cfg)
 
     revised = dict(rubrics)  # start with copy
     for group in groups:
@@ -318,7 +315,7 @@ def review_rubrics(
                 group,
                 rubrics,
                 solution_parsed,
-                config,
+                cfg,
                 review_prompt,
                 model,
                 max_tokens,
@@ -332,7 +329,7 @@ def review_rubrics(
 
 
 def generate_rubrics(
-    config: dict,
+    config: AppConfig | dict,
     client: OpenAI | None = None,
     progress_callback: Callable[[int, int, list, dict], None] | None = None,
     group_indices: list[int] | None = None,
@@ -349,7 +346,7 @@ def generate_rubrics(
     Returns a dict: { "qid": {"points": N, "items": [{"description": "...", "deduction": ...}], ...} }
     """
     logger = get_job_logger(config, __name__)
-    cfg = AppConfig.model_validate(config)
+    cfg = ensure_app_config(config)
     if client is None:
         client = get_openai_client()
 
@@ -368,7 +365,7 @@ def generate_rubrics(
     model = cfg.rubric_model or cfg.model or DEFAULT_MODEL
     workers = cfg.workers
     max_completion_tokens = cfg.max_completion_tokens
-    rubric_prompt = _get_rubric_generation_prompt(config)
+    rubric_prompt = _get_rubric_generation_prompt(cfg)
 
     # When group_indices: select those groups from the original grouping first.
     partial = group_indices is not None
@@ -397,7 +394,7 @@ def generate_rubrics(
             idx,
             group,
             solution_parsed,
-            config,
+            cfg,
             rubric_prompt,
             model,
             max_completion_tokens,
@@ -440,7 +437,7 @@ def generate_rubrics(
         logger.info("Running rubric review pass...")
         rubrics = review_rubrics(
             rubrics,
-            config,
+            cfg,
             solution_parsed,
             client,
             groups_to_review=groups if partial else None,
