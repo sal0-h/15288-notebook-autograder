@@ -78,10 +78,10 @@ class TestGatherFromFolder:
             (folder / "notebook.ipynb").write_text(json.dumps(nb), encoding="utf-8")
         return tmp_path
 
-    def test_missing_metadata_returns_empty(self, tmp_path):
+    def test_missing_metadata_raises(self, tmp_path):
         out = tmp_path / "out"
-        result = gather_submissions(tmp_path, out, from_zip=False)
-        assert result == []
+        with pytest.raises(FileNotFoundError, match="submission_metadata.yml"):
+            gather_submissions(tmp_path, out, from_zip=False)
 
     def test_valid_export_one_student(self, tmp_path):
         meta = {"submission_123": {"submitters": [{"name": "Alice"}]}}

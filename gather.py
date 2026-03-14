@@ -30,6 +30,63 @@ def get_student_name(entry: dict) -> str | None:
     return None
 
 
+def _result_entry(
+    student_name: str,
+    filename: str,
+    status: str,
+    message: str,
+) -> dict:
+    return {
+        "student_name": student_name,
+        "filename": filename,
+        "status": status,
+        "message": message,
+    }
+
+
+def _safe_output_name(student_name: str, notebook_name: str) -> str:
+    new_name = f"{student_name}_{notebook_name}"
+    return "".join(c for c in new_name if c not in '/\\:*?"<>|') or "unknown_student"
+
+
+def _resolve_export_dir(source: Path, from_zip: bool) -> tuple[Path, Path | None]:
+    """Return the extracted Gradescope export directory and optional temp root."""
+    if not from_zip:
+        return source, None
+
+    extract_root = source.parent / f"_extract_{source.stem}"
+    try:
+        with zipfile.ZipFile(source, "r") as zf:
+            zf.extractall(extract_root)
+    except Exception:
+        shutil.rmtree(extract_root, ignore_errors=True)
+        raise
+
+    export_dirs = list(extract_root.glob("assignment_*_export"))
+    if len(export_dirs) != 1:
+        shutil.rmtree(extract_root, ignore_errors=True)
+        raise ValueError(
+            "Expected exactly one assignment_*_export directory in Gradescope ZIP"
+        )
+
+    return export_dirs[0], extract_root
+
+
+def _find_single_notebook(
+    submission_folder: Path,
+) -> tuple[Path | None, str | None, str]:
+    folder_name = submission_folder.name
+    if not submission_folder.exists():
+        return None, "missing", f"Folder {folder_name} not found"
+
+    ipynb_files = list(submission_folder.glob("*.ipynb"))
+    if len(ipynb_files) == 0:
+        return None, "missing", f"No .ipynb in {folder_name}"
+    if len(ipynb_files) > 1:
+        return None, "duplicate", f"Multiple .ipynb files in {folder_name}"
+    return ipynb_files[0], None, ""
+
+
 def gather_submissions(
     source: Path,
     out_dir: Path,
@@ -48,121 +105,73 @@ def gather_submissions(
     Returns:
         List of {"student_name", "filename", "status": "ok"|"missing"|"duplicate"}
     """
-    extract_root: Path | None = None
-    if from_zip:
-        extract_root = source.parent / f"_extract_{source.stem}"
-        try:
-            with zipfile.ZipFile(source, "r") as zf:
-                zf.extractall(extract_root)
-        except Exception:
+    export_dir, extract_root = _resolve_export_dir(source, from_zip)
+    try:
+        metadata_path = export_dir / "submission_metadata.yml"
+        if not metadata_path.exists():
+            raise FileNotFoundError(
+                f"submission_metadata.yml not found in Gradescope export: {export_dir}"
+            )
+
+        data = load_submission_metadata(metadata_path)
+        out_dir = Path(out_dir)
+        out_dir.mkdir(parents=True, exist_ok=True)
+
+        seen_names: set[str] = set()
+        results: list[dict] = []
+
+        for sub_key, sub_data in data.items():
+            if not isinstance(sub_data, dict):
+                continue
+
+            student_name = get_student_name(sub_data)
+            if not student_name:
+                results.append(
+                    _result_entry(
+                        sub_key,
+                        "",
+                        "missing",
+                        "No submitter name in metadata",
+                    )
+                )
+                continue
+
+            submission_folder = export_dir / sub_key
+            nb_path, failure_status, failure_message = _find_single_notebook(
+                submission_folder
+            )
+            if failure_status is not None:
+                results.append(
+                    _result_entry(
+                        student_name,
+                        "",
+                        failure_status,
+                        failure_message,
+                    )
+                )
+                continue
+
+            assert nb_path is not None
+            safe_name = _safe_output_name(student_name, nb_path.name)
+            status = "duplicate" if student_name in seen_names else "ok"
+            seen_names.add(student_name)
+
+            if status == "ok":
+                shutil.copy2(nb_path, out_dir / safe_name)
+
+            results.append(
+                _result_entry(
+                    student_name,
+                    safe_name,
+                    status,
+                    "" if status == "ok" else f"Duplicate submitter: {student_name}",
+                )
+            )
+
+        return results
+    finally:
+        if extract_root is not None:
             shutil.rmtree(extract_root, ignore_errors=True)
-            raise
-        # Find the assignment_*_export folder or folder containing submission_metadata.yml
-        export_dirs = list(extract_root.glob("assignment_*_export"))
-        if export_dirs:
-            base_dir = export_dirs[0]
-        elif (extract_root / "submission_metadata.yml").exists():
-            base_dir = extract_root
-        else:
-            base_dir = extract_root
-    else:
-        base_dir = source
-
-    metadata_path = base_dir / "submission_metadata.yml"
-    if not metadata_path.exists():
-        if from_zip and extract_root:
-            shutil.rmtree(extract_root, ignore_errors=True)
-        return []
-
-    data = load_submission_metadata(metadata_path)
-    out_dir = Path(out_dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
-
-    seen_names: set[str] = set()
-    results: list[dict] = []
-
-    for sub_key, sub_data in data.items():
-        if not isinstance(sub_data, dict):
-            continue
-        student_name = get_student_name(sub_data)
-        if not student_name:
-            results.append(
-                {
-                    "student_name": sub_key,
-                    "filename": "",
-                    "status": "missing",
-                    "message": "No submitter name in metadata",
-                }
-            )
-            continue
-
-        # Folder: submission_381579075 -> submission_381579075
-        folder_name = sub_key
-        submission_folder = base_dir / folder_name
-
-        if not submission_folder.exists():
-            results.append(
-                {
-                    "student_name": student_name,
-                    "filename": "",
-                    "status": "missing",
-                    "message": f"Folder {folder_name} not found",
-                }
-            )
-            continue
-
-        ipynb_files = list(submission_folder.glob("*.ipynb"))
-        if len(ipynb_files) == 0:
-            results.append(
-                {
-                    "student_name": student_name,
-                    "filename": "",
-                    "status": "missing",
-                    "message": f"No .ipynb in {folder_name}",
-                }
-            )
-            continue
-        if len(ipynb_files) > 1:
-            results.append(
-                {
-                    "student_name": student_name,
-                    "filename": "",
-                    "status": "duplicate",
-                    "message": f"Multiple .ipynb files in {folder_name}",
-                }
-            )
-            continue
-
-        nb_path = ipynb_files[0]
-        new_name = f"{student_name}_{nb_path.name}"
-        safe_name = (
-            "".join(c for c in new_name if c not in '/\\:*?"<>|') or "unknown_student"
-        )
-        dest_path = out_dir / safe_name
-
-        status = "ok"
-        if student_name in seen_names:
-            status = "duplicate"
-        seen_names.add(student_name)
-
-        if status == "ok":
-            shutil.copy2(nb_path, dest_path)
-
-        results.append(
-            {
-                "student_name": student_name,
-                "filename": safe_name,
-                "status": status,
-                "message": (
-                    "" if status == "ok" else f"Duplicate submitter: {student_name}"
-                ),
-            }
-        )
-
-    if from_zip and extract_root:
-        shutil.rmtree(extract_root, ignore_errors=True)
-
-    return results
 
 
 def main():
