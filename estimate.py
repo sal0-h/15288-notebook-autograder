@@ -94,7 +94,7 @@ def estimate_rubrics(config: AppConfig | dict) -> dict:
         "completion_tokens": completion_tokens,
         "cost_usd": round(_cost(prompt_tokens, completion_tokens, model), 4),
         "model": model,
-        "num_groups": len([g for g in groups if g]),
+        "num_groups": sum(1 for g in groups if g),
         "rubric_review": rubric_review,
     }
 
@@ -176,5 +176,5 @@ def estimate_grade(config: AppConfig | dict, student_name: str | None = None) ->
         "cost_usd": round(_cost(prompt_tokens, completion_tokens, model), 4),
         "model": model,
         "num_students": n_students,
-        "num_groups": len([g for g in groups if g]),
+        "num_groups": sum(1 for g in groups if g),
     }

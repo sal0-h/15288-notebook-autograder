@@ -7,7 +7,15 @@ from pathlib import Path
 
 from openai import OpenAI
 
-from grading_models import GradingResponse, NO_SUBMISSION, QuestionGrade, SKIP_FEEDBACKS
+from grading_models import (
+    GRADING_FAILED,
+    LLM_NOT_RETURNED,
+    LLM_PARSE_ERROR,
+    GradingResponse,
+    NO_SUBMISSION,
+    QuestionGrade,
+    SKIP_FEEDBACKS,
+)
 from prompt_builder import (
     build_group_prompt,
     get_question_data,
@@ -32,6 +40,13 @@ logger = logging.getLogger(__name__)
 
 MAX_VALIDATION_RETRIES = 2  # application-level retries if Pydantic parse fails
 
+_NO_SUBMISSION_PATTERNS = (
+    "[no submission]",
+    "no submission",
+    "not found in the student submission",
+    "question was not found",
+)
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -43,13 +58,7 @@ def _normalize_no_submission_feedback(feedback: str) -> str:
     if not feedback or not feedback.strip():
         return feedback
     s = feedback.strip().lower()
-    if "[no submission]" in s:
-        return NO_SUBMISSION
-    if "no submission" in s:
-        return NO_SUBMISSION
-    if "not found in the student submission" in s:
-        return NO_SUBMISSION
-    if "question was not found" in s:
+    if any(pattern in s for pattern in _NO_SUBMISSION_PATTERNS):
         return NO_SUBMISSION
     return feedback
 
@@ -145,10 +154,7 @@ def grade_group(
         try:
             grading_response = GradingResponse.from_raw(raw, group)
             # Retry if LLM returned any placeholder (partial response = missing data)
-            placeholder_feedback = (
-                "[not returned by LLM]",
-                "[parse error in LLM response]",
-            )
+            placeholder_feedback = (LLM_NOT_RETURNED, LLM_PARSE_ERROR)
             missing = [
                 qid
                 for qid, g in grading_response.grades.items()
@@ -199,7 +205,7 @@ def grade_group(
             grades={
                 qid: QuestionGrade(
                     score=0.0,
-                    feedback="[grading failed after retries]",
+                    feedback=GRADING_FAILED,
                     confidence="low",
                     requires_review=True,
                 )
