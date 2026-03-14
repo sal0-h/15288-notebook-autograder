@@ -205,7 +205,6 @@ def load_config(config_path: Path) -> dict:
     cfg["submissions_dir"] = str(assignment_root / "submissions")
     cfg["parsed_dir"] = str(assignment_root / "parsed")
     cfg["assignment_name"] = assignment_name
-    cfg = _apply_config_defaults(cfg)
     return ensure_app_config(cfg).model_dump()
 
 
@@ -239,7 +238,7 @@ def save_config(config: dict | "AppConfig", config_path: Path) -> None:
             except ValueError:
                 pass
 
-    out_cfg = {k: v for k, v in cfg.items() if k not in ("prompts",)}
+    out_cfg = cfg
     config_path.parent.mkdir(parents=True, exist_ok=True)
     with open(config_path, "w", encoding="utf-8") as f:
         yaml.dump(out_cfg, f, default_flow_style=False, allow_unicode=True)

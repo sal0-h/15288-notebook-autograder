@@ -256,13 +256,16 @@ Each stage can also be run independently.
 ```bash
 python gather.py --zip gradescope_export.zip
 python gather.py --folder extracted_export_folder
-python parse_notebook.py --config config.yaml
-python rubric.py --config config.yaml
-python grade.py --config config.yaml
-python calibrate.py --config config.yaml
-python export.py --config config.yaml
-python export.py --config config.yaml --autograder-zip
+python parse_notebook.py --config output/<assignment_name>/config.yaml
+python rubric.py --config output/<assignment_name>/config.yaml
+python grade.py --config output/<assignment_name>/config.yaml
+python calibrate.py --config output/<assignment_name>/config.yaml
+python export.py --config output/<assignment_name>/config.yaml
+python export.py --config output/<assignment_name>/config.yaml --autograder-zip
 ```
+
+For direct module entrypoints, always pass an assignment-scoped config path under
+`output/{assignment_name}/config.yaml`.
 
 ## Web API summary
 
@@ -350,3 +353,10 @@ The test suite covers parsing, grading, rubric generation, export paths, utiliti
 - Rubric quality depends on both the reference notebook and the rubric-generation prompt.
 - Calibration is meant for review support, not as a replacement for grader judgment.
 - For high-stakes use, teams should still spot-check graded results before release.
+
+## Known engineering limitations
+
+- `/gather` reads uploaded ZIPs fully into memory before enforcing size limits.
+- `run_autograder` inside `gradescope_autograder.zip` uses name-based fallback matching that can be ambiguous for similar names.
+- `/parse-solution-upload` stores solution notebooks under `{project_root}/{assignment_name}/` while most runtime artifacts live under `output/{assignment_name}/`.
+- Standalone script defaults still use `config.yaml` in several modules; use explicit `--config output/{assignment_name}/config.yaml` to avoid path-resolution surprises.
