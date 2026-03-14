@@ -216,10 +216,15 @@ Both the solution and each student notebook are converted to the same structure 
           "answer_code_concat": "...",     // all code cells after this question header
           "answer_text_concat": "...",     // code output text
           "answer_markdown_concat": "...", // markdown answer cells
-          "images": [                      // base64 image payloads
-            { "mime": "image/png", "base64": "..." }
-          ],
-          "answer_cells": [...]            // raw cell list for detail access
+            "answer_cells": [               // raw cell list for detail access
+              {
+                "code": "...",
+                "output_text": "...",
+                "images": [
+                  { "mime": "image/png", "base64": "..." }
+                ]
+              }
+            ]
         }
       }
     }
@@ -397,8 +402,9 @@ Yields progress event dicts for SSE streaming to the UI:
 in the file (and not in a retryable state) are skipped. The file is incrementally
 updated after each student.
 
-**Parallel mode:** When `workers > 1`, uses `ThreadPoolExecutor`. Each worker thread
-calls `grade_student` with its own OpenAI client (clients are not shared across threads).
+**Parallel mode:** When `workers > 1`, uses `ThreadPoolExecutor`. The current
+implementation shares the same OpenAI client object passed into `grade_all_students`
+across worker threads.
 
 #### `grade_only_merge` flow
 
@@ -443,8 +449,10 @@ of 2 scores per question is required before statistics are computed.
 `export_autograder_zip`:
 - Bundles all per-student JSONs from `gradescope/` into a Gradescope autograder ZIP.
 - The embedded `run_autograder` script resolves the submission owner from
-  `submission_metadata.json` and copies the matching pre-computed result to
+  `submission_metadata.json` and copies a matching pre-computed result to
   `/autograder/results/results.json`.
+  - It first attempts exact stem matching, then falls back to `startswith` / substring
+    matching, which can be ambiguous for similar student names.
 - ZIP entries for `setup.sh` and `run_autograder` use `create_system=3` (Unix) and
   `external_attr = 0o755 << 16` to set executable bits for Gradescope.
 
@@ -482,11 +490,13 @@ For each group:
      - Solution content (question markdown, code, output, markdown answer, images)
        — if `include_reference_in_grading` is False, only the question text and rubric are included
      - Rubric (if present in `cfg.rubrics`)
-   - Token budget enforcement: if the combined prompt exceeds `max_prompt_tokens`,
-     text content is progressively truncated; images are dropped last.
+   - Token budget handling: per-question output text is truncated using a character
+     budget derived from estimated token usage.
    - Student submission section wrapped in `<<<STUDENT_SUBMISSION>>>` / `<<<END_STUDENT_SUBMISSION>>>` delimiters.
 
-Image payloads are added as vision message parts with `{"type": "image_url", "image_url": {"url": "data:image/png;base64,...", "detail": "high"}}`, incurring `TOKENS_PER_IMAGE = 1000` in the token budget estimate.
+Image payloads are added as vision message parts with
+`{"type": "image_url", "image_url": {"url": "data:image/png;base64,..."}}`,
+incurring `TOKENS_PER_IMAGE = 1000` in the token budget estimate.
 
 ### Prompt injection protection
 
@@ -556,11 +566,12 @@ on a queue that the background thread feeds via `loop.call_soon_threadsafe`.
 ### Config update behavior (`PUT /config`)
 
 The endpoint accepts a partial config payload from the UI. The incoming dict is
-merged into the loaded full config before saving:
+deep-merged with defaults and existing config before saving:
 
 1. Load current full config via `load_config()`.
-2. Merge top-level key-value pairs from the request body into the loaded config.
-3. Ensure `config["grading"]` exists.
+2. If assignment name changes and `solution_notebook` is omitted, force
+  `solution_notebook = ""` to avoid stale cross-assignment paths.
+3. Deep-merge `_default_config()`, existing config, and incoming payload.
 4. Validate via `AppConfig.model_validate(merged)`.
 5. Save via `save_config(merged)`.
 
@@ -570,9 +581,11 @@ The UI sends only the fields the user changed; the merge preserves everything el
 
 When a `PUT /config` payload contains a different `assignment_name`, the app:
 1. Detects the change (`incoming_assignment != current_assignment`).
-2. Saves the new config, which creates `output/{new_name}/config.yaml` and
-   updates the root pointer.
+2. Saves the updated payload to the active assignment config path.
 3. Re-initializes file logging to the new assignment's `autograder.log`.
+
+Creation/loading of `output/{assignment_name}/config.yaml` is handled by
+`POST /load-or-create`, which sets the in-memory active config path.
 
 ### SSE streaming routes
 
