@@ -181,8 +181,7 @@ cfg = ensure_app_config(config)   # no-op if already AppConfig; validates if dic
 ```
 
 Never call `AppConfig.model_validate(config)` directly in pipeline code — it would
-re-validate an already-typed object, wasting work and potentially failing under
-`extra="ignore"` since model instances are not plain dicts.
+re-validate an already-typed object, wasting work.
 
 ### Saving config
 
