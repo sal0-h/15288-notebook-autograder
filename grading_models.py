@@ -8,6 +8,9 @@ from pydantic import BaseModel, field_validator
 
 SKIP_FEEDBACKS = ("[skipped - not in grade_only]", "[not included in grading groups]")
 NO_SUBMISSION = "[no submission]"
+LLM_PARSE_ERROR = "[parse error in LLM response]"
+LLM_NOT_RETURNED = "[not returned by LLM]"
+GRADING_FAILED = "[grading failed after retries]"
 
 # Pricing per 1M tokens (input, output). From docs/OPENAI_VISION_MODELS.md
 MODEL_PRICING = {
@@ -85,7 +88,7 @@ class GradingResponse(BaseModel):
                 except Exception:
                     grades[normalized] = QuestionGrade(
                         score=0.0,
-                        feedback="[parse error in LLM response]",
+                        feedback=LLM_PARSE_ERROR,
                         confidence="low",
                         requires_review=True,
                     )
@@ -96,7 +99,7 @@ class GradingResponse(BaseModel):
             if qid not in grades:
                 grades[qid] = QuestionGrade(
                     score=0.0,
-                    feedback="[not returned by LLM]",
+                    feedback=LLM_NOT_RETURNED,
                     confidence="low",
                     requires_review=True,
                 )

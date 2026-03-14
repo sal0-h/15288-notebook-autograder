@@ -1,9 +1,42 @@
 """FastAPI backend for the AI Autograder pipeline."""
 
 import asyncio
+import io
+import json
 import logging
+import re
+import tempfile
+import threading
+import zipfile
 from collections.abc import Callable
 from contextlib import asynccontextmanager
+from pathlib import Path
+from urllib.parse import unquote
+
+from fastapi import Body, FastAPI, File, Form, HTTPException, Query, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from sse_starlette.sse import EventSourceResponse
+
+from batch_grader import grade_all_students
+from calibrate import run_calibration
+from estimate import estimate_grade, estimate_rubrics
+from export import export_all, export_autograder_zip
+from gather import gather_submissions
+from grade import grade_student
+from linter_export import export_linter_zip
+from parse_notebook import get_all_question_ids, parse_all_students, parse_notebook
+from prompt_builder import validate_question_groups
+from rubric import generate_rubrics
+from utils import (
+    AppConfig,
+    DEFAULT_MODEL,
+    filter_groups_by_grade_only,
+    load_config,
+    sanitize_assignment_name,
+    save_config,
+    setup_assignment_logging,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +55,7 @@ def _get_active_config() -> dict:
 
 
 def _setup_file_logging() -> None:
-    """Ensure the root logger writes to the active assignment's autograder.log."""
+    """Configure the assignment-specific logger to write to the active assignment's autograder.log."""
     if _active_config_path is None:
         return
     try:
@@ -36,14 +69,6 @@ def _setup_file_logging() -> None:
     logger.info("Logging to %s", log_path)
 
 
-import io
-import json
-import tempfile
-import threading
-import zipfile
-from pathlib import Path
-from urllib.parse import unquote
-
 # Guard against concurrent grading runs (both write to graded_results.json)
 _grading_lock = threading.Lock()
 # Guard against concurrent reads/writes of graded_results.json (grading + review save)
@@ -51,33 +76,6 @@ _results_lock = threading.Lock()
 _rubric_lock = threading.Lock()
 
 DEFAULT_UPLOAD_MB = 500
-
-from fastapi import FastAPI, File, Form, UploadFile, HTTPException, Body, Query
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
-from sse_starlette.sse import EventSourceResponse
-
-import re
-
-from utils import (
-    load_config,
-    save_config,
-    AppConfig,
-    DEFAULT_MODEL,
-    filter_groups_by_grade_only,
-    sanitize_assignment_name,
-    setup_assignment_logging,
-)
-from gather import gather_submissions
-from parse_notebook import parse_all_students, parse_notebook, get_all_question_ids
-from batch_grader import grade_all_students
-from grade import grade_student
-from prompt_builder import validate_question_groups
-from export import export_all, export_autograder_zip
-from linter_export import export_linter_zip
-from rubric import generate_rubrics
-from calibrate import run_calibration
-from estimate import estimate_rubrics, estimate_grade
 
 
 def _safe_path(base: Path, user_input: str) -> Path:

@@ -149,8 +149,8 @@ def grade_all_students(
 
     # Validate question groups once (not per student)
     groups = get_effective_question_groups(grading_config)
+    ungrouped = validate_question_groups(groups, solution_parsed)
     if grade_only:
-        ungrouped = validate_question_groups(groups, solution_parsed)
         print(f"Grade only: {grade_only} — skipping {len(ungrouped)} other questions")
         logger.info(
             "grade_only=%s, skipping %d questions, grading %d students",
@@ -159,7 +159,6 @@ def grade_all_students(
             len(to_grade),
         )
     else:
-        ungrouped = validate_question_groups(groups, solution_parsed)
         if ungrouped:
             print(f"Warning: Questions not in any group (will score 0): {ungrouped}")
             logger.warning("Questions not in any group (will score 0): %s", ungrouped)
