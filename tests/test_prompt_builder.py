@@ -32,3 +32,10 @@ def test_estimate_tokens_caches_per_model(monkeypatch):
 
     assert a == 10
     assert b == 20
+
+
+def test_load_prompt_works_outside_project_cwd(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    text = prompt_builder.load_prompt("grade_system")
+    assert isinstance(text, str)
+    assert text.strip()

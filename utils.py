@@ -324,7 +324,9 @@ class GradingConfig(BaseModel):
         if v is None:
             return []
         if not isinstance(v, list):
-            raise ValueError("grading.question_groups must be a list of question groups")
+            raise ValueError(
+                "grading.question_groups must be a list of question groups"
+            )
         normalized_groups: list[list[str]] = []
         for group in v:
             if not isinstance(group, list):

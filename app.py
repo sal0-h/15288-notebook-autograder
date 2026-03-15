@@ -676,85 +676,90 @@ async def api_grade_one(student_name: str):
     if "/" in student_name or "\\" in student_name or ".." in student_name:
         raise HTTPException(status_code=400, detail="Invalid student name")
     config = _get_active_config()
-    if _grading_lock.locked():
+    if not _grading_lock.acquire(blocking=False):
         raise HTTPException(
             status_code=409,
             detail="Bulk grading in progress. Wait for it to finish before re-grading one student.",
         )
-    output_dir = Path(config.get("output_dir", "output"))
-    parsed_dir = Path(config.get("parsed_dir", "output/parsed"))
-    solution_path = output_dir / "solution_parsed.json"
-    student_path = parsed_dir / f"{student_name}.json"
-    if not solution_path.exists():
-        raise HTTPException(status_code=404, detail="Run parse step first")
-    if not student_path.exists():
-        raise HTTPException(
-            status_code=404, detail=f"Parsed notebook not found: {student_name}"
-        )
+    try:
+        output_dir = Path(config.get("output_dir", "output"))
+        parsed_dir = Path(config.get("parsed_dir", "output/parsed"))
+        solution_path = output_dir / "solution_parsed.json"
+        student_path = parsed_dir / f"{student_name}.json"
+        if not solution_path.exists():
+            raise HTTPException(status_code=404, detail="Run parse step first")
+        if not student_path.exists():
+            raise HTTPException(
+                status_code=404, detail=f"Parsed notebook not found: {student_name}"
+            )
 
-    solution_parsed = json.loads(solution_path.read_text(encoding="utf-8"))
-    student_parsed = json.loads(student_path.read_text(encoding="utf-8"))
-    student_parsed["student_name"] = student_name
+        solution_parsed = json.loads(solution_path.read_text(encoding="utf-8"))
+        student_parsed = json.loads(student_path.read_text(encoding="utf-8"))
+        student_parsed["student_name"] = student_name
 
-    grading_config = config.get("grading", {})
-    groups = grading_config.get("question_groups", [])
-    grade_only = grading_config.get("grade_only")
-    if grade_only:
-        groups = filter_groups_by_grade_only(groups, grade_only)
-    ungrouped = validate_question_groups(groups, solution_parsed)
+        grading_config = config.get("grading", {})
+        groups = grading_config.get("question_groups", [])
+        grade_only = grading_config.get("grade_only")
+        if grade_only:
+            groups = filter_groups_by_grade_only(groups, grade_only)
+        ungrouped = validate_question_groups(groups, solution_parsed)
 
-    grade_only_merge = bool(grading_config.get("grade_only_merge") and grade_only)
-    merge_into = None
-    out_path = output_dir / "graded_results.json"
-    if grade_only_merge and out_path.exists():
-        with _results_lock:
-            try:
-                raw_existing = json.loads(out_path.read_text(encoding="utf-8"))
-            except json.JSONDecodeError as e:
-                raise HTTPException(
-                    status_code=500,
-                    detail=f"graded_results.json is corrupted: {e}",
+        grade_only_merge = bool(grading_config.get("grade_only_merge") and grade_only)
+        merge_into = None
+        out_path = output_dir / "graded_results.json"
+        if grade_only_merge and out_path.exists():
+            with _results_lock:
+                try:
+                    raw_existing = json.loads(out_path.read_text(encoding="utf-8"))
+                except json.JSONDecodeError as e:
+                    raise HTTPException(
+                        status_code=500,
+                        detail=f"graded_results.json is corrupted: {e}",
+                    )
+                existing_results = (
+                    raw_existing if isinstance(raw_existing, list) else []
                 )
-            existing_results = raw_existing if isinstance(raw_existing, list) else []
-            for existing in existing_results:
-                if (
-                    isinstance(existing, dict)
-                    and existing.get("student_name") == student_name
-                ):
-                    merge_into = existing
-                    break
+                for existing in existing_results:
+                    if (
+                        isinstance(existing, dict)
+                        and existing.get("student_name") == student_name
+                    ):
+                        merge_into = existing
+                        break
 
-    result = await asyncio.to_thread(
-        grade_student,
-        student_parsed,
-        solution_parsed,
-        config,
-        None,
-        ungrouped,
-        merge_into,
-    )
-    usage = result.pop("_usage", None)
-
-    with _results_lock:
-        raw = (
-            json.loads(out_path.read_text(encoding="utf-8"))
-            if out_path.exists()
-            else []
+        result = await asyncio.to_thread(
+            grade_student,
+            student_parsed,
+            solution_parsed,
+            config,
+            None,
+            ungrouped,
+            merge_into,
         )
-        results = raw if isinstance(raw, list) else []
-        found = False
-        for i, r in enumerate(results):
-            if isinstance(r, dict) and r.get("student_name") == student_name:
-                results[i] = result
-                found = True
-                break
-        if not found:
-            results.append(result)
-        out_path.write_text(json.dumps(results, indent=2), encoding="utf-8")
-    response = {"ok": True, "result": result}
-    if usage:
-        response["usage"] = usage
-    return response
+        usage = result.pop("_usage", None)
+
+        with _results_lock:
+            raw = (
+                json.loads(out_path.read_text(encoding="utf-8"))
+                if out_path.exists()
+                else []
+            )
+            results = raw if isinstance(raw, list) else []
+            found = False
+            for i, r in enumerate(results):
+                if isinstance(r, dict) and r.get("student_name") == student_name:
+                    results[i] = result
+                    found = True
+                    break
+            if not found:
+                results.append(result)
+            out_path.write_text(json.dumps(results, indent=2), encoding="utf-8")
+        response = {"ok": True, "result": result}
+        if usage:
+            response["usage"] = usage
+        return response
+    finally:
+        _grading_lock.release()
 
 
 # ---------------------------------------------------------------------------
