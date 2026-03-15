@@ -83,13 +83,6 @@ def _build_linter_summary_test(
     """Build a single 0-pt linter test summary for one student."""
     parsed_path = parsed_dir / f"{student_name}.json"
     if not parsed_path.exists():
-        summary, _ = build_linter_summary(
-            found=[],
-            required=sorted(required_qids, key=_sort_key_qid),
-            missing=sorted(required_qids, key=_sort_key_qid),
-            unexpected=[],
-            duplicates=[],
-        )
         summary = "\n".join(
             [
                 "# Notebook Linter Summary",
@@ -293,7 +286,9 @@ def main():
     )
     args = parser.parse_args()
     if args.config is None:
-        parser.error("--config is required and must point to output/{assignment_name}/config.yaml")
+        parser.error(
+            "--config is required and must point to output/{assignment_name}/config.yaml"
+        )
 
     config = load_config(args.config)
     if args.autograder_zip:

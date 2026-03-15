@@ -211,9 +211,9 @@ class TestConfigEndpoints:
         assert saved["solution_notebook"] == ""
 
     def test_get_config_returns_500_when_active_config_load_fails(self, client):
-        with patch("app._active_config_path", new=Path("output/Test/config.yaml")), patch(
-            "app.load_config", side_effect=ValueError("bad yaml")
-        ):
+        with patch(
+            "app._active_config_path", new=Path("output/Test/config.yaml")
+        ), patch("app.load_config", side_effect=ValueError("bad yaml")):
             r = client.get("/config")
         assert r.status_code == 500
         assert "Failed to load active assignment config" in r.json().get("detail", "")
@@ -275,6 +275,15 @@ class TestGradingLock:
         with patch("app._grading_lock") as mock_lock:
             mock_lock.acquire.return_value = False
             r = client.get("/grade")
+            assert r.status_code == 409
+
+    def test_grade_one_returns_409_when_lock_held(self, client, tmp_path):
+        cfg = _full_config(tmp_path)
+        with patch("app._get_active_config", return_value=cfg), patch(
+            "app._grading_lock"
+        ) as mock_lock:
+            mock_lock.acquire.return_value = False
+            r = client.post("/grade/Alice")
             assert r.status_code == 409
 
 
@@ -392,7 +401,9 @@ class TestGradeOneMerge:
         assert "usage" in body
         assert "_usage" not in body["result"]
 
-        saved = json.loads((output_dir / "graded_results.json").read_text(encoding="utf-8"))
+        saved = json.loads(
+            (output_dir / "graded_results.json").read_text(encoding="utf-8")
+        )
         assert "_usage" not in saved[0]
 
     def test_grade_one_merge_uses_results_lock_for_pre_read(self, client, tmp_path):

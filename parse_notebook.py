@@ -296,7 +296,9 @@ def main():
     )
     args = parser.parse_args()
     if args.config is None:
-        parser.error("--config is required and must point to output/{assignment_name}/config.yaml")
+        parser.error(
+            "--config is required and must point to output/{assignment_name}/config.yaml"
+        )
 
     config = load_config(args.config)
     solution_parsed, report = parse_all_students(config)

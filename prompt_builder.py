@@ -34,7 +34,7 @@ def load_prompt(prompt_name: str, assignment_name: str | None = None) -> str:
     Falls back to `prompts/DEFAULT/{prompt_name}.md`.
     Strictly raises FileNotFoundError if not found in either location.
     """
-    base_dir = Path("prompts")
+    base_dir = Path(__file__).resolve().parent / "prompts"
     if not prompt_name.endswith(".md"):
         prompt_name += ".md"
 
