@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
+from starlette.datastructures import UploadFile as StarletteUploadFile
 
 from app import app, DEFAULT_UPLOAD_MB
 from utils import DEFAULT_MODEL
@@ -89,6 +90,29 @@ class TestUploadLimit:
         )
         assert r.status_code == 400
         assert "Invalid" in r.json().get("detail", "")
+
+    def test_upload_is_read_in_chunks(self, client):
+        read_sizes = []
+        original_read = StarletteUploadFile.read
+
+        async def tracking_read(self, size=-1):
+            read_sizes.append(size)
+            return await original_read(self, size)
+
+        oversized = b"x" * (1024 * 1024 + 1)
+        with patch("app.DEFAULT_UPLOAD_MB", 1), patch(
+            "starlette.datastructures.UploadFile.read", new=tracking_read
+        ):
+            r = client.post(
+                "/gather",
+                files={
+                    "zip_file": ("large.zip", io.BytesIO(oversized), "application/zip")
+                },
+            )
+
+        assert r.status_code == 413
+        assert read_sizes
+        assert read_sizes[0] == 1024 * 1024
 
 
 class TestConfigEndpoints:
@@ -217,6 +241,23 @@ class TestConfigEndpoints:
             r = client.get("/config")
         assert r.status_code == 500
         assert "Failed to load active assignment config" in r.json().get("detail", "")
+
+    def test_put_config_returns_500_when_active_config_load_fails(self, client):
+        with patch(
+            "app._active_config_path", new=Path("output/Test/config.yaml")
+        ), patch("app._get_active_config", side_effect=ValueError("bad yaml")), patch(
+            "app.save_config"
+        ) as mock_save:
+            r = client.put(
+                "/config",
+                json={
+                    "assignment_name": "LabTest_Demo",
+                    "model": DEFAULT_MODEL,
+                },
+            )
+        assert r.status_code == 500
+        assert "Failed to load active assignment config" in r.json().get("detail", "")
+        mock_save.assert_not_called()
 
 
 class TestPutResults:

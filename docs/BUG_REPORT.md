@@ -14,30 +14,13 @@ Status values:
 
 | ID | Severity | File | Status | Summary |
 |----|----------|------|--------|---------|
-| E-003 | Low | `app.py:393` | Open | `/gather` reads full upload into memory before enforcing size limit |
-
-### E-003 — Upload memory pressure in `/gather`
-
-`api_gather` currently does:
-
-```python
-content = await zip_file.read()
-if len(content) > upload_max_bytes:
-    ...
-```
-
-Impact:
-- Request size is enforced only after full buffering in RAM.
-
-Recommended fix:
-- Stream-upload in chunks with early abort once threshold is exceeded.
+No open bug items currently in this section.
 
 ## 2) Fragility and Simplification Opportunities
 
 | ID | Severity | File | Status | Summary |
 |----|----------|------|--------|---------|
 | E-102 | Low | `app.py:321` | Accepted | Solution notebook upload path is outside `output/{assignment}` tree by design |
-| E-103 | Low | `app.py:212` | Open | `PUT /config` falls back to empty existing config on any load exception |
 | E-104 | Low | `batch_grader.py:293`, `batch_grader.py:248` | Open | Parallel grading shares one OpenAI client object across worker threads |
 
 ### E-102 — Solution notebook stored outside assignment output tree
@@ -49,24 +32,6 @@ Impact:
 
 Reason accepted:
 - Current behavior is intentional and functional; docs now explicitly mention this.
-
-### E-103 — Broad exception handling in `PUT /config`
-
-`api_put_config` does:
-
-```python
-try:
-    existing = _get_active_config()
-except Exception:
-    existing = {}
-```
-
-Impact:
-- Corrupted config can be masked and overwritten with defaults + partial payload.
-
-Recommended fix:
-- Distinguish expected "no active assignment" from other errors.
-- Return 422/500 for malformed active config instead of silently resetting.
 
 ### E-104 — Shared client object in parallel grading
 
@@ -100,3 +65,5 @@ Recommended fix:
 | E-004 | Resolved | Missing assignment config now raises by default via `load_config(..., require_exists=True)` |
 | E-101 | Resolved | Embedded `RUN_AUTOGRADER` now uses exact normalized-name matching and rejects ambiguous matches |
 | E-202 | Resolved | Batch and single-student persisted result schema is now consistent (`_usage` removed before write) |
+| E-003 | Resolved | `/gather` now enforces upload size while streaming chunks and aborts before full buffering |
+| E-103 | Resolved | `PUT /config` no longer swallows active-config load failures; malformed active config now returns 500 |
