@@ -1,7 +1,6 @@
 """FastAPI backend for the AI Autograder pipeline."""
 
 import asyncio
-import io
 import json
 import logging
 import re
@@ -209,8 +208,16 @@ def api_put_config(config: dict = Body(...)):
 
     try:
         existing = _get_active_config()
-    except Exception:
-        existing = {}
+    except HTTPException as e:
+        if e.status_code == 400:
+            existing = {}
+        else:
+            raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to load active assignment config: {e}",
+        )
 
     existing_assignment = str(existing.get("assignment_name", "")).strip()
     incoming_assignment = str(config.get("assignment_name", "")).strip()
@@ -390,29 +397,37 @@ async def api_gather(zip_file: UploadFile = File(...)):
     upload_max_mb = DEFAULT_UPLOAD_MB
     upload_max_bytes = upload_max_mb * 1024 * 1024
 
-    content = await zip_file.read()
-    if len(content) > upload_max_bytes:
-        raise HTTPException(
-            status_code=413,
-            detail=f"Upload exceeds {upload_max_mb}MB limit",
-        )
+    tmp_path = None
+    chunk_size = 1024 * 1024
     try:
-        zipfile.ZipFile(io.BytesIO(content), "r")
-    except zipfile.BadZipFile:
-        raise HTTPException(status_code=400, detail="Invalid or corrupted ZIP file")
+        total_bytes = 0
+        with tempfile.NamedTemporaryFile(suffix=".zip", delete=False) as tmp:
+            tmp_path = Path(tmp.name)
+            while True:
+                chunk = await zip_file.read(chunk_size)
+                if not chunk:
+                    break
+                total_bytes += len(chunk)
+                if total_bytes > upload_max_bytes:
+                    raise HTTPException(
+                        status_code=413,
+                        detail=f"Upload exceeds {upload_max_mb}MB limit",
+                    )
+                tmp.write(chunk)
 
-    config = _get_active_config()
-    out_dir = Path(config.get("submissions_dir", "output/submissions"))
+        try:
+            with zipfile.ZipFile(tmp_path, "r"):
+                pass
+        except zipfile.BadZipFile:
+            raise HTTPException(status_code=400, detail="Invalid or corrupted ZIP file")
 
-    with tempfile.NamedTemporaryFile(suffix=".zip", delete=False) as tmp:
-        tmp.write(content)
-        tmp_path = Path(tmp.name)
-
-    try:
+        config = _get_active_config()
+        out_dir = Path(config.get("submissions_dir", "output/submissions"))
         results = gather_submissions(tmp_path, out_dir, from_zip=True)
         return {"results": results, "output_dir": str(out_dir)}
     finally:
-        tmp_path.unlink(missing_ok=True)
+        if tmp_path is not None:
+            tmp_path.unlink(missing_ok=True)
 
 
 _PROJECT_ROOT = Path(__file__).resolve().parent
