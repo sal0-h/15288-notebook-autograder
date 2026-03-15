@@ -183,8 +183,11 @@ def api_get_config():
         return {}
     try:
         return load_config(_active_config_path)
-    except Exception:
-        return {}
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to load active assignment config: {e}",
+        )
 
 
 @app.put("/config")
@@ -673,6 +676,11 @@ async def api_grade_one(student_name: str):
     if "/" in student_name or "\\" in student_name or ".." in student_name:
         raise HTTPException(status_code=400, detail="Invalid student name")
     config = _get_active_config()
+    if _grading_lock.locked():
+        raise HTTPException(
+            status_code=409,
+            detail="Bulk grading in progress. Wait for it to finish before re-grading one student.",
+        )
     output_dir = Path(config.get("output_dir", "output"))
     parsed_dir = Path(config.get("parsed_dir", "output/parsed"))
     solution_path = output_dir / "solution_parsed.json"
@@ -699,15 +707,22 @@ async def api_grade_one(student_name: str):
     merge_into = None
     out_path = output_dir / "graded_results.json"
     if grade_only_merge and out_path.exists():
-        raw_existing = json.loads(out_path.read_text(encoding="utf-8"))
-        existing_results = raw_existing if isinstance(raw_existing, list) else []
-        for existing in existing_results:
-            if (
-                isinstance(existing, dict)
-                and existing.get("student_name") == student_name
-            ):
-                merge_into = existing
-                break
+        with _results_lock:
+            try:
+                raw_existing = json.loads(out_path.read_text(encoding="utf-8"))
+            except json.JSONDecodeError as e:
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"graded_results.json is corrupted: {e}",
+                )
+            existing_results = raw_existing if isinstance(raw_existing, list) else []
+            for existing in existing_results:
+                if (
+                    isinstance(existing, dict)
+                    and existing.get("student_name") == student_name
+                ):
+                    merge_into = existing
+                    break
 
     result = await asyncio.to_thread(
         grade_student,
@@ -718,6 +733,7 @@ async def api_grade_one(student_name: str):
         ungrouped,
         merge_into,
     )
+    usage = result.pop("_usage", None)
 
     with _results_lock:
         raw = (
@@ -735,7 +751,10 @@ async def api_grade_one(student_name: str):
         if not found:
             results.append(result)
         out_path.write_text(json.dumps(results, indent=2), encoding="utf-8")
-    return {"ok": True, "result": result}
+    response = {"ok": True, "result": result}
+    if usage:
+        response["usage"] = usage
+    return response
 
 
 # ---------------------------------------------------------------------------

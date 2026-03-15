@@ -82,6 +82,11 @@ grading:
         cfg = load_config(config_path)
         assert ".." not in cfg["output_dir"]
 
+    def test_missing_config_raises_by_default(self, tmp_path):
+        missing = tmp_path / "output" / "Missing" / "config.yaml"
+        with pytest.raises(FileNotFoundError):
+            load_config(missing)
+
 
 class TestSaveConfig:
     def test_round_trip(self, tmp_path):
@@ -264,3 +269,32 @@ output_dir: output
             assert len(file_handlers_two) == 1
             assert Path(file_handlers_one[0].baseFilename).resolve() == first.resolve()
             assert Path(file_handlers_two[0].baseFilename).resolve() == second.resolve()
+
+
+class TestGradingQidNormalization:
+    def test_grade_only_normalizes_q_prefix(self):
+        cfg = ensure_app_config(
+            {
+                "assignment_name": "Demo",
+                "grading": {"question_groups": [["1.1"]], "grade_only": ["Q1.1"]},
+            }
+        )
+        assert cfg.grading.grade_only == ["1.1"]
+
+    def test_question_groups_normalize_q_prefix(self):
+        cfg = ensure_app_config(
+            {
+                "assignment_name": "Demo",
+                "grading": {"question_groups": [["Q1.1", "q1.2"]]},
+            }
+        )
+        assert cfg.grading.question_groups == [["1.1", "1.2"]]
+
+    def test_invalid_qid_raises(self):
+        with pytest.raises(ValueError):
+            ensure_app_config(
+                {
+                    "assignment_name": "Demo",
+                    "grading": {"question_groups": [["QX"]]},
+                }
+            )

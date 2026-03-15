@@ -4,7 +4,7 @@ import io
 import json
 import zipfile
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -210,6 +210,14 @@ class TestConfigEndpoints:
         assert saved["assignment_name"] == "New_Assignment"
         assert saved["solution_notebook"] == ""
 
+    def test_get_config_returns_500_when_active_config_load_fails(self, client):
+        with patch("app._active_config_path", new=Path("output/Test/config.yaml")), patch(
+            "app.load_config", side_effect=ValueError("bad yaml")
+        ):
+            r = client.get("/config")
+        assert r.status_code == 500
+        assert "Failed to load active assignment config" in r.json().get("detail", "")
+
 
 class TestPutResults:
     def test_malformed_payload_rejected(self, client, mock_config, tmp_path):
@@ -339,6 +347,117 @@ class TestGradeOneMerge:
         # merge_into is the 6th positional argument in api_grade_one call.
         assert call_args[5]["student_name"] == "Alice"
         assert call_args[5]["questions"]["1.2"]["feedback"] == "old"
+
+    def test_grade_one_does_not_persist_internal_usage(self, client, tmp_path):
+        parsed_dir = tmp_path / "parsed"
+        parsed_dir.mkdir(parents=True, exist_ok=True)
+        output_dir = tmp_path / "output"
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        (output_dir / "solution_parsed.json").write_text(
+            json.dumps({"sections": {"1": {"questions": {"1.1": {"points": 2}}}}}),
+            encoding="utf-8",
+        )
+        (parsed_dir / "Alice.json").write_text(
+            json.dumps(
+                {
+                    "sections": {"1": {"questions": {"1.1": {"points": 2}}}},
+                    "student_name": "Alice",
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        cfg = _full_config(tmp_path)
+        cfg["parsed_dir"] = str(parsed_dir)
+        cfg["output_dir"] = str(output_dir)
+        cfg["grading"] = {"question_groups": [["1.1"]], "grade_only": None}
+
+        graded_with_usage = {
+            "student_name": "Alice",
+            "questions": {"1.1": {"score": 2, "max": 2, "feedback": "ok"}},
+            "total_score": 2,
+            "total_max": 2,
+            "summary_feedback": "Full marks.",
+            "_usage": {"prompt_tokens": 11, "completion_tokens": 7},
+        }
+
+        with patch("app._get_active_config", return_value=cfg), patch(
+            "app.grade_student", return_value=graded_with_usage
+        ):
+            r = client.post("/grade/Alice")
+
+        assert r.status_code == 200
+        body = r.json()
+        assert "usage" in body
+        assert "_usage" not in body["result"]
+
+        saved = json.loads((output_dir / "graded_results.json").read_text(encoding="utf-8"))
+        assert "_usage" not in saved[0]
+
+    def test_grade_one_merge_uses_results_lock_for_pre_read(self, client, tmp_path):
+        parsed_dir = tmp_path / "parsed"
+        parsed_dir.mkdir(parents=True, exist_ok=True)
+        output_dir = tmp_path / "output"
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        (output_dir / "solution_parsed.json").write_text(
+            json.dumps({"sections": {"1": {"questions": {"1.1": {"points": 2}}}}}),
+            encoding="utf-8",
+        )
+        (parsed_dir / "Alice.json").write_text(
+            json.dumps(
+                {
+                    "sections": {"1": {"questions": {"1.1": {"points": 2}}}},
+                    "student_name": "Alice",
+                }
+            ),
+            encoding="utf-8",
+        )
+        (output_dir / "graded_results.json").write_text(
+            json.dumps(
+                [
+                    {
+                        "student_name": "Alice",
+                        "questions": {"1.1": {"score": 1, "max": 2, "feedback": "old"}},
+                        "total_score": 1,
+                        "total_max": 2,
+                        "summary_feedback": "Q1.1: old",
+                    }
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        cfg = _full_config(tmp_path)
+        cfg["parsed_dir"] = str(parsed_dir)
+        cfg["output_dir"] = str(output_dir)
+        cfg["grading"] = {
+            "question_groups": [["1.1"]],
+            "grade_only": ["1.1"],
+            "grade_only_merge": True,
+        }
+
+        returned = {
+            "student_name": "Alice",
+            "questions": {"1.1": {"score": 2, "max": 2, "feedback": "new"}},
+            "total_score": 2,
+            "total_max": 2,
+            "summary_feedback": "Full marks.",
+        }
+
+        mock_lock = MagicMock()
+        mock_lock.__enter__.return_value = None
+        mock_lock.__exit__.return_value = None
+
+        with patch("app._get_active_config", return_value=cfg), patch(
+            "app.grade_student", return_value=returned
+        ), patch("app._results_lock", new=mock_lock):
+            r = client.post("/grade/Alice")
+
+        assert r.status_code == 200
+        # One lock for merge pre-read and one for final write.
+        assert mock_lock.__enter__.call_count >= 2
 
 
 class TestRubricsEndpoints:

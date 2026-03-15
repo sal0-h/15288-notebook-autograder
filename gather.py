@@ -186,14 +186,14 @@ def main():
     parser.add_argument(
         "--config",
         type=Path,
-        default=Path("config.yaml"),
-        help="Config file for output path",
+        default=None,
+        help="Optional assignment config.yaml to derive submissions_dir",
     )
     args = parser.parse_args()
 
     # Override out_dir from config if available
     out_dir = args.out
-    if args.config.exists():
+    if args.config is not None and args.config.exists():
         cfg = _load_config(args.config)
         if cfg and "submissions_dir" in cfg:
             out_dir = Path(cfg["submissions_dir"])

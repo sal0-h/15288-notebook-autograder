@@ -25,6 +25,17 @@ def sanitize_assignment_name(name: str) -> str:
     return re.sub(r'[/\\:*?"<>|.]', "_", str(name or "default")).strip("_") or "default"
 
 
+_QID_RE = re.compile(r"^\d+\.\d+$")
+
+
+def normalize_qid(value: str) -> str:
+    """Canonicalize question IDs to numeric form (e.g. Q1.1 -> 1.1)."""
+    qid = str(value or "").strip().lstrip("Qq").strip()
+    if not _QID_RE.match(qid):
+        raise ValueError(f"Invalid question ID '{value}'. Expected format like '1.1'.")
+    return qid
+
+
 def filter_groups_by_grade_only(
     groups: list[list[str]], grade_only: list[str] | None
 ) -> list[list[str]]:
@@ -139,11 +150,18 @@ def get_job_logger(config: dict | BaseModel, module_name: str) -> logging.Logger
 # ---------------------------------------------------------------------------
 
 
-def _read_yaml_dict(path: Path) -> dict:
+def _read_yaml_dict(path: Path, *, require_exists: bool = True) -> dict:
     if not path.exists():
+        if require_exists:
+            raise FileNotFoundError(f"Config file not found: {path}")
         return {}
     with open(path, "r", encoding="utf-8") as f:
-        return yaml.safe_load(f) or {}
+        loaded = yaml.safe_load(f)
+    if loaded is None:
+        return {}
+    if not isinstance(loaded, dict):
+        raise ValueError(f"Invalid config format in {path}: expected a YAML mapping.")
+    return loaded
 
 
 def _resolve_config_paths(cfg: dict, config_root: Path) -> dict:
@@ -185,7 +203,7 @@ def _apply_config_defaults(cfg: dict) -> dict:
     return normalized
 
 
-def load_config(config_path: Path) -> dict:
+def load_config(config_path: Path, *, require_exists: bool = True) -> dict:
     """Load assignment config from an explicit path.
 
     config_path must point to the assignment config file, typically at
@@ -194,7 +212,7 @@ def load_config(config_path: Path) -> dict:
     solution_notebook) are resolved against it.
     """
     path = Path(config_path).resolve()
-    cfg = _read_yaml_dict(path)
+    cfg = _read_yaml_dict(path, require_exists=require_exists)
     cfg = _apply_config_defaults(cfg)
     # Project root: output/{name}/config.yaml → 3 levels up
     project_root = path.parent.parent.parent
@@ -299,6 +317,30 @@ class GradingConfig(BaseModel):
     grade_only_merge: bool = (
         False  # If True + grade_only set, merge regraded questions into existing results
     )
+
+    @field_validator("question_groups", mode="before")
+    @classmethod
+    def normalize_question_groups(cls, v):
+        if v is None:
+            return []
+        if not isinstance(v, list):
+            raise ValueError("grading.question_groups must be a list of question groups")
+        normalized_groups: list[list[str]] = []
+        for group in v:
+            if not isinstance(group, list):
+                raise ValueError("Each grading.question_groups entry must be a list")
+            normalized_groups.append([normalize_qid(qid) for qid in group])
+        return normalized_groups
+
+    @field_validator("grade_only", mode="before")
+    @classmethod
+    def normalize_grade_only(cls, v):
+        if v in (None, [], ()):
+            return None
+        if not isinstance(v, list):
+            raise ValueError("grading.grade_only must be a list of question IDs")
+        # Preserve order while removing duplicates.
+        return list(dict.fromkeys(normalize_qid(qid) for qid in v))
 
 
 class RubricItem(BaseModel):
