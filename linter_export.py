@@ -47,7 +47,6 @@ def _fmt_list(items):
 def _emit(summary, ok):
     payload = {{
         "score": 0,
-        "output": summary,
         "tests": [
             {{
                 "name": "Notebook Format Lint",
