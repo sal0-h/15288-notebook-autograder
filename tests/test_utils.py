@@ -5,6 +5,7 @@ import logging
 from pathlib import Path
 
 import pytest
+import utils
 
 from utils import (
     AppConfig,
@@ -269,6 +270,42 @@ output_dir: output
             assert len(file_handlers_two) == 1
             assert Path(file_handlers_one[0].baseFilename).resolve() == first.resolve()
             assert Path(file_handlers_two[0].baseFilename).resolve() == second.resolve()
+
+
+class TestOpenAIClientConfig:
+    def test_get_openai_client_uses_httpx_limits_and_timeout(self, monkeypatch):
+        monkeypatch.setenv("key", "")
+        monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+        captured = {}
+
+        def fake_httpx_client(*, limits, timeout):
+            captured["limits"] = limits
+            captured["timeout"] = timeout
+            return "http-client"
+
+        def fake_openai(**kwargs):
+            captured["openai_kwargs"] = kwargs
+            return "openai-client"
+
+        monkeypatch.setattr(utils.httpx, "Client", fake_httpx_client)
+        monkeypatch.setattr(utils, "OpenAI", fake_openai)
+
+        client = utils.get_openai_client(
+            max_retries=7,
+            max_connections=11,
+            max_keepalive_connections=9,
+            read_timeout_s=123.0,
+            pool_timeout_s=17.0,
+        )
+
+        assert client == "openai-client"
+        assert captured["limits"].max_connections == 11
+        assert captured["limits"].max_keepalive_connections == 9
+        assert captured["timeout"].read == 123.0
+        assert captured["timeout"].pool == 17.0
+        assert captured["openai_kwargs"]["api_key"] == "test-key"
+        assert captured["openai_kwargs"]["max_retries"] == 7
+        assert captured["openai_kwargs"]["http_client"] == "http-client"
 
 
 class TestGradingQidNormalization:

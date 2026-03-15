@@ -435,10 +435,51 @@ class TestGradeOnly:
         assert "[skipped - not in grade_only]" in result["questions"]["1.2"]["feedback"]
         assert result["questions"]["2.1"]["score"] == 0.0
         assert "[skipped - not in grade_only]" in result["questions"]["2.1"]["feedback"]
-
         # total_max is sum of graded questions only (not skipped)
         assert result["total_max"] == 2.0  # 1.1 only (2 pts)
         assert result["total_score"] == 2.0  # only 1.1 contributes
+
+    def test_grade_all_students_configures_shared_client_pool_by_workers(
+        self, tmp_path
+    ):
+        output_dir = tmp_path / "output"
+        parsed_dir = output_dir / "parsed"
+        output_dir.mkdir(parents=True)
+        parsed_dir.mkdir(parents=True)
+
+        (output_dir / "solution_parsed.json").write_text(
+            json.dumps({"sections": {}}), encoding="utf-8"
+        )
+
+        config = {
+            "assignment_name": "PoolConfig",
+            "model": "gpt-4o-mini",
+            "solution_notebook": "",
+            "output_dir": str(output_dir),
+            "parsed_dir": str(parsed_dir),
+            "submissions_dir": str(output_dir / "submissions"),
+            "workers": 3,
+            "parsing": {
+                "section_regex": r"(?m)^\\s*#\\s*<font[^>]*>\\s*(\\d+)\\b",
+                "question_regex": r"(?i)^\\s*(-\\s*)?Q(\\d+)\\.(\\d+)\\s*.*?\\[\\s*(\\d+)\\s*PTS\\s*\\]",
+                "keep_images": True,
+            },
+            "grading": {"question_groups": []},
+            "rubrics": {},
+        }
+
+        mock_client = MagicMock()
+        with patch(
+            "batch_grader.get_openai_client", return_value=mock_client
+        ) as mock_get:
+            events = list(grade_all_students(config, client=None))
+
+        assert events == []
+        mock_get.assert_called_once_with(
+            max_connections=3,
+            max_keepalive_connections=3,
+            read_timeout_s=120.0,
+        )
 
     def test_empty_grade_only_behaves_like_no_filter(self):
         """An empty grade_only list should behave like no filter (grade configured groups)."""

@@ -44,7 +44,12 @@ def grade_all_students(
     from grade import grade_student  # noqa: PLC0415
 
     if client is None:
-        client = get_openai_client()
+        pool_size = max(1, int(cfg.workers))
+        client = get_openai_client(
+            max_connections=pool_size,
+            max_keepalive_connections=pool_size,
+            read_timeout_s=120.0,
+        )
 
     output_dir = Path(cfg.output_dir)
     parsed_dir = Path(cfg.parsed_dir)

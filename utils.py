@@ -9,6 +9,7 @@ import re
 from typing import Any
 from pathlib import Path
 
+import httpx
 import yaml
 from dotenv import load_dotenv
 
@@ -275,7 +276,16 @@ def temperature_for_model(model: str) -> float:
     return 0.0
 
 
-def get_openai_client(max_retries: int = 5) -> OpenAI:
+def get_openai_client(
+    max_retries: int = 5,
+    *,
+    max_connections: int = 20,
+    max_keepalive_connections: int = 20,
+    connect_timeout_s: float = 10.0,
+    read_timeout_s: float = 120.0,
+    write_timeout_s: float = 30.0,
+    pool_timeout_s: float = 30.0,
+) -> OpenAI:
     """Initialize OpenAI client with .env key, with SDK-level retries.
     Checks 'key' first (from .env), then OPENAI_API_KEY as fallback."""
     load_dotenv()
@@ -284,7 +294,22 @@ def get_openai_client(max_retries: int = 5) -> OpenAI:
         raise ValueError(
             "API key not found. Set 'key=your-api-key' in .env or OPENAI_API_KEY environment variable."
         )
-    return OpenAI(api_key=api_key, max_retries=max_retries)
+    limits = httpx.Limits(
+        max_connections=max(1, int(max_connections)),
+        max_keepalive_connections=max(1, int(max_keepalive_connections)),
+    )
+    timeout = httpx.Timeout(
+        connect=connect_timeout_s,
+        read=read_timeout_s,
+        write=write_timeout_s,
+        pool=pool_timeout_s,
+    )
+    http_client = httpx.Client(limits=limits, timeout=timeout)
+    return OpenAI(
+        api_key=api_key,
+        max_retries=max_retries,
+        http_client=http_client,
+    )
 
 
 # ---------------------------------------------------------------------------
