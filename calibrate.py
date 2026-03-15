@@ -81,8 +81,15 @@ def main():
     parser = argparse.ArgumentParser(
         description="Run calibration (outlier detection) on graded results"
     )
-    parser.add_argument("--config", type=Path, default=Path("config.yaml"))
+    parser.add_argument(
+        "--config",
+        type=Path,
+        default=None,
+        help="Path to assignment config.yaml (required, typically output/{assignment_name}/config.yaml)",
+    )
     args = parser.parse_args()
+    if args.config is None:
+        parser.error("--config is required and must point to output/{assignment_name}/config.yaml")
 
     config = load_config(args.config)
     flagged = run_calibration(config)

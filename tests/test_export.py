@@ -7,7 +7,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from export import export_all, export_autograder_zip
+from export import RUN_AUTOGRADER, export_all, export_autograder_zip
 from parse_notebook import _sort_key_qid
 from utils import load_config
 
@@ -237,3 +237,12 @@ class TestExportAutograderZip:
         config = _make_config(tmp_path, tmp_path)
         with pytest.raises(FileNotFoundError, match="Run export first"):
             export_autograder_zip(config)
+
+
+class TestRunAutograderScript:
+    def test_does_not_use_fuzzy_name_matching(self):
+        assert "startswith(student_name)" not in RUN_AUTOGRADER
+        assert "student_name in f.stem" not in RUN_AUTOGRADER
+
+    def test_reports_ambiguous_exact_normalized_matches(self):
+        assert "Ambiguous pre-computed results for" in RUN_AUTOGRADER

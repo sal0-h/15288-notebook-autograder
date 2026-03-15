@@ -43,18 +43,26 @@ with open(metadata_path) as f:
 users = meta.get("users", [])
 student_name = (users[0].get("name", "") or "").strip() if users else ""
 
+def _normalize(name: str) -> str:
+    # Mirror export filename sanitization and avoid fuzzy matching collisions.
+    return "".join(c for c in name.strip() if c not in '/\\:*?"<>|')
+
 match_path = None
 if student_name and pre_computed.exists():
+    normalized_student = _normalize(student_name)
+    matches = []
     for f in sorted(pre_computed.glob("*.json")):
-        stem = f.stem
-        if stem == student_name:
-            match_path = f
-            break
-    if match_path is None:
-        for f in sorted(pre_computed.glob("*.json")):
-            if f.stem.startswith(student_name) or student_name in f.stem:
-                match_path = f
-                break
+        if _normalize(f.stem) == normalized_student:
+            matches.append(f)
+    if len(matches) == 1:
+        match_path = matches[0]
+    elif len(matches) > 1:
+        with open(out_path, "w") as f:
+            json.dump({
+                "output": f"Ambiguous pre-computed results for: {student_name}. Found {len(matches)} exact-normalized matches.",
+                "tests": []
+            }, f)
+        exit(0)
 
 if match_path:
     shutil.copy(match_path, out_path)
@@ -272,13 +280,20 @@ def main():
     import argparse
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--config", type=Path, default=Path("config.yaml"))
+    parser.add_argument(
+        "--config",
+        type=Path,
+        default=None,
+        help="Path to assignment config.yaml (required, typically output/{assignment_name}/config.yaml)",
+    )
     parser.add_argument(
         "--autograder-zip",
         action="store_true",
         help="Create Gradescope autograder zip (run export first if needed)",
     )
     args = parser.parse_args()
+    if args.config is None:
+        parser.error("--config is required and must point to output/{assignment_name}/config.yaml")
 
     config = load_config(args.config)
     if args.autograder_zip:

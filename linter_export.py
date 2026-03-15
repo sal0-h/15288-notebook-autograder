@@ -239,9 +239,11 @@ def main():
         "--config",
         type=Path,
         default=None,
-        help="Path to config (default: config.yaml or output/{assignment}/config.yaml)",
+        help="Path to assignment config.yaml (required, typically output/{assignment_name}/config.yaml)",
     )
     args = parser.parse_args()
+    if args.config is None:
+        parser.error("--config is required and must point to output/{assignment_name}/config.yaml")
 
     zip_path = export_linter_zip(args.config)
     print(f"Created: {zip_path}")
