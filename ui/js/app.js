@@ -859,11 +859,71 @@ let reviewData = [];
 let parsedCache = {};
 let calibrationData = [];
 let currentReviewIdx = -1;
+let currentQids = [];
+let currentQidIdx = 0;
+let reviewDirty = false;
 
 function calibrationLookup() {
     const m = {};
     for (const f of calibrationData) m[f.student_name + "|" + f.qid] = f;
     return m;
+}
+
+function renderMarkdown(md) {
+    if (!md || !String(md).trim()) return "";
+    const html = typeof marked !== "undefined" ? marked.parse(md) : escHtml(md);
+    return typeof DOMPurify !== "undefined"
+        ? DOMPurify.sanitize(html, { ALLOWED_TAGS: ["b", "i", "em", "strong", "p", "ul", "ol", "li", "code", "pre", "br", "h1", "h2", "h3", "span"], ALLOWED_ATTR: ["class"] })
+        : escHtml(html);
+}
+
+function getGradedQidsForStudent(s) {
+    const qs = s.questions || {};
+    const graded = Object.keys(qs).filter(qid => (qs[qid].feedback || "") !== "[skipped - not in grade_only]");
+    return graded.sort((a, b) => {
+        const pa = a.split(".").map(Number);
+        const pb = b.split(".").map(Number);
+        return (pa[0] - pb[0]) || ((pa[1] || 0) - (pb[1] || 0));
+    });
+}
+
+function goNextStudent() {
+    if (reviewData.length === 0) return;
+    if (reviewDirty && !confirm("Discard unsaved changes?")) return;
+    reviewDirty = false;
+    currentReviewIdx = Math.min(currentReviewIdx + 1, reviewData.length - 1);
+    showReviewDetail(currentReviewIdx);
+    renderStudentList();
+    scrollStudentIntoView();
+}
+
+function goPrevStudent() {
+    if (reviewData.length === 0) return;
+    if (reviewDirty && !confirm("Discard unsaved changes?")) return;
+    reviewDirty = false;
+    currentReviewIdx = Math.max(currentReviewIdx - 1, 0);
+    showReviewDetail(currentReviewIdx);
+    renderStudentList();
+    scrollStudentIntoView();
+}
+
+function goNextQuestion() {
+    if (currentQids.length === 0) return;
+    currentQidIdx = Math.min(currentQidIdx + 1, currentQids.length - 1);
+    renderQPills();
+    renderReviewContent();
+}
+
+function goPrevQuestion() {
+    if (currentQids.length === 0) return;
+    currentQidIdx = Math.max(currentQidIdx - 1, 0);
+    renderQPills();
+    renderReviewContent();
+}
+
+function scrollStudentIntoView() {
+    const el = document.querySelector(`.student-item[data-idx="${currentReviewIdx}"]`);
+    if (el) el.scrollIntoView({ block: "nearest", behavior: "smooth" });
 }
 
 async function loadReviewAndCalibration() {
@@ -913,6 +973,7 @@ function formatFlagReasons(reasons) {
 
 function renderStudentList() {
     const list = document.getElementById("studentList");
+    if (!list) return;
     const flaggedFirst = document.getElementById("reviewFlaggedFirst")?.checked || false;
     let order = reviewData.map((_, i) => i);
     if (flaggedFirst) {
@@ -923,10 +984,17 @@ function renderStudentList() {
         const reasons = getStudentFlagReasons(s);
         const flagged = reasons.length > 0;
         const reasonText = formatFlagReasons(reasons);
-        return `<div class="student-item ${flagged ? "flagged" : ""}" data-idx="${i}" title="${escHtml(reasonText) || ""}" tabindex="0" role="button"><span class="sname">${flagged ? "⚠ " : ""}${escHtml(s.student_name)}</span><span class="sscore">${s.total_score} / ${s.total_max}</span>${flagged ? `<span class="sscore" style="font-size:0.75rem;color:#d97706;">${escHtml(reasonText)}</span>` : ""}</div>`;
+        const isDirty = i === currentReviewIdx && reviewDirty;
+        const dirtyDot = isDirty ? '<span class="review-v2-dirty" title="Unsaved changes">●</span> ' : "";
+        return `<div class="student-item ${flagged ? "flagged" : ""} ${i === currentReviewIdx ? "selected" : ""}" data-idx="${i}" title="${escHtml(reasonText) || ""}" tabindex="0" role="button"><span class="sname">${dirtyDot}${flagged ? "⚠ " : ""}${escHtml(s.student_name)}</span><span class="sscore">${s.total_score} / ${s.total_max}</span>${flagged ? `<span class="sscore" style="font-size:0.75rem;color:#d97706;">${escHtml(reasonText)}</span>` : ""}</div>`;
     }).join("");
     list.querySelectorAll(".student-item").forEach(el => {
-        const go = () => showReviewDetail(parseInt(el.dataset.idx));
+        const go = () => {
+            const idx = parseInt(el.dataset.idx);
+            if (idx !== currentReviewIdx && reviewDirty && !confirm("Discard unsaved changes?")) return;
+            if (idx !== currentReviewIdx) reviewDirty = false;
+            showReviewDetail(idx);
+        };
         el.onclick = go;
         el.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); go(); } };
     });
@@ -938,19 +1006,182 @@ window.toggleBlock = function(qid) {
 };
 
 window.recalcTotal = function() {
+    const s = currentReviewIdx >= 0 ? reviewData[currentReviewIdx] : null;
+    if (!s) return;
+    const qs = s.questions || {};
     let total = 0;
-    document.querySelectorAll("#reviewDetail input[data-q]").forEach(inp => { total += parseFloat(inp.value) || 0; });
+    const currentQid = currentQids[currentQidIdx];
+    const dedInput = document.querySelector(`#reviewDetail input[data-q-ded="${currentQid}"]`);
+    for (const qid of currentQids) {
+        if (qid === currentQid && dedInput && qs[qid]) {
+            const max = qs[qid].max || 0;
+            const ded = parseFloat(dedInput.value) || 0;
+            total += Math.max(0, max - ded);
+        } else if (qs[qid]) {
+            total += qs[qid].score || 0;
+        }
+    }
     const el = document.getElementById("totalDisplay");
     if (el) el.textContent = Math.round(total * 100) / 100;
 };
 
+function renderQuestionContent(qid, q, parsed, studentName) {
+    let qMarkdown = "", studentCode = "", studentOutput = "", studentMd = "";
+    if (parsed) {
+        for (const secData of Object.values(parsed.sections || {})) {
+            if (secData.questions && secData.questions[qid]) {
+                const pq = secData.questions[qid];
+                qMarkdown = pq.question_markdown || "";
+                studentCode = pq.answer_code_concat || "";
+                studentOutput = pq.answer_text_concat || "";
+                studentMd = pq.answer_markdown_concat || "";
+                break;
+            }
+        }
+    }
+    let html = "";
+    if (qMarkdown) html += `<div class="review-v2-section"><div class="review-v2-section-label">Question</div><div class="review-v2-qstatement">${renderMarkdown(qMarkdown)}</div></div>`;
+    if (studentCode) {
+        html += `<div class="review-v2-section"><div class="review-v2-section-label">Student Code</div><pre class="review-v2-code"><code class="language-python">${escHtml(studentCode)}</code></pre></div>`;
+    }
+    if (studentOutput) {
+        const trunc = 600;
+        const isLong = studentOutput.length > trunc;
+        const show = isLong ? studentOutput.slice(0, trunc) + "\n…" : studentOutput;
+        html += `<div class="review-v2-section"><div class="review-v2-section-label">Output</div><pre class="review-v2-output" id="reviewOutput-${qid}">${escHtml(show)}</pre>`;
+        if (isLong) html += `<button type="button" class="btn btn-secondary" style="font-size:0.8rem;padding:4px 8px" data-toggle-output="${qid}">Show all</button>`;
+        html += `</div>`;
+    }
+    if (studentMd) html += `<div class="review-v2-section"><div class="review-v2-section-label">Written Answer</div><div class="review-v2-qstatement">${renderMarkdown(studentMd)}</div></div>`;
+    return html;
+}
+
+function renderReviewContent() {
+    const detail = document.getElementById("reviewDetail");
+    const s = currentReviewIdx >= 0 ? reviewData[currentReviewIdx] : null;
+    if (!s || currentQids.length === 0) {
+        detail.innerHTML = `<p class="review-placeholder">No questions to review for this student.</p>`;
+        return;
+    }
+    const qid = currentQids[currentQidIdx];
+    const q = s.questions?.[qid];
+    if (!q) {
+        detail.innerHTML = `<p class="review-placeholder">Question ${qid} not found.</p>`;
+        return;
+    }
+    const parsed = parsedCache[s.student_name];
+    const max = q.max || 0;
+    const deduction = Math.max(0, max - (q.score || 0));
+    const score = max - deduction;
+    const outlier = calibrationLookup()[s.student_name + "|" + qid];
+    const outlierBanner = outlier ? `<div class="outlier-banner">Statistical outlier (${outlier.flag_reason === "high" ? "above" : "below"} class mean): score ${outlier.score}/${outlier.max || max}, mean ${outlier.mean} ± ${outlier.std}</div>` : "";
+    let html = outlierBanner;
+    html += renderQuestionContent(qid, q, parsed, s.student_name);
+    html += `<div class="review-v2-ded-widget">Max ${max} pts − <input type="number" data-q-ded="${qid}" data-q-max="${max}" value="${deduction}" min="0" max="${max}" step="0.5"> = <span id="reviewScoreDisplay-${qid}">${score}</span></div>`;
+    html += `<textarea class="review-v2-feedback-ta" data-q-fb="${qid}" placeholder="Feedback">${escHtml(q.feedback || "")}</textarea>`;
+    detail.innerHTML = html;
+    const dedInput = detail.querySelector(`input[data-q-ded="${qid}"]`);
+    if (dedInput) {
+        dedInput.oninput = () => {
+            const d = parseFloat(dedInput.value) || 0;
+            const sc = Math.max(0, max - d);
+            const span = document.getElementById(`reviewScoreDisplay-${qid}`);
+            if (span) span.textContent = sc;
+            const s = currentReviewIdx >= 0 ? reviewData[currentReviewIdx] : null;
+            if (s?.questions?.[qid]) s.questions[qid].score = sc;
+            reviewDirty = true;
+            recalcTotal();
+            renderStudentList();
+        };
+    }
+    const fbTa = detail.querySelector(`textarea[data-q-fb="${qid}"]`);
+    if (fbTa) {
+        fbTa.oninput = () => {
+            const s = currentReviewIdx >= 0 ? reviewData[currentReviewIdx] : null;
+            if (s?.questions?.[qid]) s.questions[qid].feedback = fbTa.value;
+            reviewDirty = true;
+            renderStudentList();
+        };
+        if (typeof autoResizeRubricTextarea === "function") {
+            autoResizeRubricTextarea(fbTa);
+            fbTa.addEventListener("input", () => autoResizeRubricTextarea(fbTa));
+        }
+    }
+    detail.querySelectorAll("pre.review-v2-code code").forEach(el => {
+        if (typeof hljs !== "undefined" && hljs.highlightElement) hljs.highlightElement(el);
+    });
+    recalcTotal();
+    const confBadge = document.getElementById("reviewConfidenceBadge");
+    if (confBadge) {
+        const conf = (q.confidence || "medium").toLowerCase();
+        const confClass = conf === "high" ? "badge-high" : conf === "low" ? "badge-low" : "badge-medium";
+        confBadge.className = `badge ${confClass}`;
+        confBadge.textContent = `conf: ${conf}`;
+    }
+    detail.querySelectorAll("[data-toggle-output]").forEach(btn => {
+        btn.onclick = () => {
+            const id = btn.dataset.toggleOutput;
+            const pre = document.getElementById("reviewOutput-" + id);
+            if (pre) {
+                const s = currentReviewIdx >= 0 ? reviewData[currentReviewIdx] : null;
+                if (s) {
+                    const parsed = parsedCache[s.student_name];
+                    let out = "";
+                    if (parsed) {
+                        for (const secData of Object.values(parsed.sections || {})) {
+                            if (secData.questions && secData.questions[id]) {
+                                out = secData.questions[id].answer_text_concat || "";
+                                break;
+                            }
+                        }
+                    }
+                    pre.textContent = out;
+                    pre.classList.add("expanded");
+                    btn.remove();
+                }
+            }
+        };
+    });
+}
+
+function renderQPills() {
+    const container = document.getElementById("reviewQPills");
+    const stuInfo = document.getElementById("reviewStuInfo");
+    const totalDisplay = document.getElementById("totalDisplay");
+    const totalMaxDisplay = document.getElementById("totalMaxDisplay");
+    if (!container) return;
+    if (currentQids.length === 0) {
+        container.innerHTML = "";
+        if (stuInfo) stuInfo.textContent = "Student 0/0";
+        if (totalDisplay) totalDisplay.textContent = "0";
+        if (totalMaxDisplay) totalMaxDisplay.textContent = "0";
+        return;
+    }
+    const s = reviewData[currentReviewIdx];
+    container.innerHTML = currentQids.map((qid, i) =>
+        `<button type="button" class="review-v2-qpill ${i === currentQidIdx ? "active" : ""}" data-qidx="${i}">Q${qid}</button>`
+    ).join("");
+    container.querySelectorAll(".review-v2-qpill").forEach(btn => {
+        btn.onclick = () => {
+            currentQidIdx = parseInt(btn.dataset.qidx);
+            renderReviewContent();
+            renderQPills();
+        };
+    });
+    if (stuInfo) stuInfo.textContent = `Student ${currentReviewIdx + 1}/${reviewData.length}`;
+    if (totalDisplay) totalDisplay.textContent = s?.total_score ?? "0";
+    if (totalMaxDisplay) totalMaxDisplay.textContent = s?.total_max ?? "0";
+}
+
 async function showReviewDetail(idx) {
     currentReviewIdx = idx;
+    reviewDirty = false;
     const errEl = document.getElementById("reviewError");
     if (errEl) errEl.innerHTML = "";
-    document.querySelectorAll(".student-item").forEach((el) => el.classList.toggle("selected", el.dataset.idx == String(idx)));
     const s = reviewData[idx];
     if (!s) return;
+    currentQids = getGradedQidsForStudent(s);
+    currentQidIdx = currentQidIdx < currentQids.length ? currentQidIdx : 0;
     const detail = document.getElementById("reviewDetail");
     detail.innerHTML = `<p style="color:#64748b;padding:8px">Loading student answers…</p>`;
     let parsed = parsedCache[s.student_name];
@@ -960,45 +1191,18 @@ async function showReviewDetail(idx) {
             if (r.ok) { parsed = await r.json(); parsedCache[s.student_name] = parsed; }
         } catch (_) {}
     }
-    let html = `<div class="total-display" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap"><span>Total: <span id="totalDisplay">${s.total_score}</span> / ${s.total_max}</span><span id="regradeEstimate" class="status-ok" style="font-size:0.85rem"></span></div>`;
-    const qs = s.questions || {};
-    const gradedQs = Object.entries(qs).filter(([, q]) => (q.feedback || "") !== "[skipped - not in grade_only]");
-    for (const [qid, q] of gradedQs) {
-        let qMarkdown = "", studentCode = "", studentOutput = "", studentMd = "";
-        if (parsed) {
-            for (const secData of Object.values(parsed.sections || {})) {
-                if (secData.questions && secData.questions[qid]) {
-                    const pq = secData.questions[qid];
-                    qMarkdown = pq.question_markdown || "";
-                    studentCode = pq.answer_code_concat || "";
-                    studentOutput = pq.answer_text_concat || "";
-                    studentMd = pq.answer_markdown_concat || "";
-                    break;
-                }
-            }
-        }
-        const scoreClass = q.score === q.max ? "status-ok" : q.score === 0 ? "status-error" : "status-warning";
-        const conf = (q.confidence || "medium").toLowerCase();
+    renderQPills();
+    renderReviewContent();
+    const confBadge = document.getElementById("reviewConfidenceBadge");
+    if (confBadge && currentQids.length > 0) {
+        const qid = currentQids[currentQidIdx];
+        const q = s.questions?.[qid];
+        const conf = (q?.confidence || "medium").toLowerCase();
         const confClass = conf === "high" ? "badge-high" : conf === "low" ? "badge-low" : "badge-medium";
-        const confBadge = `<span class="badge ${confClass}" title="LLM confidence in this grade">conf: ${conf}</span>`;
-        const reviewBadge = q.requires_review ? `<span class="badge badge-review" title="LLM marked for human review">NEEDS REVIEW</span>` : "";
-        const outlier = calibrationLookup()[s.student_name + "|" + qid];
-        const outlierBanner = outlier ? `<div class="outlier-banner">Statistical outlier (${outlier.flag_reason === "high" ? "above" : "below"} class mean): score ${outlier.score}/${outlier.max || q.max}, mean ${outlier.mean} ± ${outlier.std}</div>` : "";
-        html += `<div class="q-block" id="qblock-${qid}"><div class="q-block-header" role="button" tabindex="0" data-toggle-qid="${qid}"><h4>Q${qid} ${confBadge} ${reviewBadge}</h4><span class="q-block-score ${scoreClass}">${q.score} / ${q.max}</span></div><div class="q-block-body" id="qbody-${qid}">${outlierBanner}`;
-        if (qMarkdown) html += `<div class="q-section"><div class="q-section-label">Question</div><div class="q-markdown">${sanitizeQuestionHtml(qMarkdown)}</div></div>`;
-        if (studentCode) html += `<div class="q-section"><div class="q-section-label">Student Code</div><pre class="code-block">${escHtml(studentCode)}</pre></div>`;
-        if (studentOutput) html += `<div class="q-section"><div class="q-section-label">Output</div><pre class="code-block">${escHtml(studentOutput.slice(0, 800))}${studentOutput.length > 800 ? "\n…" : ""}</pre></div>`;
-        if (studentMd) html += `<div class="q-section"><div class="q-section-label">Written Answer</div><div class="q-markdown">${escHtml(studentMd)}</div></div>`;
-        html += `<div class="edit-row"><input type="number" data-q="${qid}" value="${q.score}" min="0" max="${q.max}" step="0.5" onchange="recalcTotal()"><textarea data-q-fb="${qid}" rows="2">${escHtml(q.feedback || "")}</textarea></div></div></div>`;
+        confBadge.className = `badge ${confClass}`;
+        confBadge.textContent = `conf: ${conf}`;
+        confBadge.title = "LLM confidence in this grade";
     }
-    html += `<div class="review-actions"><button class="btn" onclick="saveReview()">Save Changes</button><span id="reviewSaveFeedback" style="font-size:0.85rem;margin-left:8px"></span><button class="btn btn-secondary" id="regradeStudentBtn" onclick="regradeStudent()">Re-grade this student</button></div>`;
-    detail.innerHTML = html;
-    detail.querySelectorAll(".q-block-header[data-toggle-qid]").forEach(h => {
-        const qid = h.dataset.toggleQid;
-        const go = () => toggleBlock(qid);
-        h.onclick = go;
-        h.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); go(); } };
-    });
     loadRegradeEstimate(s.student_name);
 }
 
@@ -1006,13 +1210,21 @@ window.saveReview = async function() {
     if (currentReviewIdx < 0) return;
     const s = reviewData[currentReviewIdx];
     const qs = JSON.parse(JSON.stringify(s.questions));
-    document.querySelectorAll(`#reviewDetail input[data-q]`).forEach(inp => { if (qs[inp.dataset.q]) qs[inp.dataset.q].score = parseFloat(inp.value) || 0; });
-    document.querySelectorAll(`#reviewDetail textarea[data-q-fb]`).forEach(ta => { if (qs[ta.dataset.qFb]) qs[ta.dataset.qFb].feedback = ta.value; });
+    const dedInput = document.querySelector("#reviewDetail input[data-q-ded]");
+    if (dedInput && qs[dedInput.dataset.qDed]) {
+        const max = parseFloat(dedInput.dataset.qMax) || 0;
+        const ded = parseFloat(dedInput.value) || 0;
+        qs[dedInput.dataset.qDed].score = Math.max(0, max - ded);
+    }
+    document.querySelectorAll("#reviewDetail textarea[data-q-fb]").forEach(ta => {
+        if (qs[ta.dataset.qFb]) qs[ta.dataset.qFb].feedback = ta.value;
+    });
     let total = 0;
     for (const q of Object.values(qs)) total += q.score;
     total = Math.round(total * 100) / 100;
     const updated = { ...s, questions: qs, total_score: total };
     reviewData[currentReviewIdx] = updated;
+    reviewDirty = false;
     const fb = document.getElementById("reviewSaveFeedback");
     try {
         const r = await fetchWithRetry(API + "/results/" + encodeURIComponent(s.student_name), { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(updated) });
@@ -1020,6 +1232,7 @@ window.saveReview = async function() {
         const el = document.querySelector(`.student-item[data-idx="${currentReviewIdx}"] .sscore`);
         if (el) el.textContent = `${total} / ${s.total_max}`;
         if (fb) { fb.innerHTML = '<span class="status-ok">✓ Saved</span>'; setTimeout(() => { fb.innerHTML = ""; }, 2000); }
+        renderStudentList();
     } catch (e) {
         if (fb) fb.innerHTML = `<span class="status-error">Save failed: ${escHtml(e.message)}</span>`;
     }
@@ -1028,6 +1241,7 @@ window.saveReview = async function() {
 window.regradeStudent = async function() {
     if (currentReviewIdx < 0) return;
     const s = reviewData[currentReviewIdx];
+    if (!confirm("Re-grade this student? This will overwrite current scores with new LLM grades.")) return;
     const btn = document.getElementById("regradeStudentBtn");
     if (!btn) return;
     setLoading(btn, true, "Re-grading…");
@@ -1092,6 +1306,26 @@ document.getElementById("reviewCalibrateBtn").onclick = async () => {
 };
 
 document.getElementById("reviewFlaggedFirst").onchange = () => renderStudentList();
+
+document.getElementById("reviewPrevQ").onclick = goPrevQuestion;
+document.getElementById("reviewNextQ").onclick = goNextQuestion;
+document.getElementById("reviewPrevStudent").onclick = goPrevStudent;
+document.getElementById("reviewNextStudent").onclick = goNextStudent;
+document.getElementById("reviewSaveBtn").onclick = () => saveReview();
+document.getElementById("reviewSaveBtnBottom").onclick = () => saveReview();
+
+document.addEventListener("keydown", (e) => {
+    if (!document.getElementById("panel-review")?.classList.contains("active")) return;
+    if (["INPUT", "TEXTAREA"].includes(document.activeElement?.tagName)) return;
+    switch (e.key) {
+        case "j": case "J": e.preventDefault(); goNextStudent(); break;
+        case "k": case "K": e.preventDefault(); goPrevStudent(); break;
+        case "[": e.preventDefault(); goPrevQuestion(); break;
+        case "]": e.preventDefault(); goNextQuestion(); break;
+        case "s": case "S": e.preventDefault(); saveReview(); break;
+        case "r": case "R": e.preventDefault(); regradeStudent(); break;
+    }
+});
 
 // ==================== EXPORT ====================
 document.getElementById("exportBtn").onclick = async () => {

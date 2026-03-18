@@ -73,11 +73,42 @@ input[type="checkbox"]:focus-visible { outline: 2px solid var(--primary); outlin
 .review-layout { display: grid; grid-template-columns: 260px 1fr; gap: 0; min-height: 500px; }
 .student-list { border-right: 1px solid #e2e8f0; overflow-x: hidden; overflow-y: auto; max-height: 600px; }
 
+/* Review v2 — per-question layout */
+.review-v2-layout { display: grid; grid-template-columns: 180px 1fr; gap: 0; min-height: 500px; }
+.review-v2-sidebar { border-right: 1px solid #e2e8f0; overflow-x: hidden; overflow-y: auto; max-height: 600px; }
+.review-v2-main { display: flex; flex-direction: column; min-width: 0; }
+.review-v2-header { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 20px; padding: 10px 16px; border-bottom: 1px solid #e2e8f0; background: #f8fafc; }
+.review-v2-qnav { display: flex; align-items: center; gap: 6px; }
+.review-v2-qpills { display: flex; flex-wrap: wrap; gap: 4px; }
+.review-v2-qpill { padding: 4px 10px; font-size: 0.85rem; border-radius: 6px; cursor: pointer; background: #e2e8f0; color: #475569; border: 1px solid transparent; }
+.review-v2-qpill:hover { background: #cbd5e1; }
+.review-v2-qpill.active { background: var(--primary); color: white; }
+.review-v2-nav-btn { padding: 6px 10px; font-size: 0.85rem; }
+.review-v2-stunav { display: flex; align-items: center; gap: 8px; }
+.review-v2-stuinfo { font-size: 0.9rem; font-weight: 600; color: #334155; min-width: 100px; }
+.review-v2-total { display: flex; align-items: center; gap: 12px; margin-left: auto; font-weight: 700; font-size: 1rem; }
+.review-v2-content { padding: 16px; overflow-y: auto; flex: 1; max-height: 500px; }
+.review-v2-content .review-v2-qstatement { font-size: 0.9rem; margin-bottom: 16px; line-height: 1.5; }
+.review-v2-content .review-v2-section { margin-bottom: 12px; }
+.review-v2-content .review-v2-section-label { font-size: 0.75rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: #64748b; margin-bottom: 4px; }
+.review-v2-content .review-v2-code { background: #1e293b; color: #e2e8f0; padding: 10px 14px; border-radius: 5px; font-size: 0.78rem; max-height: 200px; overflow-y: auto; margin: 4px 0 8px; white-space: pre-wrap; word-break: break-word; }
+.review-v2-content .review-v2-output { background: #f1f5f9; padding: 10px 14px; border-radius: 5px; font-size: 0.8rem; max-height: 150px; overflow-y: auto; margin: 4px 0 8px; white-space: pre-wrap; }
+.review-v2-content .review-v2-output.expanded { max-height: 400px; }
+.review-v2-ded-widget { display: flex; align-items: center; gap: 8px; margin: 12px 0; flex-wrap: wrap; }
+.review-v2-ded-widget input[type="number"] { width: 70px; padding: 6px 8px; border: 1px solid #cbd5e1; border-radius: 4px; font-size: 0.9rem; }
+.review-v2-feedback-ta { width: 100%; padding: 8px 10px; border: 1px solid #cbd5e1; border-radius: 4px; font-family: inherit; font-size: 0.85rem; resize: vertical; min-height: 60px; margin-top: 8px; }
+.review-v2-actions { display: flex; align-items: center; gap: 10px; padding: 12px 16px; border-top: 1px solid #e2e8f0; flex-wrap: wrap; }
+.review-v2-feedback { font-size: 0.85rem; margin-left: 8px; }
+.review-v2-hints { font-size: 0.75rem; color: #94a3b8; padding: 6px 16px; border-top: 1px solid #f1f5f9; }
+.review-v2-dirty { color: #d97706; }
+
 @media (max-width: 768px) {
     .tabs { flex-wrap: wrap; }
     .tab { flex: 1 1 auto; min-width: 80px; }
     .review-layout { grid-template-columns: 1fr; }
+    .review-v2-layout { grid-template-columns: 1fr; }
     .student-list { border-right: none; border-bottom: 1px solid #e2e8f0; max-height: 200px; }
+    .review-v2-sidebar { border-right: none; border-bottom: 1px solid #e2e8f0; max-height: 200px; }
     .container { margin: 0; border-radius: 0; }
     .input-assignment-name { width: 100% !important; max-width: 100%; }
 }

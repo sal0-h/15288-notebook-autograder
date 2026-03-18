@@ -6,6 +6,9 @@
     <title>AI Autograder</title>
     <link rel="stylesheet" href="/ui/styles.css">
     <script src="https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js"></script>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11/styles/github.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/highlight.js@11/build/highlight.min.js"></script>
 </head>
 <body>
 <a href="#main-content" class="skip-link">Skip to main content</a>
@@ -194,9 +197,37 @@
             <input type="checkbox" id="reviewFlaggedFirst">
             <span>Show flagged students first</span>
         </label>
-        <div class="review-layout hidden" id="reviewLayout">
-            <div class="student-list" id="studentList"></div>
-            <div id="reviewDetail"><p class="review-placeholder">Select a student to review.</p></div>
+        <div class="review-v2-layout hidden" id="reviewLayout">
+            <div class="review-v2-sidebar" id="studentList"></div>
+            <div class="review-v2-main">
+                <div class="review-v2-header">
+                    <div class="review-v2-qnav">
+                        <button type="button" class="btn btn-secondary review-v2-nav-btn" id="reviewPrevQ" title="Previous question">◀</button>
+                        <div class="review-v2-qpills" id="reviewQPills"></div>
+                        <button type="button" class="btn btn-secondary review-v2-nav-btn" id="reviewNextQ" title="Next question">▶</button>
+                    </div>
+                    <div class="review-v2-stunav">
+                        <button type="button" class="btn btn-secondary review-v2-nav-btn" id="reviewPrevStudent" title="Previous student">◀</button>
+                        <span class="review-v2-stuinfo" id="reviewStuInfo">Student 0/0</span>
+                        <button type="button" class="btn btn-secondary review-v2-nav-btn" id="reviewNextStudent" title="Next student">▶</button>
+                    </div>
+                    <div class="review-v2-total">
+                        <span>Total: <span id="totalDisplay">0</span>/<span id="totalMaxDisplay">0</span></span>
+                        <button type="button" class="btn" id="reviewSaveBtn">Save</button>
+                    </div>
+                </div>
+                <div class="review-v2-content" id="reviewDetail">
+                    <p class="review-placeholder">Select a student to review.</p>
+                </div>
+                <div class="review-v2-actions">
+                    <button type="button" class="btn" id="reviewSaveBtnBottom">Save</button>
+                    <button type="button" class="btn btn-secondary" id="regradeStudentBtn">Re-grade this student</button>
+                    <span id="regradeEstimate" class="status-ok" style="font-size:0.85rem"></span>
+                    <span id="reviewSaveFeedback" class="review-v2-feedback"></span>
+                    <span id="reviewConfidenceBadge" class="badge badge-medium"></span>
+                </div>
+                <div class="review-v2-hints" id="reviewHints">J/K: student · [ ]: question · S: save · R: re-grade</div>
+            </div>
         </div>
     </div>
 
