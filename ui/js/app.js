@@ -361,10 +361,16 @@ document.getElementById("parseBtn").onclick = async () => {
         const dupes = data.solution_duplicate_qids || [];
         let html = `<p class="${ok === report.length ? "status-ok" : "status-warning"}">Parsed ${report.length} students — ${ok} OK, ${report.length - ok} with warnings.</p>`;
         if (dupes.length) html += `<p class="status-warning">⚠ Duplicate question IDs in solution: ${dupes.join(", ")}</p>`;
-        html += "<table><tr><th>Student</th><th>Status</th><th>Questions Found</th><th>Missing</th></tr>";
+        html += "<table><tr><th>Student</th><th>Status</th><th>Matched / Expected</th><th>Missing</th><th>Unexpected</th><th>Duplicate</th></tr>";
         report.forEach(x => {
             const cls = x.status === "ok" ? "" : x.status === "error" ? "error" : "warning";
-            html += `<tr class="${cls}"><td>${escHtml(x.student_name)}</td><td>${x.status}</td><td>${(x.questions_found || []).length}</td><td>${escHtml((x.questions_missing || []).join(", ") || "—")}</td></tr>`;
+            const found = x.questions_found || [];
+            const missing = x.questions_missing || [];
+            const unexpected = x.questions_unexpected || [];
+            const duplicate = x.questions_duplicate || [];
+            const expectedCount = typeof x.questions_expected_count === "number" ? x.questions_expected_count : (data.solution_questions || []).length;
+            const matchedCount = typeof x.questions_matched_count === "number" ? x.questions_matched_count : Math.max(0, found.length - unexpected.length);
+            html += `<tr class="${cls}"><td>${escHtml(x.student_name)}</td><td>${x.status}</td><td>${matchedCount}/${expectedCount}</td><td>${escHtml(missing.join(", ") || "—")}</td><td>${escHtml(unexpected.join(", ") || "—")}</td><td>${escHtml(duplicate.join(", ") || "—")}</td></tr>`;
         });
         html += "</table>";
         document.getElementById("parseResults").innerHTML = html;

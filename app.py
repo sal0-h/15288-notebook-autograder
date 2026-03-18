@@ -115,6 +115,18 @@ def _error_event(error: str) -> dict:
     return {"status": "error", "error": error}
 
 
+def _ui_file_response(path: Path) -> FileResponse:
+    """Serve UI assets with no-store headers to avoid stale JS in active browser tabs."""
+    return FileResponse(
+        path,
+        headers={
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+            "Pragma": "no-cache",
+            "Expires": "0",
+        },
+    )
+
+
 async def _threaded_sse_response(
     lock: threading.Lock,
     worker: Callable[[Callable[[dict], None]], None],
@@ -898,7 +910,7 @@ def root():
     """Serve the UI."""
     ui_path = Path(__file__).parent / "ui" / "index.html"
     if ui_path.exists():
-        return FileResponse(ui_path)
+        return _ui_file_response(ui_path)
     return {
         "message": "AI Autograder API. Open /ui/index.html or use the API endpoints."
     }
@@ -910,5 +922,5 @@ def serve_ui(path: str):
     ui_dir = Path(__file__).parent / "ui"
     file_path = _safe_path(ui_dir, path)
     if file_path.exists() and file_path.is_file():
-        return FileResponse(file_path)
+        return _ui_file_response(file_path)
     raise HTTPException(status_code=404)
