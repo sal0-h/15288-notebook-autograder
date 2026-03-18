@@ -19,12 +19,23 @@ from sse_starlette.sse import EventSourceResponse
 
 from batch_grader import grade_all_students
 from calibrate import run_calibration
+from results_store import (
+    find_student,
+    load_results,
+    save_results,
+    update_student,
+)
 from estimate import estimate_grade, estimate_rubrics
 from export import export_all, export_autograder_zip
 from gather import gather_submissions
 from grade import grade_student
 from linter_export import export_linter_zip
-from parse_notebook import get_all_question_ids, parse_all_students, parse_notebook
+from parse_notebook import (
+    get_all_question_ids,
+    parse_all_students,
+    parse_notebook,
+    sort_key_qid,
+)
 from prompt_builder import validate_question_groups
 from rubric import generate_rubrics
 from utils import (
@@ -61,7 +72,12 @@ def _setup_file_logging() -> None:
         cfg = load_config(_active_config_path)
         out_dir = Path(cfg.get("output_dir", "output"))
         assignment_name = cfg.get("assignment_name", "DEFAULT")
-    except Exception:
+    except (FileNotFoundError, ValueError, OSError) as e:
+        logger.warning(
+            "Could not load config for file logging (%s): %s. Using defaults.",
+            _active_config_path,
+            e,
+        )
         out_dir = Path("output")
         assignment_name = "DEFAULT"
     log_path = setup_assignment_logging(assignment_name, out_dir)
@@ -88,14 +104,27 @@ def _safe_path(base: Path, user_input: str) -> Path:
     return resolved
 
 
-def _qid_sort_key(qid: str) -> tuple[int, int]:
-    if "." not in qid:
-        return (999, 0)
-    section, question = qid.split(".", 1)
-    return (
-        int(section) if section.isdigit() else 999,
-        int(question) if question.isdigit() else 0,
-    )
+def _build_parse_solution_response(
+    parsed: dict,
+    *,
+    solution_notebook: str | None = None,
+    assignment_name: str | None = None,
+) -> dict:
+    """Build the common response shape for parse-solution endpoints."""
+    response = {
+        "question_ids": get_all_question_ids(parsed),
+        "sections": {
+            k: list(v.get("questions", {}).keys())
+            for k, v in parsed.get("sections", {}).items()
+        },
+        "duplicate_qids": parsed.get("duplicate_qids", []),
+        "suggested_groups": _build_suggested_groups(parsed),
+    }
+    if solution_notebook is not None:
+        response["solution_notebook"] = solution_notebook
+    if assignment_name is not None:
+        response["assignment_name"] = assignment_name
+    return response
 
 
 def _build_suggested_groups(parsed: dict) -> list[list[str]]:
@@ -105,7 +134,7 @@ def _build_suggested_groups(parsed: dict) -> list[list[str]]:
         key=lambda s: (int(s) if s.isdigit() else 999, s),
     ):
         sec_data = parsed["sections"][sec_id]
-        qids = sorted(sec_data.get("questions", {}).keys(), key=_qid_sort_key)
+        qids = sorted(sec_data.get("questions", {}).keys(), key=sort_key_qid)
         if qids:
             suggested_groups.append(qids)
     return suggested_groups
@@ -354,22 +383,11 @@ async def api_parse_solution_upload(
     config["grading"]["question_groups"] = config["grading"].get("question_groups", [])
 
     parsed = parse_notebook(solution_path, config)
-    question_ids = get_all_question_ids(parsed)
-    duplicate_qids = parsed.get("duplicate_qids", [])
-
-    suggested_groups = _build_suggested_groups(parsed)
-
-    return {
-        "question_ids": question_ids,
-        "sections": {
-            k: list(v.get("questions", {}).keys())
-            for k, v in parsed.get("sections", {}).items()
-        },
-        "duplicate_qids": duplicate_qids,
-        "suggested_groups": suggested_groups,
-        "solution_notebook": config["solution_notebook"],
-        "assignment_name": safe_name,
-    }
+    return _build_parse_solution_response(
+        parsed,
+        solution_notebook=config["solution_notebook"],
+        assignment_name=safe_name,
+    )
 
 
 @app.post("/parse-solution")
@@ -384,18 +402,7 @@ async def api_parse_solution():
             status_code=404, detail="Solution notebook not found. Upload one in Setup."
         )
     parsed = parse_notebook(solution_path, config)
-    question_ids = get_all_question_ids(parsed)
-    duplicate_qids = parsed.get("duplicate_qids", [])
-    suggested_groups = _build_suggested_groups(parsed)
-    return {
-        "question_ids": question_ids,
-        "sections": {
-            k: list(v.get("questions", {}).keys())
-            for k, v in parsed.get("sections", {}).items()
-        },
-        "duplicate_qids": duplicate_qids,
-        "suggested_groups": suggested_groups,
-    }
+    return _build_parse_solution_response(parsed)
 
 
 # ---------------------------------------------------------------------------
@@ -737,22 +744,13 @@ async def api_grade_one(student_name: str):
         if grade_only_merge and out_path.exists():
             with _results_lock:
                 try:
-                    raw_existing = json.loads(out_path.read_text(encoding="utf-8"))
-                except json.JSONDecodeError as e:
+                    existing_results = load_results(out_path)
+                    merge_into = find_student(existing_results, student_name)
+                except ValueError as e:
                     raise HTTPException(
                         status_code=500,
-                        detail=f"graded_results.json is corrupted: {e}",
+                        detail=str(e),
                     )
-                existing_results = (
-                    raw_existing if isinstance(raw_existing, list) else []
-                )
-                for existing in existing_results:
-                    if (
-                        isinstance(existing, dict)
-                        and existing.get("student_name") == student_name
-                    ):
-                        merge_into = existing
-                        break
 
         result = await asyncio.to_thread(
             grade_student,
@@ -766,21 +764,12 @@ async def api_grade_one(student_name: str):
         usage = result.pop("_usage", None)
 
         with _results_lock:
-            raw = (
-                json.loads(out_path.read_text(encoding="utf-8"))
-                if out_path.exists()
-                else []
-            )
-            results = raw if isinstance(raw, list) else []
-            found = False
-            for i, r in enumerate(results):
-                if isinstance(r, dict) and r.get("student_name") == student_name:
-                    results[i] = result
-                    found = True
-                    break
-            if not found:
-                results.append(result)
-            out_path.write_text(json.dumps(results, indent=2), encoding="utf-8")
+            try:
+                results = load_results(out_path)
+                update_student(results, student_name, result)
+                save_results(out_path, results)
+            except ValueError as e:
+                raise HTTPException(status_code=500, detail=str(e))
         response = {"ok": True, "result": result}
         if usage:
             response["usage"] = usage
@@ -800,10 +789,11 @@ def api_get_results():
     config = _get_active_config()
     output_dir = Path(config.get("output_dir", "output"))
     path = output_dir / "graded_results.json"
-    if not path.exists():
-        return []
     with _results_lock:
-        return json.loads(path.read_text(encoding="utf-8"))
+        try:
+            return load_results(path)
+        except ValueError as e:
+            raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.put("/results/{student_name:path}")
@@ -819,23 +809,18 @@ def api_put_results(student_name: str, result: dict = Body(...)):
             detail=f"Missing required keys: {[k for k in required if k not in result]}",
         )
     config = _get_active_config()
-    output_dir = Path(config.get("output_dir", "output"))
-    path = output_dir / "graded_results.json"
+    path = Path(config.get("output_dir", "output")) / "graded_results.json"
 
     if not path.exists():
         raise HTTPException(status_code=404, detail="No graded results yet")
 
     with _results_lock:
-        results = json.loads(path.read_text(encoding="utf-8"))
-        found = False
-        for i, r in enumerate(results):
-            if r.get("student_name") == student_name:
-                results[i] = result
-                found = True
-                break
-        if not found:
-            results.append(result)
-        path.write_text(json.dumps(results, indent=2), encoding="utf-8")
+        try:
+            results = load_results(path)
+            update_student(results, student_name, result)
+            save_results(path, results)
+        except ValueError as e:
+            raise HTTPException(status_code=500, detail=str(e))
     return {"ok": True}
 
 

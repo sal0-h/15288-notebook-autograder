@@ -80,26 +80,37 @@ nb_path = nb_files[0]
 nb = json.loads(nb_path.read_text(encoding="utf-8"))
 cells = nb.get("cells", [])
 
-# Collect all Q IDs found in markdown cells and track duplicates.
+# Collect all Q IDs found in markdown cells (one match per cell, same as parse_notebook).
+def _sort_key(qid):
+    parts = qid.split(".")
+    if len(parts) == 2:
+        try:
+            return (int(parts[0]), int(parts[1]))
+        except ValueError:
+            pass
+    return (999999, qid)
+
 found_counts = {{}}
 for cell in cells:
     if cell.get("cell_type") != "markdown":
         continue
     text = "".join(cell.get("source", []))
-    for m in QUESTION_REGEX.finditer(text):
-        if m.lastindex >= 4:
-            sec_id, qnum = m.group(2), m.group(3)
-        else:
-            sec_id, qnum = m.group(1), m.group(2)
-        qid = f"{{sec_id}}.{{qnum}}"
-        found_counts[qid] = found_counts.get(qid, 0) + 1
+    m = QUESTION_REGEX.search(text)
+    if not m:
+        continue
+    if m.lastindex >= 4:
+        sec_id, qnum = m.group(2), m.group(3)
+    else:
+        sec_id, qnum = m.group(1), m.group(2)
+    qid = f"{{sec_id}}.{{qnum}}"
+    found_counts[qid] = found_counts.get(qid, 0) + 1
 
-found_ids = sorted(found_counts.keys(), key=lambda q: tuple(int(x) for x in q.split(".")))
+found_ids = sorted(found_counts.keys(), key=_sort_key)
 required_set = set(REQUIRED_IDS)
 found_set = set(found_ids)
-missing = sorted(required_set - found_set, key=lambda q: tuple(int(x) for x in q.split(".")))
-unexpected = sorted(found_set - required_set, key=lambda q: tuple(int(x) for x in q.split(".")))
-duplicates = sorted([qid for qid, cnt in found_counts.items() if cnt > 1], key=lambda q: tuple(int(x) for x in q.split(".")))
+missing = sorted(required_set - found_set, key=_sort_key)
+unexpected = sorted(found_set - required_set, key=_sort_key)
+duplicates = sorted([qid for qid, cnt in found_counts.items() if cnt > 1], key=_sort_key)
 
 dup_lines = [f"- `{{qid}}` appears **{{found_counts[qid]}}** times" for qid in duplicates]
 

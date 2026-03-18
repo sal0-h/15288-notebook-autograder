@@ -8,6 +8,7 @@ import pytest
 
 from parse_notebook import (
     extract_code_outputs,
+    extract_qids_from_notebook,
     get_all_question_ids,
     get_total_points,
     md_text,
@@ -115,6 +116,46 @@ class TestExtractCodeOutputs:
         )
         out = extract_code_outputs(cell)
         assert "ZeroDivisionError" in out["output_text"]
+
+
+# ---------------------------------------------------------------------------
+# extract_qids_from_notebook (one match per cell, same as parse_notebook)
+# ---------------------------------------------------------------------------
+
+QUESTION_REGEX = r"(?i)^\s*(-\s*)?Q(\d+)\.(\d+)\s*.*?\[\s*(\d+)\s*PTS\s*\]"
+
+
+class TestExtractQidsFromNotebook:
+    def test_one_match_per_cell_q1_1_twice_in_same_cell_not_duplicate(self):
+        """Q1.1 appearing twice in one cell = one match, NOT duplicate."""
+        cells = [
+            {
+                "cell_type": "markdown",
+                "source": ["- Q1.1 [2 PTS] First\n- Q1.1 [2 PTS] Again"],
+            },
+        ]
+        found, dupes = extract_qids_from_notebook(cells, QUESTION_REGEX)
+        assert found == ["1.1"]
+        assert dupes == []
+
+    def test_q1_1_in_two_cells_is_duplicate(self):
+        """Q1.1 in two different cells = duplicate."""
+        cells = [
+            {"cell_type": "markdown", "source": ["- Q1.1 [2 PTS] First"]},
+            {"cell_type": "markdown", "source": ["- Q1.1 [2 PTS] Duplicate"]},
+        ]
+        found, dupes = extract_qids_from_notebook(cells, QUESTION_REGEX)
+        assert found == ["1.1"]
+        assert dupes == ["1.1"]
+
+    def test_multiple_questions_no_duplicates(self):
+        cells = [
+            {"cell_type": "markdown", "source": ["- Q1.1 [2 PTS] One"]},
+            {"cell_type": "markdown", "source": ["- Q1.2 [3 PTS] Two"]},
+        ]
+        found, dupes = extract_qids_from_notebook(cells, QUESTION_REGEX)
+        assert found == ["1.1", "1.2"]
+        assert dupes == []
 
 
 # ---------------------------------------------------------------------------
