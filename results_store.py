@@ -5,7 +5,33 @@ Callers hold the appropriate lock when invoking these functions.
 """
 
 import json
+import logging
+import shutil
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
+
+
+def load_results_with_backup(path: Path) -> list[dict]:
+    """Load graded_results.json. On corruption, backup to *.broken and return []."""
+    if not path.exists():
+        return []
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, KeyError):
+        backup_path = path.parent / f"{path.name}.broken"
+        try:
+            shutil.copy2(path, backup_path)
+            logger.error(
+                "graded_results.json is corrupted (invalid JSON). "
+                "Backed up to %s. Starting fresh.",
+                backup_path,
+                exc_info=True,
+            )
+        except OSError:
+            logger.exception("Failed to backup corrupted graded_results.json")
+        return []
+    return raw if isinstance(raw, list) else []
 
 
 def load_results(path: Path) -> list[dict]:

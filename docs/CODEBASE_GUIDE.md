@@ -37,14 +37,18 @@ ai_autograder/
 ├── estimate.py             Token and cost estimation
 ├── export.py               Gradescope JSON, Excel, autograder ZIP
 ├── gather.py               Submission extraction from Gradescope export
+├── config_models.py        AppConfig, ParsingConfig, GradingConfig, default_config
 ├── grade.py                Per-student and per-group grading logic
+├── grading_helpers.py      grade_only filtering, effective_groups, needs_merge
 ├── grading_models.py       Pydantic schemas for LLM response validation
 ├── linter_export.py        Pre-deadline format linter autograder
 ├── main.py                 CLI entry point
 ├── parse_notebook.py       Notebook → structured JSON parser
+├── pipeline_runner.py      Thin wrappers for app endpoints (run_gather, run_parse, etc.)
 ├── prompt_builder.py       Prompt construction, sanitization, JSON extraction
+├── results_store.py        load_results, save_results, update_student, load_results_with_backup
 ├── rubric.py               Rubric generation and review
-├── utils.py                Config I/O, AppConfig schema, logging, OpenAI client
+├── utils.py                Config I/O, logging, OpenAI client (AppConfig in config_models)
 │
 ├── prompts/
 │   ├── DEFAULT/            Fallback prompt templates (*.md)
@@ -70,13 +74,17 @@ ai_autograder/
 | Module | Responsibility | Calls into |
 |---|---|---|
 | `main.py` | CLI, config write, pipeline orchestration | All pipeline modules |
-| `app.py` | FastAPI routes and SSE events | All pipeline modules |
-| `utils.py` | Config load/save, `AppConfig` schema, logging, OpenAI client | nothing (leaf) |
+| `app.py` | FastAPI routes and SSE events | pipeline_runner, batch_grader, grade, results_store, etc. |
+| `config_models.py` | AppConfig, ParsingConfig, GradingConfig, default_config | nothing (leaf) |
+| `grading_helpers.py` | grade_only filtering, effective_groups, needs_merge | grading_models |
+| `pipeline_runner.py` | Thin wrappers for gather, parse, calibrate, export, estimate | gather, parse_notebook, calibrate, export, estimate |
+| `results_store.py` | load_results, save_results, update_student, load_results_with_backup | nothing (leaf) |
+| `utils.py` | Config load/save, logging, OpenAI client | config_models |
 | `grading_models.py` | LLM response Pydantic schemas, constants | nothing (leaf) |
 | `prompt_builder.py` | Prompt loading, token counting, sanitization, JSON parsing | `utils` |
 | `parse_notebook.py` | Notebook → parsed JSON | `utils` |
 | `grade.py` | `grade_group`, `grade_student`, post-processing | `prompt_builder`, `grading_models`, `utils` |
-| `batch_grader.py` | Sequential/parallel grading, resume logic | `grade`, `utils` |
+| `batch_grader.py` | Sequential/parallel grading, resume logic | `grade`, `results_store`, `utils` |
 | `rubric.py` | Rubric generation + review | `prompt_builder`, `utils` |
 | `gather.py` | Submission extraction | `utils` |
 | `export.py` | Excel + Gradescope export | `utils` |
@@ -124,7 +132,7 @@ resolved against the project root. Defaults are filled in via `_apply_config_def
 The returned dict is validated through `AppConfig.model_validate` to catch schema
 errors early, then returned as a plain dict for backward-compatible consumption.
 
-### `AppConfig` schema (`utils.py`)
+### `AppConfig` schema (`config_models.py`)
 
 All config access inside the pipeline should go through the `AppConfig` Pydantic model:
 
@@ -377,7 +385,7 @@ burning completion budget on single-question groups.
 
 #### Per-student (`grade_student`)
 
-Iterates over all groups from `get_effective_question_groups(grading_config)`:
+Iterates over all groups from `get_effective_question_groups(grading_config)` (in `grading_helpers`, re-exported by `utils`):
 
 - Groups where all questions are absent from the student's parsed output are skipped
   with `[no submission]` scores (no LLM call).
@@ -397,9 +405,7 @@ Yields progress event dicts for SSE streaming to the UI:
 - `{"status": "error", "student": name, "error": "..."}` on failure
 - `{"status": "usage", "usage": {...}, "cost_usd": N}` at the end
 
-**Resume behavior:** Reads existing `graded_results.json` at startup. Students already
-in the file (and not in a retryable state) are skipped. The file is incrementally
-updated after each student.
+**Resume behavior:** Reads existing `graded_results.json` at startup via `results_store.load_results_with_backup` (backs up corrupted file to `*.broken`). Students already in the file (and not in a retryable state) are skipped. The file is incrementally updated after each student via `results_store.save_results` (deduplicates by student_name).
 
 **Parallel mode:** When `workers > 1`, uses `ThreadPoolExecutor`. The current
 implementation shares the same OpenAI client object passed into `grade_all_students`
@@ -408,7 +414,7 @@ across worker threads.
 #### `grade_only_merge` flow
 
 When `grade_only` + `grade_only_merge` are both set:
-1. `needs_grade_only_merge(existing, grade_only)` checks whether the specified
+1. `needs_grade_only_merge(existing, grade_only)` (in `grading_helpers`) checks whether the specified
    QIDs in existing results have retryable feedback. Returns `True` if any QID
    is missing or has `[skipped - not in grade_only]` / `[grading failed after retries]`.
 2. If merge is needed, `grade_student` is called with `merge_into=existing_result`.
@@ -571,7 +577,7 @@ deep-merged with defaults and existing config before saving:
 1. Load current full config via `load_config()`.
 2. If assignment name changes and `solution_notebook` is omitted, force
   `solution_notebook = ""` to avoid stale cross-assignment paths.
-3. Deep-merge `_default_config()`, existing config, and incoming payload.
+3. Deep-merge `default_config("default")`, existing config, and incoming payload.
 4. Validate via `AppConfig.model_validate(merged)`.
 5. Save via `save_config(merged)`.
 
@@ -602,7 +608,7 @@ they arrive without polling.
 | Prompt injection via student notebook | `_sanitize_student_text` replaces `<<<` / `>>>` with `«` / `»` before any student content enters a prompt |
 | Path traversal in API routes | `_safe_path(base, user_input)` resolves and checks that the result is under `base`; raises HTTP 400 otherwise |
 | Untrusted YAML (student names) | Student names come only from Gradescope metadata, not from notebook content |
-| Concurrent writes to `graded_results.json` | `_results_lock` wraps all reads and writes in `batch_grader` and `app.py` |
+| Concurrent writes to `graded_results.json` | `_results_lock` wraps all reads and writes; `results_store` used by both `batch_grader` and `app.py` |
 | API key exposure | Loaded via `dotenv` (`.env` file with `key=...`) or `OPENAI_API_KEY`; never logged or returned in API responses |
 | Malformed LLM JSON | `parse_llm_json` extracts the first balanced `{...}` block; `GradingResponse.from_raw` replaces unparseables with safe defaults |
 
@@ -666,7 +672,7 @@ Canonical QIDs are numeric strings: `"1.1"`, `"2.3"`, etc.
 Anywhere a QID could arrive with a `Q` prefix (from LLM output, UI, YAML),
 `GradingResponse.from_raw` normalizes it: `k.strip().lstrip("Qq").strip()`.
 
-Config helpers (`get_active_grade_only`, `get_effective_question_groups`) operate on
+Config helpers (`get_active_grade_only`, `get_effective_question_groups` in `grading_helpers.py`, re-exported by `utils`) operate on
 already-canonical IDs. Do not compare raw LLM keys to config QIDs without normalizing.
 
 ### Incremental saves
@@ -711,7 +717,7 @@ an assignment-specific override). Call `load_prompt("{name}", assignment_name=..
    for load-time safety.
 3. The assignment config is fully authoritative; no special root-override handling
    is needed for new fields.
-4. Update `_default_config` in `app.py` so the UI sends it on fresh setup.
+4. Update `default_config()` in `config_models.py` so the UI sends it on fresh setup (app uses `default_config("default")` when no assignment is loaded).
 
 ### Add a new pipeline stage
 

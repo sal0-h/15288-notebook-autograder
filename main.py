@@ -14,11 +14,11 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
+from config_models import default_config
 from utils import (
     load_config,
     save_config,
     AppConfig,
-    DEFAULT_MODEL,
     setup_assignment_logging,
     sanitize_assignment_name,
 )
@@ -26,20 +26,10 @@ from utils import (
 # -----------------------------------------------------------------------------
 # Programmatic config — edit this to customize
 # -----------------------------------------------------------------------------
-CONFIG = {
-    "assignment_name": "LabTest_3_S26",
-    "model": DEFAULT_MODEL,
-    "solution_notebook": "archive1/LabTest_2_S26_sol.ipynb",
-    "output_dir": "output",
-    "workers": 1,
-    "max_prompt_tokens": 80_000,
-    "max_completion_tokens": 4_096,
-    "parsing": {
-        "section_regex": r"(?m)^\s*#\s*<font[^>]*>\s*(\d+)\b",
-        "question_regex": r"(?i)^\s*-\s*Q(\d+)\.(\d+)\s*.*?\[\s*(\d+)\s*PTS\s*\]",
-        "keep_images": True,
-    },
-    "grading": {
+CONFIG = default_config(
+    "LabTest_3_S26",
+    solution_notebook="archive1/LabTest_2_S26_sol.ipynb",
+    grading={
         "question_groups": [
             ["1.1", "1.2", "1.3", "1.4", "1.5", "1.6", "1.7", "1.8", "1.9"],
             ["2.1", "2.2", "2.3"],
@@ -54,7 +44,7 @@ CONFIG = {
             ["9.1", "9.2", "9.3"],
         ],
     },
-}
+)
 
 
 def main():

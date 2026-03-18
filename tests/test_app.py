@@ -704,7 +704,7 @@ class TestExportEndpoint:
         mock_config["output_dir"] = str(out)
         with (
             patch("app._get_active_config", return_value=mock_config),
-            patch("app.export_all") as mock_export,
+            patch("app.run_export") as mock_export,
         ):
             mock_export.return_value = {
                 "students": 1,
