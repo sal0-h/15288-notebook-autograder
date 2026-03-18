@@ -61,8 +61,11 @@ const filterGroupsForUi = window.filterGroupsByGradeOnly || function(groups, gra
 function _populateSetupFields(cfg) {
     setupConfig = cfg;
     document.getElementById("setupAssignmentName").value = setupConfig.assignment_name || "";
-    document.getElementById("setupWorkers").value = setupConfig.workers || 1;
-    document.getElementById("setupWorkersVal").textContent = setupConfig.workers || 1;
+    const w = Math.max(1, parseInt(setupConfig.workers, 10) || 1);
+    const slider = document.getElementById("setupWorkers");
+    const input = document.getElementById("setupWorkersInput");
+    slider.value = Math.min(32, w);
+    input.value = w;
     document.getElementById("setupSolutionPath").textContent = setupConfig.solution_notebook ? "✓ " + setupConfig.solution_notebook : "";
     const modelSelect = document.getElementById("setupModel");
     const model = setupConfig.model || DEFAULT_MODEL;
@@ -212,7 +215,17 @@ document.getElementById("setupSolutionFile").onchange = e => {
     document.getElementById("setupParseUploadBtn").disabled = !e.target.files.length;
     document.getElementById("setupSolutionLabel").textContent = e.target.files.length ? e.target.files[0].name : "Upload .ipynb or use existing";
 };
-document.getElementById("setupWorkers").oninput = e => { document.getElementById("setupWorkersVal").textContent = e.target.value; };
+document.getElementById("setupWorkers").oninput = e => {
+    const v = parseInt(e.target.value, 10);
+    document.getElementById("setupWorkersInput").value = v;
+};
+document.getElementById("setupWorkersInput").oninput = e => {
+    let v = parseInt(e.target.value, 10);
+    if (!Number.isNaN(v) && v >= 1) {
+        const slider = document.getElementById("setupWorkers");
+        slider.value = Math.min(32, v);
+    }
+};
 document.getElementById("setupGradeOnlyCheck").onchange = e => {
     const show = e.target.checked;
     document.getElementById("setupGradeOnlyInput").classList.toggle("hidden", !show);
@@ -243,7 +256,7 @@ document.getElementById("setupParseUploadBtn").onclick = async () => {
         setupConfig.grading = setupConfig.grading || {};
         setupConfig.grading.question_groups = setupQuestionGroups;
         document.getElementById("setupSolutionPath").textContent = "✓ " + data.solution_notebook;
-        setupConfig.workers = parseInt(document.getElementById("setupWorkers").value, 10);
+        setupConfig.workers = Math.max(1, parseInt(document.getElementById("setupWorkersInput").value, 10) || 1);
         if (data.duplicate_qids && data.duplicate_qids.length) {
             const w = document.getElementById("setupDuplicateWarning");
             w.textContent = "Duplicate question IDs detected: " + data.duplicate_qids.join(", ") + ". Review the solution notebook.";
@@ -299,7 +312,7 @@ document.getElementById("setupSaveBtn").onclick = async () => {
     setupConfig.rubric_model = document.getElementById("setupRubricModel").value || "";
     setupConfig.rubric_review = document.getElementById("setupRubricReviewCheck").checked;
     setupConfig.include_reference_in_grading = document.getElementById("setupIncludeReferenceCheck").checked;
-    setupConfig.workers = parseInt(document.getElementById("setupWorkers").value, 10);
+    setupConfig.workers = Math.max(1, parseInt(document.getElementById("setupWorkersInput").value, 10) || 1);
     setupConfig.grading = setupConfig.grading || {};
     setupConfig.grading.question_groups = setupQuestionGroups;
     const gradeOnlyCheck = document.getElementById("setupGradeOnlyCheck").checked;
