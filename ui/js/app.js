@@ -1108,7 +1108,18 @@ function renderReviewContent() {
         }
     }
     detail.querySelectorAll("pre.review-v2-code code").forEach(el => {
-        if (typeof hljs !== "undefined" && hljs.highlightElement) hljs.highlightElement(el);
+        if (typeof hljs !== "undefined") {
+            try {
+                if (hljs.highlightElement) {
+                    hljs.highlightElement(el);
+                } else if (hljs.highlight) {
+                    const code = el.textContent;
+                    const result = hljs.highlight(code, { language: "python" });
+                    el.innerHTML = result.value;
+                    el.classList.add("hljs");
+                }
+            } catch (_) { /* fallback: plain code */ }
+        }
     });
     recalcTotal();
     const confBadge = document.getElementById("reviewConfidenceBadge");
@@ -1313,6 +1324,7 @@ document.getElementById("reviewPrevStudent").onclick = goPrevStudent;
 document.getElementById("reviewNextStudent").onclick = goNextStudent;
 document.getElementById("reviewSaveBtn").onclick = () => saveReview();
 document.getElementById("reviewSaveBtnBottom").onclick = () => saveReview();
+document.getElementById("regradeStudentBtn").onclick = regradeStudent;
 
 document.addEventListener("keydown", (e) => {
     if (!document.getElementById("panel-review")?.classList.contains("active")) return;
@@ -1323,7 +1335,9 @@ document.addEventListener("keydown", (e) => {
         case "[": e.preventDefault(); goPrevQuestion(); break;
         case "]": e.preventDefault(); goNextQuestion(); break;
         case "s": case "S": e.preventDefault(); saveReview(); break;
-        case "r": case "R": e.preventDefault(); regradeStudent(); break;
+        case "r": case "R":
+            if (!e.ctrlKey && !e.metaKey) { e.preventDefault(); regradeStudent(); }
+            break;
     }
 });
 

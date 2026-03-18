@@ -91,7 +91,8 @@ input[type="checkbox"]:focus-visible { outline: 2px solid var(--primary); outlin
 .review-v2-content .review-v2-qstatement { font-size: 0.9rem; margin-bottom: 16px; line-height: 1.5; }
 .review-v2-content .review-v2-section { margin-bottom: 12px; }
 .review-v2-content .review-v2-section-label { font-size: 0.75rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: #64748b; margin-bottom: 4px; }
-.review-v2-content .review-v2-code { background: #1e293b; color: #e2e8f0; padding: 10px 14px; border-radius: 5px; font-size: 0.78rem; max-height: 200px; overflow-y: auto; margin: 4px 0 8px; white-space: pre-wrap; word-break: break-word; }
+.review-v2-content .review-v2-code { margin: 8px 0 16px; padding: 18px 22px; border-radius: 10px; border: 1px solid #e2e8f0; font-size: 0.9rem; line-height: 1.55; white-space: pre-wrap; word-break: break-word; font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace; background: #f8fafc; box-shadow: 0 1px 3px rgba(0,0,0,0.06); overflow: visible; }
+.review-v2-content .review-v2-code code.hljs { padding: 0; background: transparent; font-size: inherit; overflow: visible; }
 .review-v2-content .review-v2-output { background: #f1f5f9; padding: 10px 14px; border-radius: 5px; font-size: 0.8rem; max-height: 150px; overflow-y: auto; margin: 4px 0 8px; white-space: pre-wrap; }
 .review-v2-content .review-v2-output.expanded { max-height: 400px; }
 .review-v2-ded-widget { display: flex; align-items: center; gap: 8px; margin: 12px 0; flex-wrap: wrap; }
