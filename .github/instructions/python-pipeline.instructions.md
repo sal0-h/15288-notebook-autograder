@@ -15,7 +15,7 @@ Each pipeline module should have one clear responsibility:
 - **batch_grader.py**: Orchestrate sequential or parallel grading across students.
 - **export.py**: Write Gradescope JSON, Excel, and autograder artifacts.
 
-Keep modules focused. Share behavior across modules via **utils.py** helpers (config I/O, path resolution, filtering, logging).
+Keep modules focused. Share behavior across modules via **utils.py** (config I/O, logging) and **grading_helpers.py** (grade_only filtering; re-exported by utils).
 
 ## Assignment-Scoped Artifacts
 
@@ -40,13 +40,12 @@ When resuming, check `graded_results.json` to determine which students have been
 
 ## Shared Utilities Pattern
 
-For cross-module behavior, add or update helpers in `utils.py`:
-- Config loading and validation (`load_config`, `save_config`).
-- Path handling and assignment-scoped resolution (`get_assignment_dir`, `get_output_path`).
-- Filtering and grouping (`filter_groups_by_grade_only`, `normalize_qid`).
-- Logging setup (`setup_assignment_logging`).
+For cross-module behavior, add or update helpers in:
+- **utils.py**: Config loading (`load_config`, `save_config`), logging (`setup_assignment_logging`).
+- **grading_helpers.py**: Filtering and grouping (`filter_groups_by_grade_only`, `get_effective_question_groups`, `needs_grade_only_merge`); re-exported by utils.
+- **config_models.py**: `normalize_qid`, `AppConfig`, `default_config`; re-exported by utils where needed.
 
-Avoid duplicating logic; consolidate in utils.py so all modules use the same behavior.
+Avoid duplicating logic; consolidate in the appropriate module so all callers use the same behavior.
 
 ## Backward-Compatible API Payloads
 
@@ -59,4 +58,4 @@ Breaking changes require coordinated updates across UI, tests, and documentation
 
 ## Question ID Canonicalization
 
-Canonical question IDs are numeric strings like `"1.1"`. Normalize any `Q1.1`, `q1.1`, or `1_1` form through `normalize_qid()` helper. Keep this consistent across parsing, rubric generation, and grading.
+Canonical question IDs are numeric strings like `"1.1"`. Normalize any `Q1.1`, `q1.1`, or `1_1` form through `normalize_qid()` (in `config_models.py`, re-exported by utils). Keep this consistent across parsing, rubric generation, and grading.

@@ -7,7 +7,10 @@ import os
 import re
 import threading
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from pydantic import BaseModel
 
 import httpx
 import yaml
@@ -20,7 +23,14 @@ from config_models import (
     app_config_to_yaml_data,
     normalize_qid,
 )
-from grading_models import GRADING_FAILED, SKIP_FEEDBACKS
+from grading_helpers import (
+    filter_groups_by_grade_only,
+    get_active_grade_only,
+    get_effective_question_groups,
+    get_skipped_feedback,
+    is_grade_only_merge_enabled,
+    needs_grade_only_merge,
+)
 from openai import OpenAI
 
 __all__ = [
@@ -48,61 +58,6 @@ __all__ = [
 def sanitize_assignment_name(name: str) -> str:
     """Normalize assignment names to a filesystem-safe token."""
     return re.sub(r'[/\\:*?"<>|.]', "_", str(name or "default")).strip("_") or "default"
-
-
-def filter_groups_by_grade_only(
-    groups: list[list[str]], grade_only: list[str] | None
-) -> list[list[str]]:
-    """Return question groups filtered to only grade_only questions when provided."""
-    if not grade_only:
-        return groups
-    grade_only_set = set(grade_only)
-    return [
-        [q for q in group if q in grade_only_set]
-        for group in groups
-        if group and any(q in grade_only_set for q in group)
-    ]
-
-
-def get_active_grade_only(grading_config: dict | BaseModel) -> list[str] | None:
-    grade_only = _config_get(grading_config, "grade_only")
-    return grade_only if grade_only else None
-
-
-def get_effective_question_groups(grading_config: dict | BaseModel) -> list[list[str]]:
-    groups = _config_get(grading_config, "question_groups", [])
-    grade_only = get_active_grade_only(grading_config)
-    return filter_groups_by_grade_only(groups, grade_only)
-
-
-def is_grade_only_merge_enabled(grading_config: dict | BaseModel) -> bool:
-    return bool(
-        _config_get(grading_config, "grade_only_merge")
-        and get_active_grade_only(grading_config)
-    )
-
-
-def needs_grade_only_merge(
-    existing_result: dict | None, grade_only: list[str] | None
-) -> bool:
-    if not grade_only:
-        return False
-    if not existing_result:
-        return True
-
-    questions = existing_result.get("questions", {})
-    retryable_feedback = {SKIP_FEEDBACKS[0], GRADING_FAILED}
-    for qid in set(grade_only):
-        if qid not in questions:
-            return True
-        feedback = (questions[qid].get("feedback") or "").strip()
-        if feedback in retryable_feedback:
-            return True
-    return False
-
-
-def get_skipped_feedback(grade_only: list[str] | None) -> str:
-    return SKIP_FEEDBACKS[0] if grade_only else SKIP_FEEDBACKS[1]
 
 
 def _config_get(config: dict | AppConfig, key: str, default: Any = None) -> Any:
@@ -155,7 +110,7 @@ def setup_assignment_logging(assignment_name: str, output_dir: str | Path) -> Pa
     return log_path
 
 
-def get_job_logger(config: dict | BaseModel, module_name: str) -> logging.Logger:
+def get_job_logger(config: dict | "BaseModel", module_name: str) -> logging.Logger:
     """Get a logger scoped to the current assignment to prevent interleaved logs."""
     assignment_name = _config_get(config, "assignment_name", "DEFAULT")
     return logging.getLogger(f"autograder.{assignment_name}.{module_name}")

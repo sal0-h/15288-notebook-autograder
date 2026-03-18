@@ -2,8 +2,6 @@
 
 import json
 import logging
-import shutil
-import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Generator
@@ -12,6 +10,7 @@ from openai import OpenAI
 
 from grading_models import MODEL_PRICING
 from prompt_builder import validate_question_groups
+from results_store import load_results_with_backup, save_results, update_student
 from utils import (
     AppConfig,
     ensure_app_config,
@@ -65,46 +64,19 @@ def grade_all_students(
     output_dir.mkdir(parents=True, exist_ok=True)
     out_path = output_dir / "graded_results.json"
 
-    def _read_results():
-        if out_path.exists():
-            try:
-                return json.loads(out_path.read_text(encoding="utf-8"))
-            except (json.JSONDecodeError, KeyError):
-                backup_path = output_dir / "graded_results.json.broken"
-                try:
-                    shutil.copy2(out_path, backup_path)
-                    logger.error(
-                        "graded_results.json is corrupted (invalid JSON). "
-                        "Backed up to %s. Starting fresh — previous grades will be re-run.",
-                        backup_path,
-                        exc_info=True,
-                    )
-                    print(
-                        f"Error: graded_results.json is corrupted. Backed up to {backup_path}. Re-grading all students."
-                    )
-                except OSError:
-                    logger.exception("Failed to backup corrupted graded_results.json")
-                return []
-        return []
-
-    def _write_results(data):
-        out_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
-
     def _store_result(student_name: str, result: dict) -> None:
         """Update results list/index and persist — call with lock held if parallel."""
-        if student_name in results_by_name:
-            results[results_by_name[student_name]] = result
-        else:
-            results.append(result)
+        update_student(results, student_name, result)
+        if student_name not in results_by_name:
             results_by_name[student_name] = len(results) - 1
-        _write_results(results)
+        save_results(out_path, results)
 
     # Load any previously saved results for resume support
     if results_lock:
         with results_lock:
-            raw = _read_results()
+            raw = load_results_with_backup(out_path)
     else:
-        raw = _read_results()
+        raw = load_results_with_backup(out_path)
 
     grading_config = cfg.grading
 

@@ -148,6 +148,16 @@ class AppConfig(BaseModel):
         return v
 
 
+def default_config(assignment_name: str = "default", **overrides) -> dict:
+    """Return a minimal valid config dict. Overrides replace top-level keys."""
+    cfg = AppConfig(assignment_name=assignment_name)
+    data = cfg.model_dump(mode="python")
+    for key, value in overrides.items():
+        if key in data:
+            data[key] = value
+    return ensure_app_config(data).model_dump(mode="python")
+
+
 def ensure_app_config(config: dict | AppConfig) -> AppConfig:
     """Normalize a dict/AppConfig input into an AppConfig object."""
     if isinstance(config, AppConfig):

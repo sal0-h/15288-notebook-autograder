@@ -18,29 +18,31 @@ from fastapi.responses import FileResponse
 from sse_starlette.sse import EventSourceResponse
 
 from batch_grader import grade_all_students
-from calibrate import run_calibration
 from results_store import (
     find_student,
     load_results,
     save_results,
     update_student,
 )
-from estimate import estimate_grade, estimate_rubrics
-from export import export_all, export_autograder_zip
-from gather import gather_submissions
+from pipeline_runner import (
+    get_calibration_report,
+    run_calibrate_step,
+    run_estimate_grade,
+    run_estimate_rubrics,
+    run_export,
+    run_export_autograder_zip,
+    run_gather,
+    run_gather_from_folder,
+    run_parse,
+)
 from grade import grade_student
 from linter_export import export_linter_zip
-from parse_notebook import (
-    get_all_question_ids,
-    parse_all_students,
-    parse_notebook,
-    sort_key_qid,
-)
+from parse_notebook import get_all_question_ids, parse_notebook, sort_key_qid
 from prompt_builder import validate_question_groups
 from rubric import generate_rubrics
+from config_models import default_config
 from utils import (
     AppConfig,
-    DEFAULT_MODEL,
     filter_groups_by_grade_only,
     load_config,
     sanitize_assignment_name,
@@ -271,7 +273,7 @@ def api_put_config(config: dict = Body(...)):
         config = dict(config)
         config["solution_notebook"] = ""
 
-    merged = _deep_merge(_default_config(), _deep_merge(existing, config))
+    merged = _deep_merge(default_config("default"), _deep_merge(existing, config))
     try:
         AppConfig.model_validate(merged)
     except Exception as e:
@@ -286,37 +288,10 @@ def api_put_config(config: dict = Body(...)):
     return {"ok": True}
 
 
-def _default_config() -> dict:
-    """Return a minimal valid config for new assignments."""
-    return {
-        "assignment_name": "default",
-        "model": DEFAULT_MODEL,
-        "rubric_model": "",
-        "rubric_review": True,
-        "include_reference_in_grading": False,
-        "solution_notebook": "",
-        "output_dir": "output",
-        "workers": 1,
-        "max_prompt_tokens": 80_000,
-        "max_completion_tokens": 4_096,
-        "parsing": {
-            "section_regex": r"(?m)^\s*#\s*<font[^>]*>\s*(\d+)\b",
-            "question_regex": r"(?i)^\s*(-\s*)?Q(\d+)\.(\d+)\s*.*?\[\s*(\d+)\s*PTS\s*\]",
-            "keep_images": True,
-        },
-        "grading": {
-            "question_groups": [],
-            "grade_only": None,
-            "grade_only_merge": False,
-        },
-        "rubrics": {},
-    }
-
-
 @app.get("/config/default")
 def api_get_config_default():
     """Return default config for new assignment setup."""
-    return _default_config()
+    return default_config("default")
 
 
 @app.post("/load-or-create")
@@ -350,7 +325,7 @@ async def api_parse_solution_upload(
     solution_file: UploadFile = File(...),
 ):
     """
-    Upload solution notebook, save to {assignment_name}/{assignment_name}_sol.ipynb,
+    Upload solution notebook, save to output/{assignment_name}/{assignment_name}_sol.ipynb,
     parse it, and return question IDs, sections, duplicate warnings, and suggested groups.
     """
     if not assignment_name or not assignment_name.strip():
@@ -369,13 +344,15 @@ async def api_parse_solution_upload(
     except json.JSONDecodeError:
         raise HTTPException(status_code=400, detail="Invalid notebook JSON")
 
-    save_dir = _PROJECT_ROOT / safe_name
+    save_dir = _PROJECT_ROOT / "output" / safe_name
     save_dir.mkdir(parents=True, exist_ok=True)
     solution_path = save_dir / f"{safe_name}_sol.ipynb"
     solution_path.write_bytes(content)
 
     config = dict(
-        _get_active_config() if _active_config_path is not None else _default_config()
+        _get_active_config()
+        if _active_config_path is not None
+        else default_config("default")
     )
     config["assignment_name"] = safe_name
     config["solution_notebook"] = str(solution_path.relative_to(_PROJECT_ROOT))
@@ -441,9 +418,7 @@ async def api_gather(zip_file: UploadFile = File(...)):
             raise HTTPException(status_code=400, detail="Invalid or corrupted ZIP file")
 
         config = _get_active_config()
-        out_dir = Path(config.get("submissions_dir", "output/submissions"))
-        results = gather_submissions(tmp_path, out_dir, from_zip=True)
-        return {"results": results, "output_dir": str(out_dir)}
+        return run_gather(config, tmp_path)
     finally:
         if tmp_path is not None:
             tmp_path.unlink(missing_ok=True)
@@ -456,48 +431,19 @@ _PROJECT_ROOT = Path(__file__).resolve().parent
 def api_gather_from_folder(folder_path: str):
     """Run gather from an already-extracted folder path. Path must be under project root."""
     config = _get_active_config()
-    out_dir = Path(config.get("submissions_dir", "output/submissions"))
-    folder = (Path(folder_path)).resolve()
-    if not folder.exists():
-        raise HTTPException(status_code=400, detail=f"Folder not found: {folder_path}")
     try:
-        folder.relative_to(_PROJECT_ROOT)
-    except ValueError:
-        raise HTTPException(
-            status_code=400,
-            detail="Folder path must be inside the project directory.",
-        )
-    results = gather_submissions(folder, out_dir, from_zip=False)
-    return {"results": results, "output_dir": str(out_dir)}
+        return run_gather_from_folder(config, folder_path, _PROJECT_ROOT)
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @app.post("/parse")
 async def api_parse():
     """Run parse step. Returns verification report + first student preview."""
     config = _get_active_config()
-    solution_parsed, report = await asyncio.to_thread(parse_all_students, config)
-
-    preview = None
-    if report:
-        first_student = report[0]["student_name"]
-        parsed_dir = Path(config.get("parsed_dir", "output/parsed"))
-        preview_path = parsed_dir / f"{first_student}.json"
-        if preview_path.exists():
-            preview = json.loads(preview_path.read_text(encoding="utf-8"))
-
-    solution_questions = (
-        get_all_question_ids(solution_parsed) if solution_parsed else []
-    )
-    solution_duplicate_qids = (
-        solution_parsed.get("duplicate_qids", []) if solution_parsed else []
-    )
-
-    return {
-        "report": report,
-        "preview": preview,
-        "solution_questions": solution_questions,
-        "solution_duplicate_qids": solution_duplicate_qids,
-    }
+    return await asyncio.to_thread(run_parse, config)
 
 
 # ---------------------------------------------------------------------------
@@ -619,14 +565,14 @@ def api_put_rubrics(rubrics: dict = Body(...)):
 def api_estimate_rubrics():
     """Estimate tokens and cost for rubric generation."""
     config = _get_active_config()
-    return estimate_rubrics(config)
+    return run_estimate_rubrics(config)
 
 
 @app.get("/estimate/grade")
 def api_estimate_grade_all():
     """Estimate tokens and cost for grading all students."""
     config = _get_active_config()
-    return estimate_grade(config, student_name=None)
+    return run_estimate_grade(config)
 
 
 @app.get("/estimate/grade/{student_name:path}")
@@ -636,7 +582,7 @@ def api_estimate_grade_one(student_name: str):
     if "/" in student_name or "\\" in student_name or ".." in student_name:
         raise HTTPException(status_code=400, detail="Invalid student name")
     config = _get_active_config()
-    return estimate_grade(config, student_name=student_name)
+    return run_estimate_grade(config, student_name=student_name)
 
 
 # ---------------------------------------------------------------------------
@@ -648,7 +594,7 @@ def api_estimate_grade_one(student_name: str):
 async def api_calibrate():
     """Run calibration (outlier detection) on graded results."""
     config = _get_active_config()
-    flagged = await asyncio.to_thread(run_calibration, config)
+    flagged = await asyncio.to_thread(run_calibrate_step, config)
     return {"flagged": flagged, "count": len(flagged)}
 
 
@@ -656,11 +602,7 @@ async def api_calibrate():
 def api_get_calibration():
     """Read saved calibration report."""
     config = _get_active_config()
-    output_dir = Path(config.get("output_dir", "output"))
-    path = output_dir / "calibration_report.json"
-    if not path.exists():
-        return []
-    return json.loads(path.read_text(encoding="utf-8"))
+    return get_calibration_report(config)
 
 
 @app.get("/grade/status")
@@ -852,8 +794,7 @@ def api_get_parsed(student_name: str):
 async def api_export():
     """Run export step. Returns summary and Excel download path."""
     config = _get_active_config()
-    summary = await asyncio.to_thread(export_all, config)
-    return summary
+    return await asyncio.to_thread(run_export, config)
 
 
 @app.get("/export/excel")
@@ -873,8 +814,8 @@ def api_download_excel():
 def api_download_autograder_zip():
     """Create Gradescope autograder zip and return it for download."""
     config = _get_active_config()
-    export_all(config)  # Ensure gradescope/*.json exist
-    zip_path = export_autograder_zip(config)
+    run_export(config)  # Ensure gradescope/*.json exist
+    zip_path = run_export_autograder_zip(config)
     return FileResponse(zip_path, filename="gradescope_autograder.zip")
 
 

@@ -8,7 +8,7 @@
   - `grade.py` grades per student/group
   - `batch_grader.py` orchestrates batch grading
   - `export.py` exports artifacts
-- Prefer updating existing utilities in `utils.py` for shared behavior (path handling, config behavior, filtering helpers) instead of duplicating logic.
+- Prefer updating existing utilities in `utils.py`, `grading_helpers.py` (grade_only filtering), or `config_models.py` (normalize_qid, AppConfig) for shared behavior instead of duplicating logic.
 - Preserve backward-compatible API payload shapes used by the UI (`ui/js/*.js`) and tests.
 
 ## Architecture
@@ -43,7 +43,7 @@
 - Treat student notebook content as untrusted input. Keep prompt-injection mitigations intact (`<<<STUDENT_SUBMISSION>>>` boundaries and sanitizer usage).
 - Canonical question IDs are numeric strings like `"1.1"`; normalize any `Q1.1`/`q1.1` forms through existing model/parsing helpers.
 - Prompts are filesystem-managed (`prompts/{assignment}/` or `prompts/DEFAULT/`) and should never be persisted in `config.yaml` payloads.
-- When `grading.grade_only` is configured, use shared filtering helpers (`filter_groups_by_grade_only`) and preserve merge semantics (`grade_only_merge`) where applicable.
+- When `grading.grade_only` is configured, use shared filtering helpers (`filter_groups_by_grade_only` in `grading_helpers.py`, re-exported by utils) and preserve merge semantics (`grade_only_merge`) where applicable.
 - Preserve incremental save and resume behavior for grading results (`graded_results.json` written after each student/group batch result).
 - Keep logging bound to the active assignment output path (`output/{assignment_name}/autograder.log`) and avoid duplicate stale file handlers.
 

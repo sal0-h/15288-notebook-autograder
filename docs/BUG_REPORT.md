@@ -20,15 +20,15 @@ No open bug items currently in this section.
 
 | ID | Severity | File | Status | Summary |
 |----|----------|------|--------|---------|
-| E-102 | Low | `app.py:321` | Accepted | Solution notebook upload path is outside `output/{assignment}` tree by design |
+| E-102 | Low | `app.py:321` | Resolved | Solution notebook upload path now stores under `output/{assignment_name}/` |
 | E-104 | Low | `batch_grader.py` | Resolved | Shared client is correct: httpx.Client is thread-safe; connection pooling reduces latency vs per-task clients |
 
 ### E-102 — Solution notebook stored outside assignment output tree
 
-`/parse-solution-upload` stores to `{project_root}/{assignment_name}/{assignment_name}_sol.ipynb`.
+`/parse-solution-upload` stores to `output/{assignment_name}/{assignment_name}_sol.ipynb` (same tree as other runtime artifacts).
 
 Impact:
-- Mixed artifact layout can confuse operators.
+- ~~Mixed artifact layout can confuse operators.~~ Resolved: solution now lives under `output/{assignment_name}/`.
 
 Reason accepted:
 - Current behavior is intentional and functional; docs now explicitly mention this.

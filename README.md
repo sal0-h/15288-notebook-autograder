@@ -87,6 +87,10 @@ Main pipeline modules:
 - prompt_builder.py: prompt construction, sanitization, and JSON extraction.
 - grading_models.py: shared grading schemas and validation models.
 - utils.py: config I/O, assignment-scoped logging, OpenAI client setup, and shared helpers.
+- config_models.py: AppConfig, ParsingConfig, GradingConfig, default_config, normalize_qid.
+- grading_helpers.py: grade_only filtering, effective_groups, needs_merge (re-exported by utils).
+- pipeline_runner.py: thin wrappers for app pipeline steps (run_gather, run_parse, run_export, etc.).
+- results_store.py: load_results, save_results, update_student, load_results_with_backup.
 
 Supporting directories:
 
@@ -164,7 +168,7 @@ python main.py --steps parse --config output/LabTest_3_S26/config.yaml --no-writ
 
 Notes:
 
-- If `--config` is omitted, `main.py` writes to `output/{assignment_name}/config.yaml` based on the programmatic `CONFIG` object.
+- If `--config` is omitted, `main.py` writes to `output/{assignment_name}/config.yaml` based on the programmatic `CONFIG` object (from `default_config()` in config_models.py).
 - If you pass `--config`, it should point to an assignment config file, typically under `output/{assignment_name}/config.yaml`.
 - Programmatic callers should construct an `AppConfig` or config dict directly before invoking pipeline functions.
 
@@ -356,5 +360,4 @@ The test suite covers parsing, grading, rubric generation, export paths, utiliti
 
 ## Known engineering limitations
 
-- `/parse-solution-upload` stores solution notebooks under `{project_root}/{assignment_name}/` while most runtime artifacts live under `output/{assignment_name}/`.
 - `gather.py` (standalone CLI) still allows running without `--config` and defaults `--out` to `output/submissions`; for assignment-scoped runs, pass `--config output/{assignment_name}/config.yaml`.
