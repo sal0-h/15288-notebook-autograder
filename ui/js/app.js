@@ -7,15 +7,52 @@ document.getElementById("expandBtn").onclick = () => {
     btn.textContent = c.classList.contains("wide") ? "⤡ Collapse" : "⤢ Expand";
 };
 
+function switchToTab(tabEl) {
+    if (!tabEl || !tabEl.dataset.tab) return;
+    const tabId = tabEl.dataset.tab;
+    document.querySelectorAll(".tab[data-tab]").forEach(x => {
+        x.classList.toggle("active", x === tabEl);
+        x.setAttribute("aria-selected", x === tabEl ? "true" : "false");
+        x.setAttribute("tabindex", x === tabEl ? "0" : "-1");
+    });
+    document.querySelectorAll(".panel").forEach(p => {
+        const isActive = p.id === "panel-" + tabId;
+        p.classList.toggle("active", isActive);
+        p.setAttribute("aria-hidden", isActive ? "false" : "true");
+    });
+    if (tabId === "rubrics") { loadRubricsForEdit(); loadRubricEstimate(); }
+    if (tabId === "grade") { loadGradeEstimate(); if (!gradeStreamActive) document.getElementById("gradeProgress").innerHTML = ""; }
+    tabEl.focus();
+}
+
 document.querySelectorAll(".tab[data-tab]").forEach(t => {
-    t.onclick = () => {
-        document.querySelectorAll(".tab").forEach(x => x.classList.remove("active"));
-        document.querySelectorAll(".panel").forEach(x => x.classList.remove("active"));
-        t.classList.add("active");
-        document.getElementById("panel-" + t.dataset.tab).classList.add("active");
-        if (t.dataset.tab === "rubrics") { loadRubricsForEdit(); loadRubricEstimate(); }
-        if (t.dataset.tab === "grade") { loadGradeEstimate(); if (!gradeStreamActive) document.getElementById("gradeProgress").innerHTML = ""; }
+    t.setAttribute("aria-selected", t.classList.contains("active") ? "true" : "false");
+    t.setAttribute("tabindex", t.classList.contains("active") ? "0" : "-1");
+    t.onclick = () => switchToTab(t);
+    t.onkeydown = (e) => {
+        const tabs = Array.from(document.querySelectorAll(".tab[data-tab]"));
+        const idx = tabs.indexOf(t);
+        if (e.key === "ArrowRight" || e.key === "ArrowDown") {
+            e.preventDefault();
+            switchToTab(tabs[(idx + 1) % tabs.length]);
+        } else if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
+            e.preventDefault();
+            switchToTab(tabs[(idx - 1 + tabs.length) % tabs.length]);
+        } else if (e.key === "Home") {
+            e.preventDefault();
+            switchToTab(tabs[0]);
+        } else if (e.key === "End") {
+            e.preventDefault();
+            switchToTab(tabs[tabs.length - 1]);
+        } else if (e.key === " " || e.key === "Enter") {
+            e.preventDefault();
+            switchToTab(t);
+        }
     };
+});
+
+document.querySelectorAll(".panel").forEach(p => {
+    p.setAttribute("aria-hidden", p.classList.contains("active") ? "false" : "true");
 });
 
 // ==================== SETUP ====================
@@ -83,7 +120,7 @@ document.getElementById("setupLoadBtn").onclick = async () => {
     setLoading(btn, true, "Loading…");
     statusEl.innerHTML = `<span style="color:#64748b">Loading…</span>`;
     try {
-        const r = await fetch(API + "/load-or-create", {
+        const r = await fetchWithRetry(API + "/load-or-create", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ assignment_name: name }),
@@ -204,7 +241,7 @@ document.getElementById("setupParseUploadBtn").onclick = async () => {
         const fd = new FormData();
         fd.append("assignment_name", name);
         fd.append("solution_file", file);
-        const r = await fetch(API + "/parse-solution-upload", { method: "POST", body: fd });
+        const r = await fetchWithRetry(API + "/parse-solution-upload", { method: "POST", body: fd });
         const data = await r.json();
         if (data.detail) throw new Error(data.detail);
         setupConfig.assignment_name = data.assignment_name;
@@ -236,7 +273,7 @@ document.getElementById("setupParseExistingBtn").onclick = async () => {
     document.getElementById("setupDuplicateWarning").classList.add("hidden");
     document.getElementById("setupResults").innerHTML = "";
     try {
-        const r = await fetch(API + "/parse-solution", { method: "POST" });
+        const r = await fetchWithRetry(API + "/parse-solution", { method: "POST" });
         const data = await r.json();
         if (data.detail) throw new Error(data.detail);
         setupQuestionGroups = data.suggested_groups || [];
@@ -279,7 +316,7 @@ document.getElementById("setupSaveBtn").onclick = async () => {
     const btn = document.getElementById("setupSaveBtn");
     setLoading(btn, true, "Saving…");
     try {
-        const r = await fetch(API + "/config", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(setupConfig) });
+        const r = await fetchWithRetry(API + "/config", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(setupConfig) });
         if (!r.ok) { const err = await r.json(); throw new Error(err.detail || "Save failed"); }
         document.getElementById("setupResults").innerHTML = `<p class="status-ok">✓ Config saved.</p>`;
         loadRubricEstimate();
@@ -321,7 +358,7 @@ document.getElementById("gatherBtn").onclick = async () => {
     const fd = new FormData();
     fd.append("zip_file", file);
     try {
-        const r = await fetch(API + "/gather", { method: "POST", body: fd });
+        const r = await fetchWithRetry(API + "/gather", { method: "POST", body: fd });
         const data = await r.json();
         const results = data.results || [];
         const ok = results.filter(x => x.status === "ok").length;
@@ -351,7 +388,7 @@ document.getElementById("parseBtn").onclick = async () => {
     document.getElementById("parseResults").innerHTML = "";
     document.getElementById("parsePreview").classList.add("hidden");
     try {
-        const r = await fetch(API + "/parse", { method: "POST" });
+        const r = await fetchWithRetry(API + "/parse", { method: "POST" });
         const data = await r.json();
         if (data.detail) throw new Error(data.detail);
         // Parsed artifacts changed on disk; avoid showing stale cached answers in Review.
@@ -392,7 +429,7 @@ let fullRubricsCache = {};
 
 async function loadRubricGroups() {
     try {
-        const r = await fetch(API + "/config");
+        const r = await fetchWithRetry(API + "/config");
         const config = await r.json();
         let groups = (config.grading || {}).question_groups || [];
         const gradeOnly = (config.grading || {}).grade_only;
@@ -409,7 +446,7 @@ async function loadRubricGroups() {
 
 async function loadRubricsForEdit() {
     try {
-        const [configRes, rubricsRes] = await Promise.all([fetch(API + "/config"), fetch(API + "/rubrics")]);
+        const [configRes, rubricsRes] = await Promise.all([fetchWithRetry(API + "/config"), fetchWithRetry(API + "/rubrics")]);
         const config = await configRes.json();
         const rubrics = await rubricsRes.json();
         fullRubricsCache = rubrics;
@@ -608,7 +645,7 @@ document.getElementById("rubricGenerateBtn").onclick = async () => {
                 resultsDiv.innerHTML = "<p class='status-warning'>Stream unavailable. Using POST…</p>";
                 try {
                     const body = checked.length ? { group_indices: checked } : {};
-                    const r = await fetch(API + "/generate-rubrics", {
+                    const r = await fetchWithRetry(API + "/generate-rubrics", {
                         method: "POST",
                         headers: { "Content-Type": "application/json" },
                         body: JSON.stringify(body),
@@ -649,7 +686,7 @@ document.getElementById("rubricSaveBtn").onclick = async () => {
     const btn = document.getElementById("rubricSaveBtn");
     setLoading(btn, true, "Saving…");
     try {
-        const r = await fetch(API + "/rubrics", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(rubrics) });
+        const r = await fetchWithRetry(API + "/rubrics", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(rubrics) });
         if (!r.ok) { const err = await r.json(); throw new Error(err.detail || "Save failed"); }
         document.getElementById("rubricResults").innerHTML = `<p class="status-ok">✓ Rubrics saved.</p>`;
     } catch (e) {
@@ -664,7 +701,7 @@ document.getElementById("rubricClearBtn").onclick = async () => {
     const btn = document.getElementById("rubricClearBtn");
     setLoading(btn, true, "Clearing…");
     try {
-        const r = await fetch(API + "/rubrics", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({}) });
+        const r = await fetchWithRetry(API + "/rubrics", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({}) });
         if (!r.ok) { const err = await r.json(); throw new Error(err.detail || "Clear failed"); }
         document.getElementById("rubricResults").innerHTML = `<p class="status-ok">✓ All rubrics cleared.</p>`;
         document.getElementById("rubricForm").innerHTML = "";
@@ -690,8 +727,8 @@ async function pollGradeProgress() {
     if (!gradeStreamActive) return;
     try {
         const [statusRes, resultsRes] = await Promise.all([
-            fetch(API + "/grade/status"),
-            fetch(API + "/results")
+            fetchWithRetry(API + "/grade/status"),
+            fetchWithRetry(API + "/results")
         ]);
         const status = await statusRes.json();
         if (!status.in_progress) {
@@ -812,7 +849,7 @@ function calibrationLookup() {
 }
 
 async function loadReviewAndCalibration() {
-    const [resultsRes, calRes] = await Promise.all([fetch(API + "/results"), fetch(API + "/calibration")]);
+    const [resultsRes, calRes] = await Promise.all([fetchWithRetry(API + "/results"), fetchWithRetry(API + "/calibration")]);
     reviewData = await resultsRes.json();
     if (!Array.isArray(reviewData)) reviewData = [];
     calibrationData = await calRes.json();
@@ -868,10 +905,12 @@ function renderStudentList() {
         const reasons = getStudentFlagReasons(s);
         const flagged = reasons.length > 0;
         const reasonText = formatFlagReasons(reasons);
-        return `<div class="student-item ${flagged ? "flagged" : ""}" data-idx="${i}" title="${escHtml(reasonText) || ""}"><span class="sname">${flagged ? "⚠ " : ""}${escHtml(s.student_name)}</span><span class="sscore">${s.total_score} / ${s.total_max}</span>${flagged ? `<span class="sscore" style="font-size:0.75rem;color:#d97706;">${escHtml(reasonText)}</span>` : ""}</div>`;
+        return `<div class="student-item ${flagged ? "flagged" : ""}" data-idx="${i}" title="${escHtml(reasonText) || ""}" tabindex="0" role="button"><span class="sname">${flagged ? "⚠ " : ""}${escHtml(s.student_name)}</span><span class="sscore">${s.total_score} / ${s.total_max}</span>${flagged ? `<span class="sscore" style="font-size:0.75rem;color:#d97706;">${escHtml(reasonText)}</span>` : ""}</div>`;
     }).join("");
     list.querySelectorAll(".student-item").forEach(el => {
-        el.onclick = () => showReviewDetail(parseInt(el.dataset.idx));
+        const go = () => showReviewDetail(parseInt(el.dataset.idx));
+        el.onclick = go;
+        el.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); go(); } };
     });
 }
 
@@ -899,7 +938,7 @@ async function showReviewDetail(idx) {
     let parsed = parsedCache[s.student_name];
     if (!parsed) {
         try {
-            const r = await fetch(API + "/parsed/" + encodeURIComponent(s.student_name));
+            const r = await fetchWithRetry(API + "/parsed/" + encodeURIComponent(s.student_name));
             if (r.ok) { parsed = await r.json(); parsedCache[s.student_name] = parsed; }
         } catch (_) {}
     }
@@ -927,7 +966,7 @@ async function showReviewDetail(idx) {
         const reviewBadge = q.requires_review ? `<span class="badge badge-review" title="LLM marked for human review">NEEDS REVIEW</span>` : "";
         const outlier = calibrationLookup()[s.student_name + "|" + qid];
         const outlierBanner = outlier ? `<div class="outlier-banner">Statistical outlier (${outlier.flag_reason === "high" ? "above" : "below"} class mean): score ${outlier.score}/${outlier.max || q.max}, mean ${outlier.mean} ± ${outlier.std}</div>` : "";
-        html += `<div class="q-block" id="qblock-${qid}"><div class="q-block-header" onclick="toggleBlock('${qid}')"><h4>Q${qid} ${confBadge} ${reviewBadge}</h4><span class="q-block-score ${scoreClass}">${q.score} / ${q.max}</span></div><div class="q-block-body" id="qbody-${qid}">${outlierBanner}`;
+        html += `<div class="q-block" id="qblock-${qid}"><div class="q-block-header" role="button" tabindex="0" data-toggle-qid="${qid}"><h4>Q${qid} ${confBadge} ${reviewBadge}</h4><span class="q-block-score ${scoreClass}">${q.score} / ${q.max}</span></div><div class="q-block-body" id="qbody-${qid}">${outlierBanner}`;
         if (qMarkdown) html += `<div class="q-section"><div class="q-section-label">Question</div><div class="q-markdown">${sanitizeQuestionHtml(qMarkdown)}</div></div>`;
         if (studentCode) html += `<div class="q-section"><div class="q-section-label">Student Code</div><pre class="code-block">${escHtml(studentCode)}</pre></div>`;
         if (studentOutput) html += `<div class="q-section"><div class="q-section-label">Output</div><pre class="code-block">${escHtml(studentOutput.slice(0, 800))}${studentOutput.length > 800 ? "\n…" : ""}</pre></div>`;
@@ -936,6 +975,12 @@ async function showReviewDetail(idx) {
     }
     html += `<div class="review-actions"><button class="btn" onclick="saveReview()">Save Changes</button><span id="reviewSaveFeedback" style="font-size:0.85rem;margin-left:8px"></span><button class="btn btn-secondary" id="regradeStudentBtn" onclick="regradeStudent()">Re-grade this student</button></div>`;
     detail.innerHTML = html;
+    detail.querySelectorAll(".q-block-header[data-toggle-qid]").forEach(h => {
+        const qid = h.dataset.toggleQid;
+        const go = () => toggleBlock(qid);
+        h.onclick = go;
+        h.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); go(); } };
+    });
     loadRegradeEstimate(s.student_name);
 }
 
@@ -952,7 +997,7 @@ window.saveReview = async function() {
     reviewData[currentReviewIdx] = updated;
     const fb = document.getElementById("reviewSaveFeedback");
     try {
-        const r = await fetch(API + "/results/" + encodeURIComponent(s.student_name), { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(updated) });
+        const r = await fetchWithRetry(API + "/results/" + encodeURIComponent(s.student_name), { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(updated) });
         if (!r.ok) throw new Error(await r.text());
         const el = document.querySelector(`.student-item[data-idx="${currentReviewIdx}"] .sscore`);
         if (el) el.textContent = `${total} / ${s.total_max}`;
@@ -969,7 +1014,7 @@ window.regradeStudent = async function() {
     if (!btn) return;
     setLoading(btn, true, "Re-grading…");
     try {
-        const r = await fetch(API + "/grade/" + encodeURIComponent(s.student_name), { method: "POST" });
+        const r = await fetchWithRetry(API + "/grade/" + encodeURIComponent(s.student_name), { method: "POST" });
         const data = await r.json();
         if (data.detail) throw new Error(data.detail);
         if (data.result) {
@@ -1013,7 +1058,7 @@ document.getElementById("reviewCalibrateBtn").onclick = async () => {
     setLoading(btn, true, "Calibrating…");
     msgDiv.innerHTML = "";
     try {
-        const r = await fetch(API + "/calibrate", { method: "POST" });
+        const r = await fetchWithRetry(API + "/calibrate", { method: "POST" });
         const data = await r.json();
         if (data.detail) throw new Error(data.detail);
         calibrationData = data.flagged || [];
@@ -1036,7 +1081,7 @@ document.getElementById("exportBtn").onclick = async () => {
     setLoading(btn, true, "Exporting…");
     document.getElementById("exportResults").innerHTML = "";
     try {
-        const r = await fetch(API + "/export", { method: "POST" });
+        const r = await fetchWithRetry(API + "/export", { method: "POST" });
         const data = await r.json();
         if (data.detail) throw new Error(data.detail);
         document.getElementById("exportResults").innerHTML = `<p class="status-ok">✓ Exported ${data.students} students.</p><p>Gradescope JSONs: <code>${data.gradescope_dir}</code></p><p>Excel: <code>${data.excel_path}</code></p>`;

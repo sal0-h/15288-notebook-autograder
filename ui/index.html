@@ -8,37 +8,38 @@
     <script src="https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js"></script>
 </head>
 <body>
-<div class="container">
-    <div class="tabs" style="display:flex;align-items:stretch">
-        <div class="tab active" data-tab="setup">0. Setup</div>
-        <div class="tab" data-tab="gather">1. Gather</div>
-        <div class="tab" data-tab="parse">2. Parse</div>
-        <div class="tab" data-tab="rubrics">3. Rubrics</div>
-        <div class="tab" data-tab="grade">4. Grade</div>
-        <div class="tab" data-tab="review">5. Review</div>
-        <div class="tab" data-tab="export">6. Export</div>
-        <button type="button" id="expandBtn" class="tab" style="margin-left:auto;background:transparent;border:none;cursor:pointer;color:#94a3b8;font-size:0.85rem" title="Expand/collapse container width">⤢ Expand</button>
+<a href="#main-content" class="skip-link">Skip to main content</a>
+<div class="container" id="main-content">
+    <div class="tabs" role="tablist" aria-label="Pipeline steps">
+        <div class="tab active" role="tab" id="tab-setup" data-tab="setup" aria-selected="true" aria-controls="panel-setup" tabindex="0">0. Setup</div>
+        <div class="tab" role="tab" id="tab-gather" data-tab="gather" aria-selected="false" aria-controls="panel-gather" tabindex="-1">1. Gather</div>
+        <div class="tab" role="tab" id="tab-parse" data-tab="parse" aria-selected="false" aria-controls="panel-parse" tabindex="-1">2. Parse</div>
+        <div class="tab" role="tab" id="tab-rubrics" data-tab="rubrics" aria-selected="false" aria-controls="panel-rubrics" tabindex="-1">3. Rubrics</div>
+        <div class="tab" role="tab" id="tab-grade" data-tab="grade" aria-selected="false" aria-controls="panel-grade" tabindex="-1">4. Grade</div>
+        <div class="tab" role="tab" id="tab-review" data-tab="review" aria-selected="false" aria-controls="panel-review" tabindex="-1">5. Review</div>
+        <div class="tab" role="tab" id="tab-export" data-tab="export" aria-selected="false" aria-controls="panel-export" tabindex="-1">6. Export</div>
+        <button type="button" id="expandBtn" class="tab tab-expand" title="Expand/collapse container width">⤢ Expand</button>
     </div>
 
     <!-- SETUP -->
-    <div id="panel-setup" class="panel active">
+    <div id="panel-setup" class="panel active" role="tabpanel" aria-labelledby="tab-setup">
         <h2>Assignment Setup</h2>
         <p class="mb-2">Configure assignment name, solution notebook, and question groups. Run this before Gather for a new assignment.</p>
         <!-- Always-visible: assignment name entry and load/create trigger -->
-        <div class="mb-2" style="display:flex;align-items:center;flex-wrap:wrap;gap:8px">
+        <div class="mb-2 flex-row">
             <label><strong>Assignment name</strong></label>
-            <input type="text" id="setupAssignmentName" placeholder="e.g. LabTest_3_S26" style="width:280px;padding:8px;border:1px solid #cbd5e1;border-radius:4px">
+            <input type="text" id="setupAssignmentName" class="input-assignment-name" placeholder="e.g. LabTest_3_S26">
             <button class="btn" id="setupLoadBtn">Load / Create</button>
-            <span class="status-ok" style="font-size:0.8rem" id="setupOutputDirHint"></span>
+            <span class="status-ok text-muted-xs" id="setupOutputDirHint"></span>
         </div>
-        <div id="setupLoadStatus" class="mb-2"></div>
+        <div id="setupLoadStatus" class="mb-2" role="status" aria-live="polite"></div>
 
         <!-- Config fields — shown only after Load / Create succeeds -->
         <div id="setupConfigFields" class="hidden">
         <div class="setup-form mb-2">
             <div class="mb-2">
                 <label><strong>Model</strong></label>
-                <select id="setupModel" style="margin-left:8px;padding:8px 12px;border:1px solid #cbd5e1;border-radius:4px;font-size:0.9rem">
+                <select id="setupModel" class="input-select">
                     <option value="gpt-5-mini">gpt-5-mini (recommended)</option>
                     <option value="gpt-5-nano-2025-08-07">gpt-5-nano (budget)</option>
                     <option value="gpt-4.1-mini">gpt-4.1-mini</option>
@@ -52,8 +53,8 @@
                 </select>
             </div>
             <div class="mb-2">
-                <label><strong>Rubric model</strong> <span style="font-size:0.85rem;color:#64748b">(optional; uses grading model if same)</span></label>
-                <select id="setupRubricModel" style="margin-left:8px;padding:8px 12px;border:1px solid #cbd5e1;border-radius:4px;font-size:0.9rem">
+                <label><strong>Rubric model</strong> <span class="text-muted-sm">(optional; uses grading model if same)</span></label>
+                <select id="setupRubricModel" class="input-select">
                     <option value="">Same as grading model</option>
                     <option value="gpt-4.1-mini">gpt-4.1-mini (deterministic)</option>
                     <option value="gpt-4.1-mini-2025-04-14">gpt-4.1-mini (dated)</option>
@@ -67,61 +68,61 @@
             </div>
             <div class="mb-2">
                 <label><strong>Solution notebook</strong></label>
-                <div class="upload-zone" id="setupSolutionUpload" style="display:inline-block;margin-left:8px;padding:12px 20px">
+                <div class="upload-zone upload-zone-inline" id="setupSolutionUpload">
                     <input type="file" id="setupSolutionFile" accept=".ipynb">
                     <span id="setupSolutionLabel">Upload .ipynb or use existing</span>
                 </div>
-                <span id="setupSolutionPath" class="status-ok" style="margin-left:8px;font-size:0.85rem"></span>
+                <span id="setupSolutionPath" class="status-ok text-muted-sm" style="margin-left:8px"></span>
             </div>
             <div class="mb-2">
                 <label><strong>Workers</strong></label>
-                <input type="range" id="setupWorkers" min="1" max="8" value="1" style="margin-left:8px;vertical-align:middle">
+                <input type="range" id="setupWorkers" class="range-inline" min="1" max="8" value="1">
                 <span id="setupWorkersVal" style="margin-left:6px">1</span>
             </div>
             <div class="mb-2">
-                <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+                <label class="flex-label">
                     <input type="checkbox" id="setupRubricReviewCheck" checked>
-                    <strong>Run rubric review pass</strong> <span style="font-size:0.85rem;color:#64748b">(optional second LLM pass to soften hardcoded values)</span>
+                    <strong>Run rubric review pass</strong> <span class="text-muted-sm">(optional second LLM pass to soften hardcoded values)</span>
                 </label>
             </div>
             <div class="mb-2">
-                <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+                <label class="flex-label">
                     <input type="checkbox" id="setupIncludeReferenceCheck">
-                    <strong>Include reference solution during grading</strong> <span style="font-size:0.85rem;color:#64748b">(usually keep OFF to avoid anchoring on solution-specific values)</span>
+                    <strong>Include reference solution during grading</strong> <span class="text-muted-sm">(usually keep OFF to avoid anchoring on solution-specific values)</span>
                 </label>
             </div>
-            <div class="mb-2" style="display:flex;gap:10px;flex-wrap:wrap">
+            <div class="mb-2 flex-row-gap10">
                 <button class="btn" id="setupParseUploadBtn" disabled>Parse uploaded solution</button>
                 <button class="btn btn-secondary" id="setupParseExistingBtn">Parse existing solution</button>
                 <button class="btn btn-secondary" id="setupSaveBtn">Save config</button>
             </div>
         </div>
         <div class="mb-2">
-            <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+            <label class="flex-label">
                 <input type="checkbox" id="setupGradeOnlyCheck">
-                <strong>Grade only these questions</strong> <span style="font-size:0.85rem;color:#64748b">(others get 0 [skipped])</span>
+                <strong>Grade only these questions</strong> <span class="text-muted-sm">(others get 0 [skipped])</span>
             </label>
-            <input type="text" id="setupGradeOnlyInput" placeholder="e.g. 1.1, 2.1, 4.2" class="hidden" style="margin-top:6px;width:100%;max-width:400px;padding:8px;border:1px solid #cbd5e1;border-radius:4px">
-            <div id="setupGradeOnlyMergeWrap" class="hidden" style="margin-top:6px;margin-left:24px">
-                <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+            <input type="text" id="setupGradeOnlyInput" placeholder="e.g. 1.1, 2.1, 4.2" class="hidden input-grade-only">
+            <div id="setupGradeOnlyMergeWrap" class="hidden merge-wrap">
+                <label class="flex-label">
                     <input type="checkbox" id="setupGradeOnlyMergeCheck">
-                    <strong>Merge into existing</strong> <span style="font-size:0.85rem;color:#64748b">(grade only these, keep other questions unchanged)</span>
+                    <strong>Merge into existing</strong> <span class="text-muted-sm">(grade only these, keep other questions unchanged)</span>
                 </label>
             </div>
         </div>
         <div id="setupDuplicateWarning" class="outlier-banner hidden mb-2"></div>
         <div id="setupGroupsEditor" class="hidden mb-2">
             <h3>Question groups</h3>
-            <p class="mb-1" style="font-size:0.9rem;color:#64748b">Drag questions between groups; drag group handles to reorder. Each group is graded together.</p>
+            <p class="mb-1 text-muted-sm">Drag questions between groups; drag group handles to reorder. Each group is graded together.</p>
             <div id="setupGroupsContainer"></div>
             <button class="btn btn-secondary mt-2" id="setupAddGroupBtn">Add empty group</button>
         </div>
-        <div id="setupResults" class="mb-2"></div>
+        <div id="setupResults" class="mb-2" role="status" aria-live="polite"></div>
         </div>  <!-- /#setupConfigFields -->
     </div>
 
     <!-- GATHER -->
-    <div id="panel-gather" class="panel">
+    <div id="panel-gather" class="panel" role="tabpanel" aria-labelledby="tab-gather">
         <h2>Gather Submissions</h2>
         <p class="mb-2">Upload a Gradescope export ZIP. Notebooks will be renamed by student and copied to the submissions folder.</p>
         <details class="gather-ok-help mb-2">
@@ -134,15 +135,15 @@
             <strong>Drop ZIP here or click to select</strong>
         </div>
         <button class="btn" id="gatherBtn" disabled>Gather</button>
-        <div id="gatherResults" class="mb-2" style="margin-top:12px"></div>
+        <div id="gatherResults" class="mb-2 progress-mt-lg" role="status" aria-live="polite"></div>
     </div>
 
     <!-- PARSE -->
-    <div id="panel-parse" class="panel">
+    <div id="panel-parse" class="panel" role="tabpanel" aria-labelledby="tab-parse">
         <h2>Parse Notebooks</h2>
         <p class="mb-2">Parse solution and student notebooks into structured JSON. Verify that all questions were extracted.</p>
         <button class="btn mb-2" id="parseBtn">Run Parse</button>
-        <div id="parseResults"></div>
+        <div id="parseResults" role="status" aria-live="polite"></div>
         <div id="parsePreview" class="mb-2 hidden">
             <h3>Preview (first student)</h3>
             <pre class="preview-block" id="parsePreviewContent"></pre>
@@ -150,63 +151,63 @@
     </div>
 
     <!-- RUBRICS -->
-    <div id="panel-rubrics" class="panel">
+    <div id="panel-rubrics" class="panel" role="tabpanel" aria-labelledby="tab-rubrics">
         <h2>Rubrics</h2>
         <p class="mb-2">Generate grading criteria from the solution notebook, then review and edit before grading.</p>
         <div class="mb-2">
-            <div class="mb-1" style="font-size:0.9rem;font-weight:500">Generate for:</div>
-            <div id="rubricGroupCheckboxes" style="display:flex;flex-wrap:wrap;gap:12px 20px;margin-bottom:10px"></div>
-            <p class="text-muted" style="font-size:0.85rem;margin:0">Leave all unchecked to generate for every group. Check specific groups to generate only those (merges into existing, does not overwrite others).</p>
+            <div class="mb-1 font-medium">Generate for:</div>
+            <div id="rubricGroupCheckboxes" class="rubric-checkboxes"></div>
+            <p class="text-muted-sm" style="margin:0">Leave all unchecked to generate for every group. Check specific groups to generate only those (merges into existing, does not overwrite others).</p>
         </div>
-        <div class="mb-2" style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+        <div class="mb-2 flex-row-gap10">
             <button class="btn" id="rubricGenerateBtn">Generate Rubrics</button>
-            <span id="rubricEstimate" class="status-ok" style="font-size:0.85rem"></span>
+            <span id="rubricEstimate" class="status-ok text-muted-sm"></span>
             <button class="btn btn-secondary" id="rubricSaveBtn" disabled>Save Rubrics</button>
             <button class="btn btn-secondary" id="rubricClearBtn">Clear All Rubrics</button>
         </div>
-        <div id="rubricResults" class="mb-2"></div>
-        <div id="rubricProgress" class="progress-list hidden" style="margin-top:8px"></div>
+        <div id="rubricResults" class="mb-2" role="status" aria-live="polite"></div>
+        <div id="rubricProgress" class="progress-list hidden progress-mt" role="status" aria-live="polite"></div>
         <div id="rubricForm" class="hidden"></div>
     </div>
 
     <!-- GRADE -->
-    <div id="panel-grade" class="panel">
+    <div id="panel-grade" class="panel" role="tabpanel" aria-labelledby="tab-grade">
         <h2>Grade with LLM</h2>
         <p class="mb-2">Run the grading engine. Progress will stream below in real time.</p>
-        <div class="mb-2" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+        <div class="mb-2 flex-row-gap10">
             <button class="btn" id="gradeBtn">Start Grading</button>
-            <span id="gradeEstimate" class="status-ok" style="font-size:0.85rem"></span>
+            <span id="gradeEstimate" class="status-ok text-muted-sm"></span>
         </div>
-        <div id="gradeProgress" class="progress-list" style="margin-top:12px"></div>
+        <div id="gradeProgress" class="progress-list progress-mt-lg" role="status" aria-live="polite"></div>
     </div>
 
     <!-- REVIEW -->
-    <div id="panel-review" class="panel">
+    <div id="panel-review" class="panel" role="tabpanel" aria-labelledby="tab-review">
         <h2>Review &amp; Edit</h2>
         <p class="mb-2">Inspect each student's answers alongside scores and feedback. Edit and save changes.</p>
-        <div class="mb-2" style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+        <div class="mb-2 flex-row-gap10">
             <button class="btn btn-secondary" id="reviewLoadBtn">Load Results</button>
             <button class="btn btn-secondary" id="reviewCalibrateBtn">Run Calibration</button>
         </div>
-        <div id="reviewCalibrationResults" class="mb-2" style="min-height:1.5em"></div>
+        <div id="reviewCalibrationResults" class="mb-2 min-h" role="status" aria-live="polite"></div>
         <div id="reviewError" class="mb-2"></div>
-        <label class="mb-2" style="display:flex;align-items:center;gap:8px;cursor:pointer">
+        <label class="mb-2 flex-label">
             <input type="checkbox" id="reviewFlaggedFirst">
             <span>Show flagged students first</span>
         </label>
         <div class="review-layout hidden" id="reviewLayout">
             <div class="student-list" id="studentList"></div>
-            <div id="reviewDetail"><p style="padding:16px;color:#64748b">Select a student to review.</p></div>
+            <div id="reviewDetail"><p class="review-placeholder">Select a student to review.</p></div>
         </div>
     </div>
 
     <!-- EXPORT -->
-    <div id="panel-export" class="panel">
+    <div id="panel-export" class="panel" role="tabpanel" aria-labelledby="tab-export">
         <h2>Export</h2>
         <p class="mb-2">Generate Gradescope autograder JSONs and an Excel spreadsheet.</p>
         <button class="btn mb-2" id="exportBtn">Run Export</button>
-        <div id="exportResults" style="margin-top:8px"></div>
-        <div class="mt-2" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+        <div id="exportResults" class="results-mt" role="status" aria-live="polite"></div>
+        <div class="mt-2 flex-row-gap12">
             <a id="excelDownload" class="btn btn-secondary hidden" href="/export/excel" download="Final_Grades.xlsx">Download Excel</a>
             <a id="linterZipDownload" class="btn btn-secondary" href="/export/linter-zip" download="linter_autograder.zip">Download Linter Autograder ZIP</a>
             <a id="autograderZipDownload" class="btn btn-secondary" href="/export/autograder-zip" download="gradescope_autograder.zip">Download Gradescope Autograder ZIP</a>
