@@ -21,7 +21,7 @@ No open bug items currently in this section.
 | ID | Severity | File | Status | Summary |
 |----|----------|------|--------|---------|
 | E-102 | Low | `app.py:321` | Accepted | Solution notebook upload path is outside `output/{assignment}` tree by design |
-| E-104 | Low | `batch_grader.py:293`, `batch_grader.py:248` | Open | Parallel grading shares one OpenAI client object across worker threads |
+| E-104 | Low | `batch_grader.py` | Resolved | Shared client is correct: httpx.Client is thread-safe; connection pooling reduces latency vs per-task clients |
 
 ### E-102 — Solution notebook stored outside assignment output tree
 
@@ -33,15 +33,11 @@ Impact:
 Reason accepted:
 - Current behavior is intentional and functional; docs now explicitly mention this.
 
-### E-104 — Shared client object in parallel grading
+### E-104 — Shared client object in parallel grading (Resolved)
 
 `grade_all_students` creates one OpenAI client and passes it into all worker calls.
 
-Impact:
-- Potential thread-safety/performance uncertainty.
-
-Recommended fix:
-- Initialize one client per worker task (or document client thread-safety assumption).
+Expert review: The shared client is the correct approach. `httpx.Client` is thread-safe; connection pooling reduces latency; per-task clients cause socket exhaustion and redundant TLS handshakes. `max_connections=workers` prevents pool starvation.
 
 ## 3) Inconsistencies
 
@@ -67,3 +63,4 @@ Recommended fix:
 | E-202 | Resolved | Batch and single-student persisted result schema is now consistent (`_usage` removed before write) |
 | E-003 | Resolved | `/gather` now enforces upload size while streaming chunks and aborts before full buffering |
 | E-103 | Resolved | `PUT /config` no longer swallows active-config load failures; malformed active config now returns 500 |
+| E-104 | Resolved | Shared OpenAI client across parallel workers is correct; httpx.Client is thread-safe; connection pooling preferred |

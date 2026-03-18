@@ -254,7 +254,7 @@ def grade_all_students(
                 "model": model,
             }
     else:
-        # Parallel grading
+        # Parallel grading — shared client is thread-safe (httpx.Client); connection pooling reduces latency
         def _grade_one(args):
             i, path, merge_into = args
             student_name = path.stem
