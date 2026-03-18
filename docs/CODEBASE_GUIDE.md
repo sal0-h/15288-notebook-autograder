@@ -450,8 +450,9 @@ of 2 scores per question is required before statistics are computed.
 - The embedded `run_autograder` script resolves the submission owner from
   `submission_metadata.json` and copies a matching pre-computed result to
   `/autograder/results/results.json`.
-  - It first attempts exact stem matching, then falls back to `startswith` / substring
-    matching, which can be ambiguous for similar student names.
+  - It performs exact normalized-name matching only.
+  - If multiple exact-normalized matches are found, it emits an explicit ambiguous-match error
+    instead of using fuzzy fallback matching.
 - ZIP entries for `setup.sh` and `run_autograder` use `create_system=3` (Unix) and
   `external_attr = 0o755 << 16` to set executable bits for Gradescope.
 
