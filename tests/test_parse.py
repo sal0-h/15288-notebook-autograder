@@ -234,6 +234,68 @@ class TestParseNotebook:
         assert "code_for_1_1" not in q2
         assert "code_for_1_2" in q2
 
+    def test_markdown_subheaders_in_answer_not_treated_as_section(self, tmp_path):
+        """Student answers with ### 1. Foo (plain markdown, no HTML) should be
+        captured, not mistaken for handout section headers."""
+        config = {
+            "parsing": {
+                "section_regex": r"(?m)^\s*#+\s*(?:<[^>]+>\s*)*(\d+)\.(?!\d)",
+                "question_regex": r"(?mi)^\s*#+.*?Q(\d+)\.(\d+).*?\[\s*(\d+)\s*PTS\s*\]",
+                "keep_images": True,
+            }
+        }
+        cells = [
+            make_md_cell("# <font color='orange'> 2. Model comparison</font>"),
+            make_md_cell("# <font color='blue'> Q2.1 [5 PTS] Compare models</font>"),
+            make_md_cell(
+                "### 1. Model Results\n"
+                "I tested the models. Here are the scores:\n"
+                "* **Linear Regression:** 0.650\n"
+                "* **k-NN:** 0.890\n\n"
+                "### 2. Final Selection\n"
+                "I chose Linear Regression."
+            ),
+        ]
+        nb = make_notebook(cells)
+        p = tmp_path / "test.ipynb"
+        p.write_text(json.dumps(nb), encoding="utf-8")
+        result = parse_notebook(p, config)
+        q = result["sections"]["2"]["questions"]["2.1"]
+        md = q["answer_markdown_concat"]
+        assert "### 1. Model Results" in md
+        assert "### 2. Final Selection" in md
+        assert "I chose Linear Regression" in md
+
+    def test_q1_21_header_not_matched_as_section(self, tmp_path):
+        """Q1.21 header (# <font...> Q1.21 Report [4 PTS]) must be parsed as a
+        question, not mistaken for section 1 due to '1.' in Q1.21."""
+        config = {
+            "parsing": {
+                "section_regex": r"(?m)^\s*#+\s*(?:<[^>]+>\s*)*(\d+)\.(?!\d)",
+                "question_regex": r"(?mi)^\s*#+.*?Q(\d+)\.(\d+).*?\[\s*(\d+)\s*PTS\s*\]",
+                "keep_images": True,
+            }
+        }
+        cells = [
+            make_md_cell("# <center><font color='orange'> 1. ML pipeline</center>"),
+            make_md_cell(
+                "# <font color='blue'> Q1.21 Report to the stakeholder [4 PTS] </font>\n"
+                "Provide a brief summary..."
+            ),
+            make_md_cell(
+                "### 1. Summary of the Chosen Model\n"
+                "The final model is k-NN with k=1."
+            ),
+        ]
+        nb = make_notebook(cells)
+        p = tmp_path / "test.ipynb"
+        p.write_text(json.dumps(nb), encoding="utf-8")
+        result = parse_notebook(p, config)
+        assert "1.21" in result["sections"]["1"]["questions"]
+        q = result["sections"]["1"]["questions"]["1.21"]
+        assert "### 1. Summary of the Chosen Model" in q["answer_markdown_concat"]
+        assert "k-NN with k=1" in q["answer_markdown_concat"]
+
 
 # ---------------------------------------------------------------------------
 # get_all_question_ids

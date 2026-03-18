@@ -75,11 +75,20 @@ def parse_notebook(nb_path: Path, config: dict) -> dict:
     )
     keep_images = parsing.get("keep_images", True)
 
-    def is_section(cell: dict) -> bool:
-        return (
-            cell.get("cell_type") == "markdown"
-            and section_re.search(md_text(cell)) is not None
-        )
+    def is_section(cell: dict, *, strict: bool = False) -> bool:
+        """Check if cell is a section header. When strict=True (used while gathering
+        answers), require HTML tags so plain markdown subheaders like ### 1. Model
+        Results in student answers are not mistaken for handout section headers."""
+        if cell.get("cell_type") != "markdown":
+            return False
+        m = section_re.search(md_text(cell))
+        if not m:
+            return False
+        if strict:
+            # Handout section headers typically use HTML (e.g. <font>, <center>).
+            # Student answers may use plain ### 1. Foo subheaders; don't treat as section.
+            return "<" in md_text(cell)
+        return True
 
     def match_question(cell: dict) -> re.Match | None:
         if cell.get("cell_type") != "markdown":
@@ -141,7 +150,7 @@ def parse_notebook(nb_path: Path, config: dict) -> dict:
             while j < len(cells):
                 nxt = cells[j]
 
-                if is_section(nxt) or match_question(nxt):
+                if is_section(nxt, strict=True) or match_question(nxt):
                     break
 
                 if nxt.get("cell_type") == "code":
