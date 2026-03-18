@@ -2,6 +2,37 @@
 const API = "";
 const DEFAULT_MODEL = "gpt-5-mini";
 
+const FETCH_RETRIES = 2;
+const FETCH_RETRY_DELAY_MS = 1000;
+
+/**
+ * Fetch with retry on network failure or 5xx. Retries up to FETCH_RETRIES times.
+ * @param {string} url
+ * @param {RequestInit} options
+ * @returns {Promise<Response>}
+ */
+async function fetchWithRetry(url, options = {}) {
+    let lastErr;
+    for (let attempt = 0; attempt <= FETCH_RETRIES; attempt++) {
+        try {
+            const r = await fetch(url, options);
+            if (r.status >= 500 && attempt < FETCH_RETRIES) {
+                await new Promise(resolve => setTimeout(resolve, FETCH_RETRY_DELAY_MS));
+                continue;
+            }
+            return r;
+        } catch (e) {
+            lastErr = e;
+            if (attempt < FETCH_RETRIES) {
+                await new Promise(resolve => setTimeout(resolve, FETCH_RETRY_DELAY_MS));
+            } else {
+                throw e;
+            }
+        }
+    }
+    throw lastErr;
+}
+
 function setLoading(btn, loading, text) {
     if (loading) {
         btn.disabled = true;
@@ -58,7 +89,7 @@ async function loadRubricEstimate() {
     const el = document.getElementById("rubricEstimate");
     if (!el) return;
     try {
-        const r = await fetch(API + "/estimate/rubrics");
+        const r = await fetchWithRetry(API + "/estimate/rubrics");
         const data = await r.json();
         const txt = formatEstimate(data);
         el.textContent = txt ? `(${txt})` : "";
@@ -69,7 +100,7 @@ async function loadGradeEstimate() {
     const el = document.getElementById("gradeEstimate");
     if (!el) return;
     try {
-        const r = await fetch(API + "/estimate/grade");
+        const r = await fetchWithRetry(API + "/estimate/grade");
         const data = await r.json();
         const txt = formatEstimate(data);
         el.textContent = txt ? `(${txt})` : "";
@@ -80,7 +111,7 @@ async function loadRegradeEstimate(studentName) {
     const el = document.getElementById("regradeEstimate");
     if (!el || !studentName) return;
     try {
-        const r = await fetch(API + "/estimate/grade/" + encodeURIComponent(studentName));
+        const r = await fetchWithRetry(API + "/estimate/grade/" + encodeURIComponent(studentName));
         const data = await r.json();
         const txt = formatEstimate(data);
         el.textContent = txt ? `(${txt})` : "";
