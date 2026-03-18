@@ -1,12 +1,5 @@
 /** AI Autograder - main app logic (setup, gather, parse, rubrics, grade, review, export) */
 
-document.getElementById("expandBtn").onclick = () => {
-    const c = document.querySelector(".container");
-    const btn = document.getElementById("expandBtn");
-    c.classList.toggle("wide");
-    btn.textContent = c.classList.contains("wide") ? "⤡ Collapse" : "⤢ Expand";
-};
-
 function switchToTab(tabEl) {
     if (!tabEl || !tabEl.dataset.tab) return;
     const tabId = tabEl.dataset.tab;
@@ -490,11 +483,16 @@ function renderRubricGroupCheckboxes(groups) {
     });
 }
 
+function autoResizeRubricTextarea(ta) {
+    ta.style.height = "0";
+    ta.style.height = Math.max(ta.scrollHeight, 40) + "px";
+}
+
 function renderRubricItemRow(desc, ded) {
     return `<tr class="rubric-item-row">
-        <td><input type="text" class="rubric-item-desc" value="${escHtml(desc || "")}" placeholder="Criterion description" style="width:100%;padding:6px 8px;font-size:0.9rem" /></td>
-        <td style="width:90px"><input type="number" class="rubric-item-ded" value="${ded != null ? ded : ""}" step="0.5" min="0" placeholder="0" style="width:100%;padding:6px 8px;font-size:0.9rem;box-sizing:border-box" /></td>
-        <td style="width:40px"><button type="button" class="btn btn-secondary rubric-remove-item" title="Remove" style="padding:4px 8px">✕</button></td>
+        <td class="rubric-desc-cell"><textarea class="rubric-item-desc" placeholder="Criterion description">${escHtml(desc || "")}</textarea></td>
+        <td class="rubric-ded-cell"><input type="number" class="rubric-item-ded" value="${ded != null ? ded : ""}" step="0.5" min="0" placeholder="0" /></td>
+        <td class="rubric-remove-cell"><button type="button" class="btn btn-secondary rubric-remove-item" title="Remove">✕</button></td>
     </tr>`;
 }
 
@@ -561,6 +559,10 @@ function renderRubricForm(rubrics) {
         }
     }
     form.innerHTML = html;
+    form.querySelectorAll(".rubric-item-desc").forEach(ta => {
+        autoResizeRubricTextarea(ta);
+        ta.addEventListener("input", () => autoResizeRubricTextarea(ta));
+    });
     form.querySelectorAll(".rubric-q-block").forEach(block => {
         updateRubricDeductionSum(block);
         block.addEventListener("input", () => updateRubricDeductionSum(block));
@@ -568,6 +570,9 @@ function renderRubricForm(rubrics) {
             const tbody = block.querySelector("tbody");
             tbody.insertAdjacentHTML("beforeend", renderRubricItemRow("", ""));
             const lastRow = tbody.querySelector(".rubric-item-row:last-child");
+            const newTa = lastRow.querySelector(".rubric-item-desc");
+            autoResizeRubricTextarea(newTa);
+            newTa.addEventListener("input", () => autoResizeRubricTextarea(newTa));
             lastRow.querySelector(".rubric-remove-item").onclick = () => {
                 if (block.querySelectorAll(".rubric-item-row").length > 1) lastRow.remove();
                 updateRubricDeductionSum(block);

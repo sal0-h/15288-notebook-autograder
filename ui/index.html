@@ -18,7 +18,6 @@
         <div class="tab" role="tab" id="tab-grade" data-tab="grade" aria-selected="false" aria-controls="panel-grade" tabindex="-1">4. Grade</div>
         <div class="tab" role="tab" id="tab-review" data-tab="review" aria-selected="false" aria-controls="panel-review" tabindex="-1">5. Review</div>
         <div class="tab" role="tab" id="tab-export" data-tab="export" aria-selected="false" aria-controls="panel-export" tabindex="-1">6. Export</div>
-        <button type="button" id="expandBtn" class="tab tab-expand" title="Expand/collapse container width">⤢ Expand</button>
     </div>
 
     <!-- SETUP -->
@@ -29,7 +28,7 @@
         <div class="mb-2 flex-row">
             <label><strong>Assignment name</strong></label>
             <input type="text" id="setupAssignmentName" class="input-assignment-name" placeholder="e.g. LabTest_3_S26">
-            <button class="btn" id="setupLoadBtn">Load / Create</button>
+            <button type="button" class="btn" id="setupLoadBtn">Load / Create</button>
             <span class="status-ok text-muted-xs" id="setupOutputDirHint"></span>
         </div>
         <div id="setupLoadStatus" class="mb-2" role="status" aria-live="polite"></div>
@@ -92,9 +91,9 @@
                 </label>
             </div>
             <div class="mb-2 flex-row-gap10">
-                <button class="btn" id="setupParseUploadBtn" disabled>Parse uploaded solution</button>
-                <button class="btn btn-secondary" id="setupParseExistingBtn">Parse existing solution</button>
-                <button class="btn btn-secondary" id="setupSaveBtn">Save config</button>
+                <button type="button" class="btn" id="setupParseUploadBtn" disabled>Parse uploaded solution</button>
+                <button type="button" class="btn btn-secondary" id="setupParseExistingBtn">Parse existing solution</button>
+                <button type="button" class="btn btn-secondary" id="setupSaveBtn">Save config</button>
             </div>
         </div>
         <div class="mb-2">
@@ -115,7 +114,7 @@
             <h3>Question groups</h3>
             <p class="mb-1 text-muted-sm">Drag questions between groups; drag group handles to reorder. Each group is graded together.</p>
             <div id="setupGroupsContainer"></div>
-            <button class="btn btn-secondary mt-2" id="setupAddGroupBtn">Add empty group</button>
+            <button type="button" class="btn btn-secondary mt-2" id="setupAddGroupBtn">Add empty group</button>
         </div>
         <div id="setupResults" class="mb-2" role="status" aria-live="polite"></div>
         </div>  <!-- /#setupConfigFields -->
@@ -134,7 +133,7 @@
             <input type="file" id="gatherFile" accept=".zip">
             <strong>Drop ZIP here or click to select</strong>
         </div>
-        <button class="btn" id="gatherBtn" disabled>Gather</button>
+        <button type="button" class="btn" id="gatherBtn" disabled>Gather</button>
         <div id="gatherResults" class="mb-2 progress-mt-lg" role="status" aria-live="polite"></div>
     </div>
 
@@ -142,7 +141,7 @@
     <div id="panel-parse" class="panel" role="tabpanel" aria-labelledby="tab-parse">
         <h2>Parse Notebooks</h2>
         <p class="mb-2">Parse solution and student notebooks into structured JSON. Verify that all questions were extracted.</p>
-        <button class="btn mb-2" id="parseBtn">Run Parse</button>
+        <button type="button" class="btn mb-2" id="parseBtn">Run Parse</button>
         <div id="parseResults" role="status" aria-live="polite"></div>
         <div id="parsePreview" class="mb-2 hidden">
             <h3>Preview (first student)</h3>
@@ -160,10 +159,10 @@
             <p class="text-muted-sm" style="margin:0">Leave all unchecked to generate for every group. Check specific groups to generate only those (merges into existing, does not overwrite others).</p>
         </div>
         <div class="mb-2 flex-row-gap10">
-            <button class="btn" id="rubricGenerateBtn">Generate Rubrics</button>
+            <button type="button" class="btn" id="rubricGenerateBtn">Generate Rubrics</button>
             <span id="rubricEstimate" class="status-ok text-muted-sm"></span>
-            <button class="btn btn-secondary" id="rubricSaveBtn" disabled>Save Rubrics</button>
-            <button class="btn btn-secondary" id="rubricClearBtn">Clear All Rubrics</button>
+            <button type="button" class="btn btn-secondary" id="rubricSaveBtn" disabled>Save Rubrics</button>
+            <button type="button" class="btn btn-secondary" id="rubricClearBtn">Clear All Rubrics</button>
         </div>
         <div id="rubricResults" class="mb-2" role="status" aria-live="polite"></div>
         <div id="rubricProgress" class="progress-list hidden progress-mt" role="status" aria-live="polite"></div>
@@ -175,7 +174,7 @@
         <h2>Grade with LLM</h2>
         <p class="mb-2">Run the grading engine. Progress will stream below in real time.</p>
         <div class="mb-2 flex-row-gap10">
-            <button class="btn" id="gradeBtn">Start Grading</button>
+            <button type="button" class="btn" id="gradeBtn">Start Grading</button>
             <span id="gradeEstimate" class="status-ok text-muted-sm"></span>
         </div>
         <div id="gradeProgress" class="progress-list progress-mt-lg" role="status" aria-live="polite"></div>
@@ -186,8 +185,8 @@
         <h2>Review &amp; Edit</h2>
         <p class="mb-2">Inspect each student's answers alongside scores and feedback. Edit and save changes.</p>
         <div class="mb-2 flex-row-gap10">
-            <button class="btn btn-secondary" id="reviewLoadBtn">Load Results</button>
-            <button class="btn btn-secondary" id="reviewCalibrateBtn">Run Calibration</button>
+            <button type="button" class="btn btn-secondary" id="reviewLoadBtn">Load Results</button>
+            <button type="button" class="btn btn-secondary" id="reviewCalibrateBtn">Run Calibration</button>
         </div>
         <div id="reviewCalibrationResults" class="mb-2 min-h" role="status" aria-live="polite"></div>
         <div id="reviewError" class="mb-2"></div>
@@ -205,7 +204,7 @@
     <div id="panel-export" class="panel" role="tabpanel" aria-labelledby="tab-export">
         <h2>Export</h2>
         <p class="mb-2">Generate Gradescope autograder JSONs and an Excel spreadsheet.</p>
-        <button class="btn mb-2" id="exportBtn">Run Export</button>
+        <button type="button" class="btn mb-2" id="exportBtn">Run Export</button>
         <div id="exportResults" class="results-mt" role="status" aria-live="polite"></div>
         <div class="mt-2 flex-row-gap12">
             <a id="excelDownload" class="btn btn-secondary hidden" href="/export/excel" download="Final_Grades.xlsx">Download Excel</a>
