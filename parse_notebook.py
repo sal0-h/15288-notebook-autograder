@@ -258,6 +258,10 @@ def parse_all_students(config: dict) -> tuple[dict | None, list[dict]]:
                     "status": "error",
                     "questions_found": [],
                     "questions_missing": solution_question_ids,
+                    "questions_unexpected": [],
+                    "questions_duplicate": [],
+                    "questions_matched_count": 0,
+                    "questions_expected_count": len(solution_question_ids),
                     "total_points_possible": solution_total_pts,
                     "message": str(e),
                 }
@@ -270,7 +274,10 @@ def parse_all_students(config: dict) -> tuple[dict | None, list[dict]]:
 
         found = get_all_question_ids(parsed)
         missing = [q for q in solution_question_ids if q not in found]
-        status = "ok" if not missing else "warning"
+        unexpected = [q for q in found if q not in solution_question_ids]
+        duplicate = parsed.get("duplicate_qids", [])
+        matched_count = len(found) - len(unexpected)
+        status = "ok" if not missing and not unexpected and not duplicate else "warning"
 
         report.append(
             {
@@ -278,6 +285,10 @@ def parse_all_students(config: dict) -> tuple[dict | None, list[dict]]:
                 "status": status,
                 "questions_found": found,
                 "questions_missing": missing,
+                "questions_unexpected": unexpected,
+                "questions_duplicate": duplicate,
+                "questions_matched_count": matched_count,
+                "questions_expected_count": len(solution_question_ids),
                 "total_points_possible": get_total_points(parsed),
                 "message": "",
             }
