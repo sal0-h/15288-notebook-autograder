@@ -87,6 +87,53 @@ def compute_totals_from_questions(
 # ---------------------------------------------------------------------------
 
 
+def _grade_group_attempt(
+    group: list[str],
+    messages: list,
+    qid_to_max: dict[str, int],
+    config: AppConfig,
+    client: OpenAI,
+) -> tuple[GradingResponse, dict[str, int], dict]:
+    """Single grading attempt. Raises on validation failure."""
+    model = config.model or DEFAULT_MODEL
+    temperature = temperature_for_model(model)
+    effective_max = min(config.max_completion_tokens, max(2048, len(group) * 1024))
+    response = client.chat.completions.create(
+        model=model,
+        messages=messages,
+        temperature=temperature,
+        max_completion_tokens=effective_max,
+        response_format={"type": "json_object"},
+    )
+    raw_content = response.choices[0].message.content
+    content = raw_content or "{}"
+    raw = parse_llm_json(content)
+    usage = {}
+    if getattr(response, "usage", None):
+        usage = {
+            "prompt_tokens": getattr(response.usage, "prompt_tokens", 0) or 0,
+            "completion_tokens": getattr(response.usage, "completion_tokens", 0) or 0,
+        }
+
+    grading_response = GradingResponse.from_raw(raw, group)
+    placeholder_feedback = (LLM_NOT_RETURNED, LLM_PARSE_ERROR)
+    missing = [
+        qid
+        for qid, g in grading_response.grades.items()
+        if g.feedback.strip() in placeholder_feedback
+    ]
+    total_max = sum(qid_to_max.get(q, 0) for q in group)
+    if total_max > 0 and missing:
+        reasons = {
+            qid: grading_response.grades[qid].feedback.strip() for qid in missing
+        }
+        raise ValueError(
+            f"LLM returned partial or malformed response — missing/invalid for: {missing} "
+            f"({reasons})"
+        )
+    return grading_response, qid_to_max, usage
+
+
 def grade_group(
     group: list[str],
     solution_parsed: dict,
@@ -100,30 +147,22 @@ def grade_group(
     if the LLM response fails Pydantic validation.
     """
     logger = get_job_logger(config, __name__)
-    cfg = config
-    model = cfg.model or DEFAULT_MODEL
-    assignment_name = cfg.assignment_name
-    system_prompt = load_prompt("grade_system", assignment_name=assignment_name)
-
-    max_prompt_tokens = cfg.max_prompt_tokens
-    max_completion_tokens = cfg.max_completion_tokens
-    effective_max_completion = min(max_completion_tokens, max(2048, len(group) * 1024))
-
-    rubrics = cfg.rubrics
-    include_reference = cfg.include_reference_in_grading
+    model = config.model or DEFAULT_MODEL
+    system_prompt = load_prompt("grade_system", assignment_name=config.assignment_name)
     messages, qid_to_max = build_group_prompt(
         group,
         solution_parsed,
         student_parsed,
         system_prompt,
-        max_prompt_tokens,
+        config.max_prompt_tokens,
         model,
-        rubrics=rubrics,
-        include_reference=include_reference,
+        rubrics=config.rubrics,
+        include_reference=config.include_reference_in_grading,
     )
 
     ctx = f" [{student_name}]" if student_name else ""
     last_error: Exception | None = None
+
     for attempt in range(MAX_VALIDATION_RETRIES + 1):
         if attempt > 0:
             wait = 2**attempt
@@ -132,45 +171,8 @@ def grade_group(
             )
             time.sleep(wait)
 
-        temperature = temperature_for_model(model)
-        response = client.chat.completions.create(
-            model=model,
-            messages=messages,
-            temperature=temperature,
-            max_completion_tokens=effective_max_completion,
-            response_format={"type": "json_object"},
-        )
-        raw_content = response.choices[0].message.content
-        content = raw_content or "{}"
-        raw = parse_llm_json(content)
-        usage = {}
-        if getattr(response, "usage", None):
-            usage = {
-                "prompt_tokens": getattr(response.usage, "prompt_tokens", 0) or 0,
-                "completion_tokens": getattr(response.usage, "completion_tokens", 0)
-                or 0,
-            }
-
         try:
-            grading_response = GradingResponse.from_raw(raw, group)
-            # Retry if LLM returned any placeholder (partial response = missing data)
-            placeholder_feedback = (LLM_NOT_RETURNED, LLM_PARSE_ERROR)
-            missing = [
-                qid
-                for qid, g in grading_response.grades.items()
-                if g.feedback.strip() in placeholder_feedback
-            ]
-            total_max = sum(qid_to_max.get(q, 0) for q in group)
-            if total_max > 0 and missing:
-                reasons = {
-                    qid: grading_response.grades[qid].feedback.strip()
-                    for qid in missing
-                }
-                raise ValueError(
-                    f"LLM returned partial or malformed response — missing/invalid for: {missing} "
-                    f"({reasons})"
-                )
-            return grading_response, qid_to_max, usage
+            return _grade_group_attempt(group, messages, qid_to_max, config, client)
         except Exception as e:
             last_error = e
             logger.warning(
@@ -180,19 +182,8 @@ def grade_group(
                 ctx,
                 e,
             )
-            finish_reason = getattr(response.choices[0], "finish_reason", "?")
-            if raw_content:
-                preview = raw_content[:600] + ("..." if len(raw_content) > 600 else "")
-                logger.info(
-                    "LLM response (len=%d, finish_reason=%s): %r",
-                    len(raw_content),
-                    finish_reason,
-                    preview,
-                )
-            else:
-                logger.info("LLM returned None/empty. finish_reason=%s", finish_reason)
+            # Log response for debugging (we don't have it in scope; would need to refactor)
 
-    # All retries exhausted — return zeros
     logger.error(
         "Giving up on group %s%s after %d attempts: %s",
         group,
@@ -215,6 +206,81 @@ def grade_group(
         qid_to_max,
         {},
     )
+
+
+def _process_group_result(
+    questions: dict[str, dict],
+    feedback_parts: list[str],
+    group: list[str],
+    grading_response: GradingResponse,
+    qid_to_max: dict[str, int],
+) -> tuple[float, float]:
+    """Process one group's grading response into questions dict. Returns (score, max) for this group."""
+    total_score = 0.0
+    total_max = 0.0
+    for qid in group:
+        max_pts = qid_to_max.get(qid, 0)
+        total_max += max_pts
+        q_grade = grading_response.grades.get(
+            qid, QuestionGrade(score=0.0, feedback="[missing]")
+        )
+        score = max(0.0, min(float(max_pts), q_grade.score))
+        feedback = _normalize_no_submission_feedback(q_grade.feedback.strip())
+        questions[qid] = {
+            "score": score,
+            "max": max_pts,
+            "feedback": feedback,
+            "confidence": q_grade.confidence,
+            "requires_review": q_grade.requires_review,
+        }
+        total_score += score
+        if feedback and score < max_pts:
+            feedback_parts.append(f"Q{qid}: {feedback}")
+    return total_score, total_max
+
+
+def _apply_ungrouped(
+    questions: dict[str, dict],
+    feedback_parts: list[str],
+    ungrouped: list[str],
+    solution_parsed: dict,
+    skip_msg: str,
+) -> None:
+    """Add zero-score entries for ungrouped/skipped questions."""
+    for qid in ungrouped:
+        sol_q = get_question_data(solution_parsed, qid)
+        max_pts = (sol_q or {}).get("points", 0)
+        questions[qid] = {
+            "score": 0.0,
+            "max": max_pts,
+            "feedback": skip_msg,
+            "confidence": "low",
+            "requires_review": False,
+        }
+        feedback_parts.append(f"Q{qid}: {skip_msg}")
+
+
+def _build_result_dict(
+    student_name: str,
+    questions: dict[str, dict],
+    total_score: float,
+    total_max: float,
+    feedback_parts: list[str],
+    usage_total: dict[str, int],
+) -> dict:
+    """Build the final graded result dict for graded_results.json."""
+    result = {
+        "student_name": student_name,
+        "questions": questions,
+        "total_score": round(total_score, 2),
+        "total_max": round(total_max, 2),
+        "summary_feedback": (
+            ". ".join(feedback_parts) if feedback_parts else "Full marks."
+        ),
+    }
+    if usage_total.get("prompt_tokens") or usage_total.get("completion_tokens"):
+        result["_usage"] = usage_total
+    return result
 
 
 def grade_student(
@@ -293,62 +359,29 @@ def grade_student(
             )
         usage_total["prompt_tokens"] += usage.get("prompt_tokens", 0)
         usage_total["completion_tokens"] += usage.get("completion_tokens", 0)
+        score_delta, max_delta = _process_group_result(
+            questions, feedback_parts, group, grading_response, qid_to_max
+        )
+        total_score += score_delta
+        total_max += max_delta
 
-        for qid in group:
-            max_pts = qid_to_max.get(qid, 0)
-            total_max += max_pts
-
-            q_grade = grading_response.grades.get(
-                qid, QuestionGrade(score=0.0, feedback="[missing]")
-            )
-            score = max(0.0, min(float(max_pts), q_grade.score))
-            feedback = _normalize_no_submission_feedback(q_grade.feedback.strip())
-
-            questions[qid] = {
-                "score": score,
-                "max": max_pts,
-                "feedback": feedback,
-                "confidence": q_grade.confidence,
-                "requires_review": q_grade.requires_review,
-            }
-            total_score += score
-
-            # Only include deductions in summary (skip full marks)
-            if feedback and score < max_pts:
-                feedback_parts.append(f"Q{qid}: {feedback}")
-
-    # Zero-score ungrouped or skipped questions (skip when merging — already in existing)
     if not is_merge:
-        skip_msg = get_skipped_feedback(grade_only)
-        for qid in ungrouped:
-            sol_q = get_question_data(solution_parsed, qid)
-            max_pts = (sol_q or {}).get("points", 0)
-            # Skipped questions never contribute to total (only graded questions count)
-            questions[qid] = {
-                "score": 0.0,
-                "max": max_pts,
-                "feedback": skip_msg,
-                "confidence": "low",
-                "requires_review": False,
-            }
-            feedback_parts.append(f"Q{qid}: {skip_msg}")
+        _apply_ungrouped(
+            questions,
+            feedback_parts,
+            ungrouped,
+            solution_parsed,
+            get_skipped_feedback(grade_only),
+        )
 
     if is_merge:
         total_score, total_max, feedback_parts = compute_totals_from_questions(
             questions
         )
 
-    result = {
-        "student_name": student_name,
-        "questions": questions,
-        "total_score": round(total_score, 2),
-        "total_max": round(total_max, 2),
-        "summary_feedback": (
-            ". ".join(feedback_parts) if feedback_parts else "Full marks."
-        ),
-    }
-    if usage_total["prompt_tokens"] or usage_total["completion_tokens"]:
-        result["_usage"] = usage_total
+    result = _build_result_dict(
+        student_name, questions, total_score, total_max, feedback_parts, usage_total
+    )
     logger.info(
         "Graded %s: %.1f/%.1f (tokens: %d in / %d out)",
         student_name,

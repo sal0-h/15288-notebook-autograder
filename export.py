@@ -7,7 +7,7 @@ from pathlib import Path
 import pandas as pd
 
 from linter_export import build_linter_summary, fmt_qid_list
-from parse_notebook import _sort_key_qid
+from parse_notebook import get_all_question_ids, sort_key_qid
 from utils import AppConfig, ensure_app_config, load_config
 
 # Unix executable bits used when creating Gradescope autograder zip entries
@@ -107,11 +107,11 @@ def _build_linter_summary_test(
     for sec_data in (parsed.get("sections") or {}).values():
         found_set.update((sec_data.get("questions") or {}).keys())
 
-    found = sorted(found_set, key=_sort_key_qid)
-    required = sorted(set(required_qids), key=_sort_key_qid)
-    missing = sorted(set(required) - found_set, key=_sort_key_qid)
-    unexpected = sorted(found_set - set(required), key=_sort_key_qid)
-    duplicates = sorted(parsed.get("duplicate_qids") or [], key=_sort_key_qid)
+    found = sorted(found_set, key=sort_key_qid)
+    required = sorted(set(required_qids), key=sort_key_qid)
+    missing = sorted(set(required) - found_set, key=sort_key_qid)
+    unexpected = sorted(found_set - set(required), key=sort_key_qid)
+    duplicates = sorted(parsed.get("duplicate_qids") or [], key=sort_key_qid)
 
     summary, _ = build_linter_summary(found, required, missing, unexpected, duplicates)
     return {
@@ -151,7 +151,7 @@ def export_all(config: AppConfig | dict) -> dict[str, str | int]:
     all_qids: set[str] = set()
     for r in results:
         all_qids.update(r.get("questions", {}).keys())
-    q_cols = sorted(all_qids, key=_sort_key_qid)
+    q_cols = sorted(all_qids, key=sort_key_qid)
 
     # For Gradescope: only include grade_only questions if set; use optional title mapping
     grade_only = cfg.grading.grade_only
@@ -159,9 +159,17 @@ def export_all(config: AppConfig | dict) -> dict[str, str | int]:
 
     if grade_only:
         gs_q_cols = [q for q in grade_only if q in all_qids]
-        gs_q_cols = sorted(gs_q_cols, key=_sort_key_qid)
+        gs_q_cols = sorted(gs_q_cols, key=sort_key_qid)
     else:
         gs_q_cols = q_cols
+
+    # Linter test uses full solution QIDs (not grade_only) when available
+    solution_path = output_dir / "solution_parsed.json"
+    if solution_path.exists():
+        solution_parsed = json.loads(solution_path.read_text(encoding="utf-8"))
+        required_qids_for_linter = get_all_question_ids(solution_parsed)
+    else:
+        required_qids_for_linter = gs_q_cols
 
     # Export Gradescope JSON per student
     for r in results:
@@ -183,7 +191,11 @@ def export_all(config: AppConfig | dict) -> dict[str, str | int]:
             )
 
         # Keep linter summary as the last test case for quick format diagnostics.
-        tests.append(_build_linter_summary_test(student_name, parsed_dir, gs_q_cols))
+        tests.append(
+            _build_linter_summary_test(
+                student_name, parsed_dir, required_qids_for_linter
+            )
+        )
 
         gs_data = {"tests": tests}
         safe_name = (

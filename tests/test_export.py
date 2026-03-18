@@ -8,7 +8,7 @@ import pandas as pd
 import pytest
 
 from export import RUN_AUTOGRADER, export_all, export_autograder_zip
-from parse_notebook import _sort_key_qid
+from parse_notebook import sort_key_qid
 from utils import load_config
 
 
@@ -129,6 +129,52 @@ class TestExportAll:
         files = list(gs_dir.glob("*.json"))
         assert len(files) == 1
         assert "unknown_student" in files[0].name
+
+    def test_linter_uses_solution_qids_when_grade_only_set(self, tmp_path):
+        """When grade_only is set, linter test uses full solution QIDs, not grade_only."""
+        solution_parsed = {
+            "sections": {
+                "1": {
+                    "overview_markdown": "",
+                    "questions": {
+                        "1.1": {"points": 1},
+                        "1.2": {"points": 2},
+                        "2.1": {"points": 3},
+                    },
+                },
+            },
+            "duplicate_qids": [],
+        }
+        (tmp_path / "solution_parsed.json").write_text(
+            json.dumps(solution_parsed), encoding="utf-8"
+        )
+        results = [
+            {
+                "student_name": "Eve",
+                "questions": {
+                    "1.1": {"score": 1, "max": 1, "feedback": "ok"},
+                    "1.2": {"score": 0, "max": 2, "feedback": ""},
+                    "2.1": {"score": 0, "max": 3, "feedback": ""},
+                },
+                "total_score": 1,
+                "total_max": 6,
+                "summary_feedback": "",
+            },
+        ]
+        (tmp_path / "graded_results.json").write_text(
+            json.dumps(results, indent=2), encoding="utf-8"
+        )
+        _write_parsed_student(tmp_path, "Eve", ["1.1", "1.2"])
+        config = _make_config(tmp_path, tmp_path)
+        config["parsed_dir"] = str(tmp_path / "parsed")
+        config["grading"] = {"grade_only": ["1.1", "1.2"]}
+        export_all(config)
+        gs_data = json.loads((tmp_path / "gradescope" / "Eve.json").read_text())
+        lint = gs_data["tests"][-1]
+        assert "2.1" in lint["output"]
+        assert (
+            "Questions Missing" in lint["output"] or "missing" in lint["output"].lower()
+        )
 
     def test_grade_only_filters_gradescope_export(self, tmp_path):
         results = [

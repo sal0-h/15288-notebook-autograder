@@ -69,7 +69,7 @@ def _get_rubric_review_prompt(config: AppConfig) -> str:
     return load_prompt("review_system", assignment_name=config.assignment_name)
 
 
-def _build_group_prompt(group: list[str], solution_parsed: dict) -> str:
+def build_rubric_group_prompt(group: list[str], solution_parsed: dict) -> str:
     """Build the user prompt for one question group."""
     parts: list[str] = []
     max_output_chars = 2000
@@ -128,7 +128,7 @@ def _generate_one_group(
             group,
             model,
         )
-        user_content = _build_group_prompt(group, solution_parsed)
+        user_content = build_rubric_group_prompt(group, solution_parsed)
         messages = [
             {"role": "system", "content": rubric_prompt},
             {"role": "user", "content": user_content},

@@ -70,6 +70,31 @@ class TestLinterExport:
             assert "1.1" in script
             assert "1.2" in script
 
+    def test_embedded_script_uses_search_not_finditer(self, tmp_path):
+        """Embedded script uses one match per cell (search), matching parse_notebook."""
+        sol_path = _make_solution_notebook(tmp_path)
+        out_dir = tmp_path / "output" / "Test"
+        out_dir.mkdir(parents=True)
+        config_path = out_dir / "config.yaml"
+        config_path.write_text(
+            yaml.dump(
+                {
+                    "output_dir": str(out_dir),
+                    "assignment_name": "Test",
+                    "solution_notebook": str(sol_path),
+                    "parsing": {
+                        "question_regex": r"(?i)^\s*(-\s*)?Q(\d+)\.(\d+)\s*.*?\[\s*(\d+)\s*PTS\s*\]",
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        zip_path = export_linter_zip(config_path)
+        with zipfile.ZipFile(zip_path, "r") as zf:
+            script = zf.read("run_autograder").decode()
+        assert "QUESTION_REGEX.search(text)" in script
+        assert "QUESTION_REGEX.finditer(text)" not in script
+
     def test_raises_if_solution_missing(self, tmp_path):
         out_dir = tmp_path / "output" / "Test"
         out_dir.mkdir(parents=True)

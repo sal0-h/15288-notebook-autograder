@@ -5,7 +5,7 @@ from pathlib import Path
 
 from grading_models import MODEL_PRICING
 from prompt_builder import build_group_prompt, estimate_tokens, load_prompt
-from rubric import _build_group_prompt
+from rubric import build_rubric_group_prompt
 from utils import (
     AppConfig,
     ensure_app_config,
@@ -68,7 +68,7 @@ def estimate_rubrics(config: AppConfig | dict) -> dict:
     for group in groups:
         if not group:
             continue
-        text = _build_group_prompt(group, solution_parsed)
+        text = build_rubric_group_prompt(group, solution_parsed)
         prompt_tokens += estimate_tokens(text, 0, model)
         completion_tokens += OUTPUT_TOKENS_PER_GROUP
 
@@ -79,7 +79,7 @@ def estimate_rubrics(config: AppConfig | dict) -> dict:
         for group in groups:
             if not group:
                 continue
-            text = _build_group_prompt(group, solution_parsed)
+            text = build_rubric_group_prompt(group, solution_parsed)
             # Review input: system + question text + rubric JSON (~output size)
             review_prompt += (
                 estimate_tokens(" " * RUBRIC_REVIEW_SYSTEM_LEN, 0, model)

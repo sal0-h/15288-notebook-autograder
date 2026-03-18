@@ -181,7 +181,44 @@ def parse_notebook(nb_path: Path, config: dict) -> dict:
     return result
 
 
-def _sort_key_qid(qid: str) -> tuple[int, int] | tuple[float, str]:
+def extract_qids_from_notebook(
+    cells: list[dict], question_regex: str
+) -> tuple[list[str], list[str]]:
+    """
+    Extract found QIDs and duplicate QIDs from notebook cells.
+
+    Uses one match per cell (search, not finditer) to match parse_notebook semantics.
+    Duplicates = QIDs that appear in more than one cell.
+
+    Returns (found_qids, duplicate_qids).
+    """
+    question_re = re.compile(question_regex, re.MULTILINE)
+    seen_qids: dict[str, int] = {}
+    duplicate_qids: list[str] = []
+
+    for i, cell in enumerate(cells):
+        if cell.get("cell_type") != "markdown":
+            continue
+        text = "".join(cell.get("source", []))
+        m = question_re.search(text)
+        if not m:
+            continue
+        if m.lastindex >= 4:
+            sec_id, qnum = m.group(2), m.group(3)
+        else:
+            sec_id, qnum = m.group(1), m.group(2)
+        qid = f"{sec_id}.{qnum}"
+        if qid in seen_qids:
+            if qid not in duplicate_qids:
+                duplicate_qids.append(qid)
+        seen_qids[qid] = i
+
+    found = sorted(seen_qids.keys(), key=sort_key_qid)
+    dupes = sorted(duplicate_qids, key=sort_key_qid)
+    return found, dupes
+
+
+def sort_key_qid(qid: str) -> tuple[int, int] | tuple[float, str]:
     """Sort key for question IDs. Standard X.Y format sorts numerically; others fall back to string."""
     parts = qid.split(".")
     if len(parts) == 2:
@@ -197,7 +234,7 @@ def get_all_question_ids(parsed: dict) -> list[str]:
     ids: list[str] = []
     for sec_data in parsed.get("sections", {}).values():
         ids.extend(sec_data.get("questions", {}).keys())
-    return sorted(ids, key=_sort_key_qid)
+    return sorted(ids, key=sort_key_qid)
 
 
 def get_total_points(parsed: dict) -> int | float:
