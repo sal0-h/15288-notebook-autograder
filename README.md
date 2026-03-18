@@ -356,7 +356,5 @@ The test suite covers parsing, grading, rubric generation, export paths, utiliti
 
 ## Known engineering limitations
 
-- `/gather` reads uploaded ZIPs fully into memory before enforcing size limits.
-- `run_autograder` inside `gradescope_autograder.zip` uses name-based fallback matching that can be ambiguous for similar names.
 - `/parse-solution-upload` stores solution notebooks under `{project_root}/{assignment_name}/` while most runtime artifacts live under `output/{assignment_name}/`.
-- Standalone script defaults still use `config.yaml` in several modules; use explicit `--config output/{assignment_name}/config.yaml` to avoid path-resolution surprises.
+- `gather.py` (standalone CLI) still allows running without `--config` and defaults `--out` to `output/submissions`; for assignment-scoped runs, pass `--config output/{assignment_name}/config.yaml`.

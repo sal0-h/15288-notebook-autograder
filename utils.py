@@ -104,7 +104,7 @@ def _as_dict(config: dict | BaseModel | None) -> dict:
     return dict(config or {})
 
 
-_configured_loggers = set()
+_configured_loggers: dict[str, Path] = {}
 _log_lock = threading.Lock()
 
 
@@ -115,15 +115,17 @@ def setup_assignment_logging(assignment_name: str, output_dir: str | Path) -> Pa
     log_path = (out_dir / "autograder.log").resolve()
 
     global _configured_loggers
-    if assignment_name in _configured_loggers:
-        return log_path
-
     with _log_lock:
-        if assignment_name in _configured_loggers:
+        if _configured_loggers.get(assignment_name) == log_path:
             return log_path
 
         logger = logging.getLogger(f"autograder.{assignment_name}")
         logger.setLevel(logging.INFO)
+
+        for handler in list(logger.handlers):
+            if isinstance(handler, logging.FileHandler):
+                logger.removeHandler(handler)
+                handler.close()
 
         handler = logging.FileHandler(log_path, encoding="utf-8")
         handler.setFormatter(
@@ -135,7 +137,7 @@ def setup_assignment_logging(assignment_name: str, output_dir: str | Path) -> Pa
         logging.getLogger("httpx").setLevel(logging.WARNING)
         logging.getLogger("httpcore").setLevel(logging.WARNING)
 
-        _configured_loggers.add(assignment_name)
+        _configured_loggers[assignment_name] = log_path
 
     return log_path
 

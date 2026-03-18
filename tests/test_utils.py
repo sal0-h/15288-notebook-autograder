@@ -271,6 +271,21 @@ output_dir: output
             assert Path(file_handlers_one[0].baseFilename).resolve() == first.resolve()
             assert Path(file_handlers_two[0].baseFilename).resolve() == second.resolve()
 
+        def test_reconfigures_same_assignment_for_new_output_dir(self, tmp_path):
+            assignment_name = "shared-assignment"
+            first = setup_assignment_logging(assignment_name, tmp_path / "run_01")
+            second = setup_assignment_logging(assignment_name, tmp_path / "run_02")
+
+            logger = logging.getLogger(f"autograder.{assignment_name}")
+            file_handlers = [
+                h for h in logger.handlers if isinstance(h, logging.FileHandler)
+            ]
+
+            assert first.name == "autograder.log"
+            assert second.name == "autograder.log"
+            assert len(file_handlers) == 1
+            assert Path(file_handlers[0].baseFilename).resolve() == second.resolve()
+
 
 class TestOpenAIClientConfig:
     def test_get_openai_client_uses_httpx_limits_and_timeout(self, monkeypatch):
