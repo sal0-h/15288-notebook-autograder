@@ -77,7 +77,7 @@ Main pipeline modules:
 - app.py: FastAPI backend plus static UI serving.
 - gather.py: submission extraction and normalization.
 - parse_notebook.py: notebook parser for solution and student files.
-- rubric.py: rubric generation and rubric review flow.
+- rubric/ package: rubric generation and review (`python -m rubric` or import `generate_rubrics`).
 - grade.py: single-student grading logic.
 - batch_grader.py: sequential and parallel batch orchestration.
 - calibrate.py: outlier detection on graded results.
@@ -96,7 +96,7 @@ Supporting directories:
 
 - tests/: unit and integration tests.
 - ui/: browser-based setup, grading, and export interface.
-- docs/: supporting documentation.
+- docs/: supporting documentation — see `docs/CODEBASE_GUIDE.md` (pipeline reference), `docs/OPENAI_VISION_MODELS.md` (models, pricing, HW1 variance study), `docs/AUTOGRADER_DESIGN_REVIEW.md` (design review + refactoring playbook), `docs/BUG_REPORT.md` (engineering tracker).
 - output/: assignment-scoped runtime artifacts.
 
 ## Output model
@@ -234,7 +234,7 @@ Important fields in config.yaml:
 - rubric_model: optional rubric-generation model; falls back to model when empty.
 - solution_notebook: path to the reference notebook.
 - workers: parallel grading worker count.
-- max_prompt_tokens: prompt budget.
+- max_prompt_tokens: scales per-field character caps for grading prompts (code/output/markdown truncation).
 - max_completion_tokens: completion budget.
 - include_reference_in_grading: whether to embed the reference solution in grading prompts.
 - rubric_review: whether to run the rubric review pass.
@@ -261,7 +261,7 @@ Each stage can also be run independently.
 python gather.py --zip gradescope_export.zip
 python gather.py --folder extracted_export_folder
 python parse_notebook.py --config output/<assignment_name>/config.yaml
-python rubric.py --config output/<assignment_name>/config.yaml
+python -m rubric --config output/<assignment_name>/config.yaml
 python grade.py --config output/<assignment_name>/config.yaml
 python calibrate.py --config output/<assignment_name>/config.yaml
 python export.py --config output/<assignment_name>/config.yaml

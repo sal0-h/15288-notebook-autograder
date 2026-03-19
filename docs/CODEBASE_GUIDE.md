@@ -3,6 +3,8 @@
 A deeper technical reference than the README. Start here if you want to understand
 how the pieces fit together, trace data through the pipeline, or make non-trivial changes.
 
+For a combined **design review** (accuracy, roadmap, KPIs) and **refactoring playbook** (tests, seams, invariants), see [`AUTOGRADER_DESIGN_REVIEW.md`](./AUTOGRADER_DESIGN_REVIEW.md).
+
 ---
 
 ## Table of contents
@@ -47,7 +49,7 @@ ai_autograder/
 ├── pipeline_runner.py      Thin wrappers for app endpoints (run_gather, run_parse, etc.)
 ├── prompt_builder.py       Prompt construction, sanitization, JSON extraction
 ├── results_store.py        load_results, save_results, update_student, load_results_with_backup
-├── rubric.py               Rubric generation and review
+├── rubric/                 Rubric package (`impl.py`: generation + review)
 ├── utils.py                Config I/O, logging, OpenAI client (AppConfig in config_models)
 │
 ├── prompts/
@@ -85,7 +87,7 @@ ai_autograder/
 | `parse_notebook.py` | Notebook → parsed JSON | `utils` |
 | `grade.py` | `grade_group`, `grade_student`, post-processing | `prompt_builder`, `grading_models`, `utils` |
 | `batch_grader.py` | Sequential/parallel grading, resume logic | `grade`, `results_store`, `utils` |
-| `rubric.py` | Rubric generation + review | `prompt_builder`, `utils` |
+| `rubric/` (`impl.py`) | Rubric generation + review | `prompt_builder`, `utils`, `llm` |
 | `gather.py` | Submission extraction | `utils` |
 | `export.py` | Excel + Gradescope export | `utils` |
 | `calibrate.py` | Outlier detection | `utils` |
@@ -129,8 +131,9 @@ config_path must point to output/{assignment_name}/config.yaml
 After resolution, relative paths (`solution_notebook`, `submissions_dir`, etc.) are
 resolved against the project root. Defaults are filled in via `_apply_config_defaults`.
 
-The returned dict is validated through `AppConfig.model_validate` to catch schema
-errors early, then returned as a plain dict for backward-compatible consumption.
+The merged dict is validated via `ensure_app_config(cfg)` (same coercion rules as
+everywhere else), then returned as a plain dict with `model_dump()` for
+backward-compatible consumption.
 
 ### `AppConfig` schema (`config_models.py`)
 
@@ -341,7 +344,7 @@ message parts, which increases token usage but enables grading of plots.
 
 ### 4.3 Generate rubrics
 
-**Module:** `rubric.py`  
+**Module:** `rubric/` (see `rubric/impl.py`)  
 **Key function:** `generate_rubrics(config, client, progress_callback, group_indices)`
 
 Flow:
@@ -359,7 +362,8 @@ Flow:
 amounts — only description text. The review pass reverts any group where deductions
 no longer sum to points after the LLM's rewrite.
 
-Workers (`cfg.workers`) control parallelism via `ThreadPoolExecutor`.
+**Parallelism:** `cfg.workers` controls both rubric **generation** and the optional **review**
+pass when `workers > 1` and there is more than one group to process (`llm.parallel.iter_unordered_parallel_results`).
 
 ---
 
@@ -496,13 +500,15 @@ For each group:
      - Solution content (question markdown, code, output, markdown answer, images)
        — if `include_reference_in_grading` is False, only the question text and rubric are included
      - Rubric (if present in `cfg.rubrics`)
-   - Token budget handling: per-question output text is truncated using a character
-     budget derived from estimated token usage.
-   - Student submission section wrapped in `<<<STUDENT_SUBMISSION>>>` / `<<<END_STUDENT_SUBMISSION>>>` delimiters.
+     - Student submission section wrapped in `<<<STUDENT_SUBMISSION>>>` / `<<<END_STUDENT_SUBMISSION>>>` delimiters.
+
+Long text fields (reference and student code, output, markdown) share one character cap
+derived from `max_prompt_tokens` (`prompt_builder._grading_body_char_cap` — roughly 4×
+tokens, clamped). No per-question token estimation in the builder.
 
 Image payloads are added as vision message parts with
-`{"type": "image_url", "image_url": {"url": "data:image/png;base64,..."}}`,
-incurring `TOKENS_PER_IMAGE = 1000` in the token budget estimate.
+`{"type": "image_url", "image_url": {"url": "data:image/png;base64,..."}}`.
+`estimate_tokens` still uses `TOKENS_PER_IMAGE = 1000` when projecting costs from built messages.
 
 ### Prompt injection protection
 
@@ -543,6 +549,15 @@ question whose feedback (stripped) appears in `SKIP_FEEDBACKS`.
 
 `_normalize_no_submission_feedback` detects common LLM phrasings for "not submitted"
 and normalizes them to the canonical `NO_SUBMISSION` sentinel.
+
+### Token usage
+
+All runtime aggregation uses `TokenUsage` (`llm.types`): combine with `.merged(other)`,
+test non-zero with `.has_tokens()`, sum with `.total_tokens`. Serialized JSON uses
+the same keys as the dataclass fields (`prompt_tokens`, `completion_tokens`, the
+usual OpenAI usage shape). Convert at boundaries only: `.to_json_dict()` when
+emitting (graded_results `_usage`, SSE `usage`, estimate API payloads) and
+`.from_json_dict()` when ingesting those payloads.
 
 ### Temperature policy
 

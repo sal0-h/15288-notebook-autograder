@@ -10,7 +10,9 @@ import pytest
 from fastapi.testclient import TestClient
 from starlette.datastructures import UploadFile as StarletteUploadFile
 
-from app import app, DEFAULT_UPLOAD_MB
+from api import state
+
+from app import DEFAULT_UPLOAD_MB, app
 from utils import DEFAULT_MODEL
 
 
@@ -60,7 +62,7 @@ def _full_config(tmp_path):
 
 class TestPathTraversal:
     def test_parsed_path_traversal_rejected(self, client, mock_config, tmp_path):
-        with patch("app._get_active_config", return_value=mock_config):
+        with patch("api.state.get_active_config", return_value=mock_config):
             (tmp_path / "parsed").mkdir(exist_ok=True)
             r = client.get("/parsed/..%2F..%2F..%2Fetc%2Fpasswd")
             assert r.status_code in (400, 404)
@@ -101,7 +103,7 @@ class TestUploadLimit:
 
         oversized = b"x" * (1024 * 1024 + 1)
         with (
-            patch("app.DEFAULT_UPLOAD_MB", 1),
+            patch("api.routers.pipeline_routes.DEFAULT_UPLOAD_MB", 1),
             patch("starlette.datastructures.UploadFile.read", new=tracking_read),
         ):
             r = client.post(
@@ -120,10 +122,10 @@ class TestConfigEndpoints:
     def test_load_or_create_creates_new_config(self, client, tmp_path):
         """Creates a new config file when the assignment folder does not exist."""
         with (
-            patch("app._PROJECT_ROOT", new=tmp_path),
-            patch("app.save_config") as mock_save,
+            patch.object(state, "PROJECT_ROOT", tmp_path),
+            patch("api.routers.config_routes.save_config") as mock_save,
             patch(
-                "app.load_config",
+                "api.routers.config_routes.load_config",
                 return_value={"assignment_name": "NewLab", "model": DEFAULT_MODEL},
             ),
         ):
@@ -141,9 +143,9 @@ class TestConfigEndpoints:
         config_path.parent.mkdir(parents=True, exist_ok=True)
         config_path.write_text("assignment_name: ExistingLab\n", encoding="utf-8")
         with (
-            patch("app._PROJECT_ROOT", new=tmp_path),
+            patch.object(state, "PROJECT_ROOT", tmp_path),
             patch(
-                "app.load_config",
+                "api.routers.config_routes.load_config",
                 return_value={"assignment_name": "ExistingLab", "model": DEFAULT_MODEL},
             ) as mock_load,
         ):
@@ -181,9 +183,13 @@ class TestConfigEndpoints:
         }
 
         with (
-            patch("app._get_active_config", return_value=existing),
-            patch("app._active_config_path", new=Path("output/Test/config.yaml")),
-            patch("app.save_config") as mock_save,
+            patch("api.state.get_active_config", return_value=existing),
+            patch.object(
+                state,
+                "_active_config_path",
+                Path("output/Test/config.yaml"),
+            ),
+            patch("api.routers.config_routes.save_config") as mock_save,
         ):
             r = client.put(
                 "/config",
@@ -227,9 +233,13 @@ class TestConfigEndpoints:
         }
 
         with (
-            patch("app._get_active_config", return_value=existing),
-            patch("app._active_config_path", new=Path("output/Test/config.yaml")),
-            patch("app.save_config") as mock_save,
+            patch("api.state.get_active_config", return_value=existing),
+            patch.object(
+                state,
+                "_active_config_path",
+                Path("output/Test/config.yaml"),
+            ),
+            patch("api.routers.config_routes.save_config") as mock_save,
         ):
             r = client.put(
                 "/config",
@@ -246,8 +256,15 @@ class TestConfigEndpoints:
 
     def test_get_config_returns_500_when_active_config_load_fails(self, client):
         with (
-            patch("app._active_config_path", new=Path("output/Test/config.yaml")),
-            patch("app.load_config", side_effect=ValueError("bad yaml")),
+            patch.object(
+                state,
+                "_active_config_path",
+                Path("output/Test/config.yaml"),
+            ),
+            patch(
+                "api.routers.config_routes.load_config",
+                side_effect=ValueError("bad yaml"),
+            ),
         ):
             r = client.get("/config")
         assert r.status_code == 500
@@ -255,9 +272,13 @@ class TestConfigEndpoints:
 
     def test_put_config_returns_500_when_active_config_load_fails(self, client):
         with (
-            patch("app._active_config_path", new=Path("output/Test/config.yaml")),
-            patch("app._get_active_config", side_effect=ValueError("bad yaml")),
-            patch("app.save_config") as mock_save,
+            patch.object(
+                state,
+                "_active_config_path",
+                Path("output/Test/config.yaml"),
+            ),
+            patch("api.state.get_active_config", side_effect=ValueError("bad yaml")),
+            patch("api.routers.config_routes.save_config") as mock_save,
         ):
             r = client.put(
                 "/config",
@@ -276,7 +297,7 @@ class TestPutResults:
         (tmp_path / "output").mkdir(exist_ok=True)
         graded = tmp_path / "output" / "graded_results.json"
         graded.write_text("[]", encoding="utf-8")
-        with patch("app._get_active_config", return_value=mock_config):
+        with patch("api.state.get_active_config", return_value=mock_config):
             r = client.put(
                 "/results/Alice",
                 json={
@@ -290,7 +311,7 @@ class TestPutResults:
         out.mkdir(parents=True, exist_ok=True)
         graded = out / "graded_results.json"
         graded.write_text("[]", encoding="utf-8")
-        with patch("app._get_active_config", return_value=mock_config):
+        with patch("api.state.get_active_config", return_value=mock_config):
             r = client.put(
                 "/results/Alice",
                 json={
@@ -309,7 +330,7 @@ class TestPutResults:
         out.mkdir(parents=True, exist_ok=True)
         graded = out / "graded_results.json"
         graded.write_text("[]", encoding="utf-8")
-        with patch("app._get_active_config", return_value=mock_config):
+        with patch("api.state.get_active_config", return_value=mock_config):
             r = client.put(
                 "/results/..%2F..%2Fetc",
                 json={
@@ -324,18 +345,20 @@ class TestPutResults:
 
 class TestGradingLock:
     def test_grade_returns_409_when_lock_held(self, client):
-        with patch("app._grading_lock") as mock_lock:
-            mock_lock.acquire.return_value = False
+        mock_lock = MagicMock()
+        mock_lock.acquire.return_value = False
+        with patch.object(state, "grading_lock", mock_lock):
             r = client.get("/grade")
             assert r.status_code == 409
 
     def test_grade_one_returns_409_when_lock_held(self, client, tmp_path):
         cfg = _full_config(tmp_path)
+        mock_lock = MagicMock()
+        mock_lock.acquire.return_value = False
         with (
-            patch("app._get_active_config", return_value=cfg),
-            patch("app._grading_lock") as mock_lock,
+            patch("api.state.get_active_config", return_value=cfg),
+            patch.object(state, "grading_lock", mock_lock),
         ):
-            mock_lock.acquire.return_value = False
             r = client.post("/grade/Alice")
             assert r.status_code == 409
 
@@ -399,8 +422,11 @@ class TestGradeOneMerge:
         }
 
         with (
-            patch("app._get_active_config", return_value=cfg),
-            patch("app.grade_student", return_value=returned) as mock_grade_student,
+            patch("api.state.get_active_config", return_value=cfg),
+            patch(
+                "api.routers.grade_routes.grade_student",
+                return_value=returned,
+            ) as mock_grade_student,
         ):
             r = client.post("/grade/Alice")
 
@@ -446,8 +472,11 @@ class TestGradeOneMerge:
         }
 
         with (
-            patch("app._get_active_config", return_value=cfg),
-            patch("app.grade_student", return_value=graded_with_usage),
+            patch("api.state.get_active_config", return_value=cfg),
+            patch(
+                "api.routers.grade_routes.grade_student",
+                return_value=graded_with_usage,
+            ),
         ):
             r = client.post("/grade/Alice")
 
@@ -517,9 +546,9 @@ class TestGradeOneMerge:
         mock_lock.__exit__.return_value = None
 
         with (
-            patch("app._get_active_config", return_value=cfg),
-            patch("app.grade_student", return_value=returned),
-            patch("app._results_lock", new=mock_lock),
+            patch("api.state.get_active_config", return_value=cfg),
+            patch("api.routers.grade_routes.grade_student", return_value=returned),
+            patch.object(state, "results_lock", mock_lock),
         ):
             r = client.post("/grade/Alice")
 
@@ -536,7 +565,7 @@ class TestRubricsEndpoints:
                 "items": [{"description": "Check plot.", "deduction": 2.0}],
             }
         }
-        with patch("app._get_active_config", return_value=mock_config):
+        with patch("api.state.get_active_config", return_value=mock_config):
             r = client.get("/rubrics")
         assert r.status_code == 200
         assert r.json() == {
@@ -550,8 +579,8 @@ class TestRubricsEndpoints:
         cfg = _full_config(tmp_path)
         cfg["rubrics"] = {}
         with (
-            patch("app._get_active_config", return_value=cfg),
-            patch("app.save_config") as mock_save,
+            patch("api.state.get_active_config", return_value=cfg),
+            patch("api.routers.rubric_routes.save_config") as mock_save,
         ):
             r = client.put(
                 "/rubrics",
@@ -585,9 +614,9 @@ class TestRubricsEndpoints:
         mock_config["output_dir"] = str(tmp_path / "output")
         mock_config["grading"] = {"question_groups": [["1.1"]]}
         with (
-            patch("app._get_active_config", return_value=mock_config),
+            patch("api.state.get_active_config", return_value=mock_config),
             patch(
-                "app.generate_rubrics",
+                "rubric.generate_rubrics",
                 return_value={
                     "1.1": {
                         "points": 2,
@@ -595,7 +624,7 @@ class TestRubricsEndpoints:
                     }
                 },
             ),
-            patch("app.save_config"),
+            patch("api.routers.rubric_routes.save_config"),
         ):
             r = client.post("/generate-rubrics")
         assert r.status_code == 200
@@ -646,7 +675,7 @@ class TestCalibrateEndpoint:
         ]
         (out / "graded_results.json").write_text(json.dumps(graded))
         mock_config["output_dir"] = str(out)
-        with patch("app._get_active_config", return_value=mock_config):
+        with patch("api.state.get_active_config", return_value=mock_config):
             r = client.post("/calibrate")
         assert r.status_code == 200
         data = r.json()
@@ -662,7 +691,7 @@ class TestResultsGet:
             '[{"student_name": "Alice", "questions": {}, "total_score": 5, "total_max": 10}]'
         )
         mock_config["output_dir"] = str(out)
-        with patch("app._get_active_config", return_value=mock_config):
+        with patch("api.state.get_active_config", return_value=mock_config):
             r = client.get("/results")
         assert r.status_code == 200
         data = r.json()
@@ -674,7 +703,7 @@ class TestResultsGet:
         out = tmp_path / "output"
         out.mkdir(parents=True, exist_ok=True)
         mock_config["output_dir"] = str(out)
-        with patch("app._get_active_config", return_value=mock_config):
+        with patch("api.state.get_active_config", return_value=mock_config):
             r = client.get("/results")
         assert r.status_code == 200
         assert r.json() == []
@@ -688,7 +717,7 @@ class TestParsedEndpoint:
             '{"sections": {}, "student_name": "Alice"}'
         )
         mock_config["parsed_dir"] = str(parsed_dir)
-        with patch("app._get_active_config", return_value=mock_config):
+        with patch("api.state.get_active_config", return_value=mock_config):
             r = client.get("/parsed/Alice")
         assert r.status_code == 200
         assert r.json().get("student_name") == "Alice"
@@ -703,8 +732,8 @@ class TestExportEndpoint:
         )
         mock_config["output_dir"] = str(out)
         with (
-            patch("app._get_active_config", return_value=mock_config),
-            patch("app.run_export") as mock_export,
+            patch("api.state.get_active_config", return_value=mock_config),
+            patch("pipeline_runner.run_export") as mock_export,
         ):
             mock_export.return_value = {
                 "students": 1,
