@@ -1,7 +1,6 @@
 """Tests for parse_notebook.py: parsing logic and helper functions."""
 
 import json
-import textwrap
 from pathlib import Path
 
 import pytest
