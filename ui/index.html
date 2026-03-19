@@ -30,8 +30,8 @@
         <p class="mb-2">Configure assignment name, solution notebook, and question groups. Run this before Gather for a new assignment.</p>
         <!-- Always-visible: assignment name entry and load/create trigger -->
         <div class="mb-2 flex-row">
-            <label><strong>Assignment name</strong></label>
-            <input type="text" id="setupAssignmentName" class="input-assignment-name" placeholder="e.g. LabTest_3_S26">
+            <label for="setupAssignmentName"><strong>Assignment name</strong></label>
+            <input type="text" id="setupAssignmentName" class="input-assignment-name" placeholder="e.g. LabTest_3_S26" autocomplete="off">
             <button type="button" class="btn" id="setupLoadBtn">Load / Create</button>
             <span class="status-ok text-muted-xs" id="setupOutputDirHint"></span>
         </div>
@@ -41,7 +41,7 @@
         <div id="setupConfigFields" class="hidden">
         <div class="setup-form mb-2">
             <div class="mb-2">
-                <label><strong>Model</strong></label>
+                <label for="setupModel"><strong>Model</strong></label>
                 <select id="setupModel" class="input-select">
                     <option value="gpt-4.1-mini">gpt-4.1-mini (stable, recommended)</option>
                     <option value="gpt-4.1">gpt-4.1 (most stable)</option>
@@ -56,7 +56,7 @@
                 </select>
             </div>
             <div class="mb-2">
-                <label><strong>Rubric model</strong> <span class="text-muted-sm">(optional; uses grading model if same)</span></label>
+                <label for="setupRubricModel"><strong>Rubric model</strong> <span class="text-muted-sm">(optional; uses grading model if same)</span></label>
                 <select id="setupRubricModel" class="input-select">
                     <option value="">Same as grading model</option>
                     <option value="gpt-4.1-mini">gpt-4.1-mini (deterministic)</option>
@@ -78,9 +78,9 @@
                 <span id="setupSolutionPath" class="status-ok text-muted-sm" style="margin-left:8px"></span>
             </div>
             <div class="mb-2">
-                <label><strong>Workers</strong></label>
-                <input type="range" id="setupWorkers" class="range-inline" min="1" max="32" value="1">
-                <input type="number" id="setupWorkersInput" min="1" step="1" value="1" style="width:64px;margin-left:6px;padding:6px 8px;border:1px solid #cbd5e1;border-radius:4px;font-size:0.9rem" title="Type any value (e.g. 100 for tier 5)">
+                <label for="setupWorkers"><strong>Workers</strong></label>
+                <input type="range" id="setupWorkers" class="range-inline" min="1" max="32" value="1" aria-valuemin="1" aria-valuemax="32">
+                <input type="number" id="setupWorkersInput" min="1" step="1" value="1" style="width:64px;margin-left:6px;padding:6px 8px;border:1px solid #cbd5e1;border-radius:4px;font-size:0.9rem" title="Type any value (e.g. 100 for tier 5)" aria-label="Workers (numeric)">
             </div>
             <div class="mb-2">
                 <label class="flex-label">
@@ -105,7 +105,7 @@
                 <input type="checkbox" id="setupGradeOnlyCheck">
                 <strong>Grade only these questions</strong> <span class="text-muted-sm">(others get 0 [skipped])</span>
             </label>
-            <input type="text" id="setupGradeOnlyInput" placeholder="e.g. 1.1, 2.1, 4.2" class="hidden input-grade-only">
+            <input type="text" id="setupGradeOnlyInput" placeholder="e.g. 1.1, 2.1, 4.2" class="hidden input-grade-only" aria-label="Question IDs for grade-only mode">
             <div id="setupGradeOnlyMergeWrap" class="hidden merge-wrap">
                 <label class="flex-label">
                     <input type="checkbox" id="setupGradeOnlyMergeCheck">
@@ -186,48 +186,64 @@
 
     <!-- REVIEW -->
     <div id="panel-review" class="panel" role="tabpanel" aria-labelledby="tab-review">
-        <h2>Review &amp; Edit</h2>
-        <p class="mb-2">Inspect each student's answers alongside scores and feedback. Edit and save changes.</p>
-        <div class="mb-2 flex-row-gap10">
-            <button type="button" class="btn btn-secondary" id="reviewLoadBtn">Load Results</button>
-            <button type="button" class="btn btn-secondary" id="reviewCalibrateBtn">Run Calibration</button>
+        <div class="review-chrome">
+            <h2 class="review-title">Review</h2>
+            <div class="review-chrome-actions">
+                <button type="button" class="btn btn-sm" id="reviewLoadBtn">Load results</button>
+                <button type="button" class="btn btn-secondary btn-sm" id="reviewCalibrateBtn">Calibrate</button>
+                <label class="review-flagged-inline"><input type="checkbox" id="reviewFlaggedFirst"> Flagged first</label>
+            </div>
         </div>
-        <div id="reviewCalibrationResults" class="mb-2 min-h" role="status" aria-live="polite"></div>
-        <div id="reviewError" class="mb-2"></div>
-        <label class="mb-2 flex-label">
-            <input type="checkbox" id="reviewFlaggedFirst">
-            <span>Show flagged students first</span>
-        </label>
+        <div id="reviewCalibrationResults" class="review-cal-strip" role="status" aria-live="polite"></div>
+        <div id="reviewError" class="review-error-strip"></div>
         <div class="review-v2-layout hidden" id="reviewLayout">
             <div class="review-v2-sidebar" id="studentList"></div>
             <div class="review-v2-main">
-                <div class="review-v2-header">
+                <div class="review-v2-toolbar">
                     <div class="review-v2-qnav">
-                        <button type="button" class="btn btn-secondary review-v2-nav-btn" id="reviewPrevQ" title="Previous question">◀</button>
-                        <div class="review-v2-qpills" id="reviewQPills"></div>
-                        <button type="button" class="btn btn-secondary review-v2-nav-btn" id="reviewNextQ" title="Next question">▶</button>
+                        <button type="button" class="btn btn-secondary review-v2-nav-btn" id="reviewPrevQ" title="Previous question" aria-label="Previous question">◀</button>
+                        <div class="review-v2-qpills" id="reviewQPills" role="group" aria-label="Questions for this student"></div>
+                        <button type="button" class="btn btn-secondary review-v2-nav-btn" id="reviewNextQ" title="Next question" aria-label="Next question">▶</button>
+                    </div>
+                    <div class="review-v2-toolbar-mid">
+                        <span class="review-v2-total-inline">Total <span id="totalDisplay">0</span> / <span id="totalMaxDisplay">0</span></span>
                     </div>
                     <div class="review-v2-stunav">
-                        <button type="button" class="btn btn-secondary review-v2-nav-btn" id="reviewPrevStudent" title="Previous student">◀</button>
-                        <span class="review-v2-stuinfo" id="reviewStuInfo">Student 0/0</span>
-                        <button type="button" class="btn btn-secondary review-v2-nav-btn" id="reviewNextStudent" title="Next student">▶</button>
+                        <button type="button" class="btn btn-secondary review-v2-nav-btn" id="reviewPrevStudent" title="Previous student" aria-label="Previous student">◀</button>
+                        <div class="review-stu-block">
+                            <div class="review-stu-name" id="reviewStuName" title=""></div>
+                            <div class="review-v2-stuinfo" id="reviewStuInfo">0 / 0</div>
+                        </div>
+                        <button type="button" class="btn btn-secondary review-v2-nav-btn" id="reviewNextStudent" title="Next student" aria-label="Next student">▶</button>
                     </div>
-                    <div class="review-v2-total">
-                        <span>Total: <span id="totalDisplay">0</span>/<span id="totalMaxDisplay">0</span></span>
-                        <button type="button" class="btn" id="reviewSaveBtn">Save</button>
+                </div>
+                <div class="review-v2-split">
+                    <div class="review-v2-work" id="reviewWorkPane">
+                        <p class="review-placeholder">Load results, then pick a student.</p>
                     </div>
+                    <aside class="review-v2-grade-panel" id="reviewGradePane" aria-label="Scoring and feedback">
+                        <div class="review-grade-placeholder" id="reviewGradePlaceholder">Select a student and question.</div>
+                        <div class="review-grade-body hidden" id="reviewGradeBody">
+                            <div class="review-grade-hero">
+                                <span id="reviewScoreLive">—</span><span class="review-grade-hero-max"> / <span id="reviewMaxLive">—</span> pts</span>
+                            </div>
+                            <p class="review-grade-caption">Deduction from max → score shown above</p>
+                            <div class="review-v2-ded-widget" id="reviewDedRow"></div>
+                            <label class="review-fb-label" for="reviewFeedbackTa">Feedback</label>
+                            <textarea id="reviewFeedbackTa" class="review-v2-feedback-ta review-fb-ta-full" placeholder="Feedback for this question"></textarea>
+                            <div class="review-grade-actions">
+                                <button type="button" class="btn" id="reviewSaveBtn">Save</button>
+                                <button type="button" class="btn btn-secondary" id="regradeStudentBtn">Re-grade student</button>
+                                <span id="reviewConfidenceBadge" class="badge badge-medium"></span>
+                            </div>
+                            <p class="review-regrade-est" id="regradeEstimateWrap"><span id="regradeEstimate" class="status-ok"></span></p>
+                        </div>
+                    </aside>
                 </div>
-                <div class="review-v2-content" id="reviewDetail">
-                    <p class="review-placeholder">Select a student to review.</p>
+                <div class="review-v2-bottombar">
+                    <span id="reviewSaveFeedback" class="review-save-feedback"></span>
+                    <span class="review-v2-hints" id="reviewHints">J/K student · [ ] question · S save (not in text box) · R re-grade</span>
                 </div>
-                <div class="review-v2-actions">
-                    <button type="button" class="btn" id="reviewSaveBtnBottom">Save</button>
-                    <button type="button" class="btn btn-secondary" id="regradeStudentBtn">Re-grade this student</button>
-                    <span id="regradeEstimate" class="status-ok" style="font-size:0.85rem"></span>
-                    <span id="reviewSaveFeedback" class="review-v2-feedback"></span>
-                    <span id="reviewConfidenceBadge" class="badge badge-medium"></span>
-                </div>
-                <div class="review-v2-hints" id="reviewHints">J/K: student · [ ]: question · S: save · R: re-grade</div>
             </div>
         </div>
     </div>

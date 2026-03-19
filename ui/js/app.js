@@ -1,5 +1,11 @@
 /** AI Autograder - main app logic (setup, gather, parse, rubrics, grade, review, export) */
 
+function syncPanelInert(panelEl, isActive) {
+    panelEl.setAttribute("aria-hidden", isActive ? "false" : "true");
+    if (isActive) panelEl.removeAttribute("inert");
+    else panelEl.setAttribute("inert", "");
+}
+
 function switchToTab(tabEl) {
     if (!tabEl || !tabEl.dataset.tab) return;
     const tabId = tabEl.dataset.tab;
@@ -11,7 +17,7 @@ function switchToTab(tabEl) {
     document.querySelectorAll(".panel").forEach(p => {
         const isActive = p.id === "panel-" + tabId;
         p.classList.toggle("active", isActive);
-        p.setAttribute("aria-hidden", isActive ? "false" : "true");
+        syncPanelInert(p, isActive);
     });
     if (tabId === "rubrics") { loadRubricsForEdit(); loadRubricEstimate(); }
     if (tabId === "grade") { loadGradeEstimate(); if (!gradeStreamActive) document.getElementById("gradeProgress").innerHTML = ""; }
@@ -45,7 +51,7 @@ document.querySelectorAll(".tab[data-tab]").forEach(t => {
 });
 
 document.querySelectorAll(".panel").forEach(p => {
-    p.setAttribute("aria-hidden", p.classList.contains("active") ? "false" : "true");
+    syncPanelInert(p, p.classList.contains("active"));
 });
 
 // ==================== SETUP ====================
@@ -926,6 +932,16 @@ function scrollStudentIntoView() {
     if (el) el.scrollIntoView({ block: "nearest", behavior: "smooth" });
 }
 
+/** Keep the active question pill visible inside the horizontal `.review-v2-qpills` strip (like student list + J/K). */
+function scrollActiveQuestionPillIntoView() {
+    const container = document.getElementById("reviewQPills");
+    if (!container) return;
+    const active = container.querySelector(".review-v2-qpill.active");
+    if (active) {
+        active.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "smooth" });
+    }
+}
+
 async function loadReviewAndCalibration() {
     const [resultsRes, calRes] = await Promise.all([fetchWithRetry(API + "/results"), fetchWithRetry(API + "/calibration")]);
     reviewData = await resultsRes.json();
@@ -1011,7 +1027,7 @@ window.recalcTotal = function() {
     const qs = s.questions || {};
     let total = 0;
     const currentQid = currentQids[currentQidIdx];
-    const dedInput = document.querySelector(`#reviewDetail input[data-q-ded="${currentQid}"]`);
+    const dedInput = document.querySelector(`#reviewDedRow input[data-q-ded="${currentQid}"]`);
     for (const qid of currentQids) {
         if (qid === currentQid && dedInput && qs[qid]) {
             const max = qs[qid].max || 0;
@@ -1057,57 +1073,74 @@ function renderQuestionContent(qid, q, parsed, studentName) {
 }
 
 function renderReviewContent() {
-    const detail = document.getElementById("reviewDetail");
+    const work = document.getElementById("reviewWorkPane");
+    const gradePh = document.getElementById("reviewGradePlaceholder");
+    const gradeBody = document.getElementById("reviewGradeBody");
+    const dedRow = document.getElementById("reviewDedRow");
+    const scoreLive = document.getElementById("reviewScoreLive");
+    const maxLive = document.getElementById("reviewMaxLive");
+    const fbTa = document.getElementById("reviewFeedbackTa");
     const s = currentReviewIdx >= 0 ? reviewData[currentReviewIdx] : null;
     if (!s || currentQids.length === 0) {
-        detail.innerHTML = `<p class="review-placeholder">No questions to review for this student.</p>`;
+        if (work) work.innerHTML = `<p class="review-placeholder">No questions to review for this student.</p>`;
+        if (gradePh) gradePh.classList.remove("hidden");
+        if (gradeBody) gradeBody.classList.add("hidden");
+        if (dedRow) dedRow.innerHTML = "";
+        if (fbTa) { fbTa.value = ""; delete fbTa.dataset.qFb; }
         return;
     }
     const qid = currentQids[currentQidIdx];
     const q = s.questions?.[qid];
     if (!q) {
-        detail.innerHTML = `<p class="review-placeholder">Question ${qid} not found.</p>`;
+        if (work) work.innerHTML = `<p class="review-placeholder">Question ${escHtml(qid)} not found.</p>`;
+        if (gradePh) gradePh.classList.remove("hidden");
+        if (gradeBody) gradeBody.classList.add("hidden");
+        if (dedRow) dedRow.innerHTML = "";
+        if (fbTa) { fbTa.value = ""; delete fbTa.dataset.qFb; }
         return;
     }
+    if (gradePh) gradePh.classList.add("hidden");
+    if (gradeBody) gradeBody.classList.remove("hidden");
     const parsed = parsedCache[s.student_name];
     const max = q.max || 0;
     const deduction = Math.max(0, max - (q.score || 0));
     const score = max - deduction;
     const outlier = calibrationLookup()[s.student_name + "|" + qid];
-    const outlierBanner = outlier ? `<div class="outlier-banner">Statistical outlier (${outlier.flag_reason === "high" ? "above" : "below"} class mean): score ${outlier.score}/${outlier.max || max}, mean ${outlier.mean} ± ${outlier.std}</div>` : "";
-    let html = outlierBanner;
-    html += renderQuestionContent(qid, q, parsed, s.student_name);
-    html += `<div class="review-v2-ded-widget">Max ${max} pts − <input type="number" data-q-ded="${qid}" data-q-max="${max}" value="${deduction}" min="0" max="${max}" step="0.5"> = <span id="reviewScoreDisplay-${qid}">${score}</span></div>`;
-    html += `<textarea class="review-v2-feedback-ta" data-q-fb="${qid}" placeholder="Feedback">${escHtml(q.feedback || "")}</textarea>`;
-    detail.innerHTML = html;
-    const dedInput = detail.querySelector(`input[data-q-ded="${qid}"]`);
+    const outlierBanner = outlier
+        ? `<div class="outlier-banner">Outlier (${outlier.flag_reason === "high" ? "above" : "below"} mean): ${outlier.score}/${outlier.max || max}, μ ${outlier.mean} ± ${outlier.std}</div>`
+        : "";
+    if (work) work.innerHTML = outlierBanner + renderQuestionContent(qid, q, parsed, s.student_name);
+    if (maxLive) maxLive.textContent = String(max);
+    if (scoreLive) scoreLive.textContent = String(score);
+    if (dedRow) {
+        dedRow.innerHTML = `Max <strong>${max}</strong> − <input type="number" data-q-ded="${qid}" data-q-max="${max}" value="${deduction}" min="0" max="${max}" step="0.5" aria-label="Deduction points"> = <strong id="reviewScoreDisplay-${qid}">${score}</strong>`;
+    }
+    if (fbTa) {
+        fbTa.value = q.feedback || "";
+        fbTa.dataset.qFb = qid;
+        fbTa.oninput = () => {
+            const st = currentReviewIdx >= 0 ? reviewData[currentReviewIdx] : null;
+            if (st?.questions?.[qid]) st.questions[qid].feedback = fbTa.value;
+            reviewDirty = true;
+            renderStudentList();
+        };
+    }
+    const dedInput = dedRow?.querySelector(`input[data-q-ded="${qid}"]`);
     if (dedInput) {
         dedInput.oninput = () => {
             const d = parseFloat(dedInput.value) || 0;
             const sc = Math.max(0, max - d);
             const span = document.getElementById(`reviewScoreDisplay-${qid}`);
             if (span) span.textContent = sc;
-            const s = currentReviewIdx >= 0 ? reviewData[currentReviewIdx] : null;
-            if (s?.questions?.[qid]) s.questions[qid].score = sc;
+            if (scoreLive) scoreLive.textContent = String(sc);
+            const st = currentReviewIdx >= 0 ? reviewData[currentReviewIdx] : null;
+            if (st?.questions?.[qid]) st.questions[qid].score = sc;
             reviewDirty = true;
             recalcTotal();
             renderStudentList();
         };
     }
-    const fbTa = detail.querySelector(`textarea[data-q-fb="${qid}"]`);
-    if (fbTa) {
-        fbTa.oninput = () => {
-            const s = currentReviewIdx >= 0 ? reviewData[currentReviewIdx] : null;
-            if (s?.questions?.[qid]) s.questions[qid].feedback = fbTa.value;
-            reviewDirty = true;
-            renderStudentList();
-        };
-        if (typeof autoResizeRubricTextarea === "function") {
-            autoResizeRubricTextarea(fbTa);
-            fbTa.addEventListener("input", () => autoResizeRubricTextarea(fbTa));
-        }
-    }
-    detail.querySelectorAll("pre.review-v2-code code").forEach(el => {
+    work?.querySelectorAll("pre.review-v2-code code").forEach(el => {
         if (typeof hljs !== "undefined") {
             try {
                 if (hljs.highlightElement) {
@@ -1129,17 +1162,17 @@ function renderReviewContent() {
         confBadge.className = `badge ${confClass}`;
         confBadge.textContent = `conf: ${conf}`;
     }
-    detail.querySelectorAll("[data-toggle-output]").forEach(btn => {
+    work?.querySelectorAll("[data-toggle-output]").forEach(btn => {
         btn.onclick = () => {
             const id = btn.dataset.toggleOutput;
             const pre = document.getElementById("reviewOutput-" + id);
             if (pre) {
-                const s = currentReviewIdx >= 0 ? reviewData[currentReviewIdx] : null;
-                if (s) {
-                    const parsed = parsedCache[s.student_name];
+                const st = currentReviewIdx >= 0 ? reviewData[currentReviewIdx] : null;
+                if (st) {
+                    const p = parsedCache[st.student_name];
                     let out = "";
-                    if (parsed) {
-                        for (const secData of Object.values(parsed.sections || {})) {
+                    if (p) {
+                        for (const secData of Object.values(p.sections || {})) {
                             if (secData.questions && secData.questions[id]) {
                                 out = secData.questions[id].answer_text_concat || "";
                                 break;
@@ -1147,7 +1180,6 @@ function renderReviewContent() {
                         }
                     }
                     pre.textContent = out;
-                    pre.classList.add("expanded");
                     btn.remove();
                 }
             }
@@ -1163,14 +1195,19 @@ function renderQPills() {
     if (!container) return;
     if (currentQids.length === 0) {
         container.innerHTML = "";
-        if (stuInfo) stuInfo.textContent = "Student 0/0";
+        if (stuInfo) stuInfo.textContent = "0 / 0";
+        const stuNameEl = document.getElementById("reviewStuName");
+        if (stuNameEl) {
+            stuNameEl.textContent = "";
+            stuNameEl.title = "";
+        }
         if (totalDisplay) totalDisplay.textContent = "0";
         if (totalMaxDisplay) totalMaxDisplay.textContent = "0";
         return;
     }
     const s = reviewData[currentReviewIdx];
     container.innerHTML = currentQids.map((qid, i) =>
-        `<button type="button" class="review-v2-qpill ${i === currentQidIdx ? "active" : ""}" data-qidx="${i}">Q${qid}</button>`
+        `<button type="button" class="review-v2-qpill ${i === currentQidIdx ? "active" : ""}" data-qidx="${i}" aria-label="Question ${escHtml(qid)}" aria-pressed="${i === currentQidIdx ? "true" : "false"}">${escHtml(qid)}</button>`
     ).join("");
     container.querySelectorAll(".review-v2-qpill").forEach(btn => {
         btn.onclick = () => {
@@ -1179,9 +1216,16 @@ function renderQPills() {
             renderQPills();
         };
     });
-    if (stuInfo) stuInfo.textContent = `Student ${currentReviewIdx + 1}/${reviewData.length}`;
+    if (stuInfo) stuInfo.textContent = `${currentReviewIdx + 1} / ${reviewData.length}`;
+    const stuNameEl = document.getElementById("reviewStuName");
+    if (stuNameEl) {
+        const nm = s?.student_name || "";
+        stuNameEl.textContent = nm;
+        stuNameEl.title = nm;
+    }
     if (totalDisplay) totalDisplay.textContent = s?.total_score ?? "0";
     if (totalMaxDisplay) totalMaxDisplay.textContent = s?.total_max ?? "0";
+    scrollActiveQuestionPillIntoView();
 }
 
 async function showReviewDetail(idx) {
@@ -1193,8 +1237,12 @@ async function showReviewDetail(idx) {
     if (!s) return;
     currentQids = getGradedQidsForStudent(s);
     currentQidIdx = currentQidIdx < currentQids.length ? currentQidIdx : 0;
-    const detail = document.getElementById("reviewDetail");
-    detail.innerHTML = `<p style="color:#64748b;padding:8px">Loading student answers…</p>`;
+    const work = document.getElementById("reviewWorkPane");
+    const gradePh = document.getElementById("reviewGradePlaceholder");
+    const gradeBody = document.getElementById("reviewGradeBody");
+    if (work) work.innerHTML = `<p class="review-placeholder">Loading student work…</p>`;
+    if (gradePh) gradePh.classList.remove("hidden");
+    if (gradeBody) gradeBody.classList.add("hidden");
     let parsed = parsedCache[s.student_name];
     if (!parsed) {
         try {
@@ -1214,6 +1262,8 @@ async function showReviewDetail(idx) {
         confBadge.textContent = `conf: ${conf}`;
         confBadge.title = "LLM confidence in this grade";
     }
+    renderStudentList();
+    scrollStudentIntoView();
     loadRegradeEstimate(s.student_name);
 }
 
@@ -1221,15 +1271,15 @@ window.saveReview = async function() {
     if (currentReviewIdx < 0) return;
     const s = reviewData[currentReviewIdx];
     const qs = JSON.parse(JSON.stringify(s.questions));
-    const dedInput = document.querySelector("#reviewDetail input[data-q-ded]");
+    const dedInput = document.querySelector("#reviewDedRow input[data-q-ded]");
     if (dedInput && qs[dedInput.dataset.qDed]) {
         const max = parseFloat(dedInput.dataset.qMax) || 0;
         const ded = parseFloat(dedInput.value) || 0;
         qs[dedInput.dataset.qDed].score = Math.max(0, max - ded);
     }
-    document.querySelectorAll("#reviewDetail textarea[data-q-fb]").forEach(ta => {
-        if (qs[ta.dataset.qFb]) qs[ta.dataset.qFb].feedback = ta.value;
-    });
+    const fbTa = document.getElementById("reviewFeedbackTa");
+    const qfb = fbTa?.dataset?.qFb;
+    if (fbTa && qfb && qs[qfb]) qs[qfb].feedback = fbTa.value;
     let total = 0;
     for (const q of Object.values(qs)) total += q.score;
     total = Math.round(total * 100) / 100;
@@ -1270,7 +1320,7 @@ window.regradeStudent = async function() {
     } catch (e) {
         document.getElementById("reviewError").innerHTML = `<p class="status-error">Re-grade failed: ${escHtml(e.message)}</p>`;
     } finally {
-        setLoading(btn, false, "Re-grade this student");
+        setLoading(btn, false, "Re-grade student");
     }
 };
 
@@ -1286,9 +1336,12 @@ document.getElementById("reviewLoadBtn").onclick = async () => {
         document.getElementById("reviewLayout").classList.remove("hidden");
         renderStudentList();
         if (reviewData.length) showReviewDetail(0);
-        if (calibrationData.length) msgDiv.innerHTML = `<p class="status-warning">Loaded: ${calibrationData.length} outlier(s) from last calibration. Click "Run Calibration" to re-run.</p>`;
+        if (calibrationData.length) {
+            msgDiv.innerHTML = `<span class="status-warning review-cal-msg">${calibrationData.length} outlier(s) loaded — run <strong>Calibrate</strong> to refresh.</span>`;
+        }
     } catch (e) {
-        document.getElementById("reviewDetail").innerHTML = `<p class="status-error">Error: ${escHtml(e.message)}</p>`;
+        const err = document.getElementById("reviewError");
+        if (err) err.innerHTML = `<span class="status-error">${escHtml(e.message)}</span>`;
     } finally {
         setLoading(btn, false, "Load Results");
         btn.disabled = false;
@@ -1306,11 +1359,13 @@ document.getElementById("reviewCalibrateBtn").onclick = async () => {
         if (data.detail) throw new Error(data.detail);
         calibrationData = data.flagged || [];
         const n = calibrationData.length;
-        msgDiv.innerHTML = n ? `<p class="status-warning">Calibration complete: ${n} outlier(s) flagged. Students with outliers show a ⚠ and yellow banner on affected questions.</p>` : `<p class="status-ok">Calibration complete: no outliers detected (all scores within 2 std of mean).</p>`;
+        msgDiv.innerHTML = n
+            ? `<span class="status-warning review-cal-msg">${n} outlier(s) flagged — ⚠ on students; yellow banner on questions.</span>`
+            : `<span class="status-ok review-cal-msg">No outliers (within 2σ).</span>`;
         if (reviewData.length && currentReviewIdx >= 0) showReviewDetail(currentReviewIdx);
         renderStudentList();
     } catch (e) {
-        msgDiv.innerHTML = `<p class="status-error">Calibration failed: ${escHtml(e.message)}</p>`;
+        msgDiv.innerHTML = `<span class="status-error review-cal-msg">${escHtml(e.message)}</span>`;
     } finally {
         setLoading(btn, false, "Run Calibration");
     }
@@ -1323,7 +1378,6 @@ document.getElementById("reviewNextQ").onclick = goNextQuestion;
 document.getElementById("reviewPrevStudent").onclick = goPrevStudent;
 document.getElementById("reviewNextStudent").onclick = goNextStudent;
 document.getElementById("reviewSaveBtn").onclick = () => saveReview();
-document.getElementById("reviewSaveBtnBottom").onclick = () => saveReview();
 document.getElementById("regradeStudentBtn").onclick = regradeStudent;
 
 document.addEventListener("keydown", (e) => {
