@@ -12,7 +12,8 @@ from starlette.datastructures import UploadFile as StarletteUploadFile
 
 from api import state
 
-from app import DEFAULT_UPLOAD_MB, app
+from api.constants import DEFAULT_UPLOAD_MB
+from app import app
 from utils import DEFAULT_MODEL
 
 

@@ -8,7 +8,7 @@ import re
 import threading
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from pydantic import BaseModel
@@ -20,8 +20,10 @@ from dotenv import load_dotenv
 from config_models import (
     DEFAULT_MODEL,
     AppConfig,
-    ensure_app_config,
     app_config_to_yaml_data,
+    ensure_app_config,
+    get_config_field,
+    merge_partial_config_dict,
     normalize_qid,
 )
 from grading_helpers import (
@@ -39,6 +41,7 @@ __all__ = [
     "AppConfig",
     "ensure_app_config",
     "app_config_to_yaml_data",
+    "get_config_field",
     "normalize_qid",
     "sanitize_assignment_name",
     "load_config",
@@ -61,14 +64,6 @@ __all__ = [
 def sanitize_assignment_name(name: str) -> str:
     """Normalize assignment names to a filesystem-safe token."""
     return re.sub(r'[/\\:*?"<>|.]', "_", str(name or "default")).strip("_") or "default"
-
-
-def _config_get(config: dict | AppConfig, key: str, default: Any = None) -> Any:
-    if hasattr(config, "model_dump"):  # Pydantic model (AppConfig, GradingConfig, etc.)
-        return getattr(config, key, default)
-    if isinstance(config, dict):
-        return config.get(key, default)
-    return default
 
 
 _configured_loggers: dict[str, Path] = {}
@@ -111,7 +106,7 @@ def setup_assignment_logging(assignment_name: str, output_dir: str | Path) -> Pa
 
 def get_job_logger(config: dict | BaseModel, module_name: str) -> logging.Logger:
     """Get a logger scoped to the current assignment to prevent interleaved logs."""
-    assignment_name = _config_get(config, "assignment_name", "DEFAULT")
+    assignment_name = get_config_field(config, "assignment_name", "DEFAULT")
     return logging.getLogger(f"autograder.{assignment_name}.{module_name}")
 
 
@@ -143,36 +138,6 @@ def _resolve_config_paths(cfg: dict, config_root: Path) -> dict:
     return resolved
 
 
-def _apply_config_defaults(cfg: dict) -> dict:
-    """Ensure all required config fields exist before validation."""
-    normalized = dict(cfg or {})
-    normalized.setdefault("model", DEFAULT_MODEL)
-    normalized.setdefault("rubric_model", "")
-    normalized.setdefault("rubric_review", True)
-    normalized.setdefault("include_reference_in_grading", False)
-    normalized.setdefault("solution_notebook", "")
-    normalized.setdefault("workers", 1)
-    normalized.setdefault("rubrics", {})
-    normalized.setdefault("max_prompt_tokens", 80_000)
-    normalized.setdefault("max_completion_tokens", 4_096)
-
-    parsing = dict(normalized.get("parsing") or {})
-    parsing.setdefault("section_regex", r"(?m)^\s*#\s*<font[^>]*>\s*(\d+)\b")
-    parsing.setdefault(
-        "question_regex",
-        r"(?i)^\s*(-\s*)?Q(\d+)\.(\d+)\s*.*?\[\s*(\d+)\s*PTS\s*\]",
-    )
-    parsing.setdefault("keep_images", True)
-    normalized["parsing"] = parsing
-
-    grading = dict(normalized.get("grading") or {})
-    grading.setdefault("question_groups", [])
-    grading.setdefault("grade_only", None)
-    grading.setdefault("grade_only_merge", False)
-    normalized["grading"] = grading
-    return normalized
-
-
 def load_config(config_path: Path, *, require_exists: bool = True) -> dict:
     """Load assignment config from an explicit path.
 
@@ -183,7 +148,7 @@ def load_config(config_path: Path, *, require_exists: bool = True) -> dict:
     """
     path = Path(config_path).resolve()
     cfg = _read_yaml_dict(path, require_exists=require_exists)
-    cfg = _apply_config_defaults(cfg)
+    cfg = merge_partial_config_dict(cfg)
     # Project root: output/{name}/config.yaml → 3 levels up
     project_root = path.parent.parent.parent
     cfg = _resolve_config_paths(cfg, project_root)
@@ -285,10 +250,10 @@ def get_openai_client(
     """Initialize OpenAI client with .env key, with SDK-level retries.
     Checks 'key' first (from .env), then OPENAI_API_KEY as fallback."""
     load_dotenv()
-    api_key = os.environ.get("key") or os.environ.get("OPENAI_API_KEY")
+    api_key = os.environ.get("OPENAI_API_KEY") or os.environ.get("key")
     if not api_key:
         raise ValueError(
-            "API key not found. Set 'key=your-api-key' in .env or OPENAI_API_KEY environment variable."
+            "API key not found. Set OPENAI_API_KEY or 'key' in .env."
         )
     limits = httpx.Limits(
         max_connections=max(1, int(max_connections)),

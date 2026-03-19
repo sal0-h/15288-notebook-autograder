@@ -46,10 +46,12 @@ ai_autograder/
 ├── linter_export.py        Pre-deadline format linter autograder
 ├── main.py                 CLI entry point
 ├── parse_notebook.py       Notebook → structured JSON parser
+├── parse_outputs.py        Shared parse-step DTO (`build_parse_run_payload`)
 ├── pipeline_runner.py      Thin wrappers for app endpoints (run_gather, run_parse, etc.)
 ├── prompt_builder.py       Prompt construction, sanitization, JSON extraction
+├── results_models.py       GradedResult, ParsedNotebook (artifact shapes)
 ├── results_store.py        load_results, save_results, update_student, load_results_with_backup
-├── rubric/                 Rubric package (`impl.py`: generation + review)
+├── rubric/                 Rubric package (`generate.py`, `review.py`, `impl` facade)
 ├── utils.py                Config I/O, logging, OpenAI client (AppConfig in config_models)
 │
 ├── prompts/
@@ -79,7 +81,7 @@ ai_autograder/
 | `app.py` | FastAPI routes and SSE events | pipeline_runner, batch_grader, grade, results_store, etc. |
 | `config_models.py` | AppConfig, ParsingConfig, GradingConfig, default_config | nothing (leaf) |
 | `grading_helpers.py` | grade_only filtering, effective_groups, needs_merge | grading_models |
-| `pipeline_runner.py` | Thin wrappers for gather, parse, calibrate, export, estimate | gather, parse_notebook, calibrate, export, estimate |
+| `pipeline_runner.py` | Thin wrappers for gather, parse, calibrate, export, estimate | gather, parse_notebook, parse_outputs, calibrate, export, estimate |
 | `results_store.py` | load_results, save_results, update_student, load_results_with_backup | nothing (leaf) |
 | `utils.py` | Config load/save, logging, OpenAI client | config_models |
 | `grading_models.py` | LLM response Pydantic schemas, constants | nothing (leaf) |
@@ -87,7 +89,7 @@ ai_autograder/
 | `parse_notebook.py` | Notebook → parsed JSON | `utils` |
 | `grade.py` | `grade_group`, `grade_student`, post-processing | `prompt_builder`, `grading_models`, `utils` |
 | `batch_grader.py` | Sequential/parallel grading, resume logic | `grade`, `results_store`, `utils` |
-| `rubric/` (`impl.py`) | Rubric generation + review | `prompt_builder`, `utils`, `llm` |
+| `rubric/` | Rubric generation + review (`generate`, `review`, `prompts`, …) | `prompt_builder`, `utils`, `llm` |
 | `gather.py` | Submission extraction | `utils` |
 | `export.py` | Excel + Gradescope export | `utils` |
 | `calibrate.py` | Outlier detection | `utils` |
@@ -129,7 +131,8 @@ config_path must point to output/{assignment_name}/config.yaml
 ```
 
 After resolution, relative paths (`solution_notebook`, `submissions_dir`, etc.) are
-resolved against the project root. Defaults are filled in via `_apply_config_defaults`.
+resolved against the project root. Defaults are filled in via `merge_partial_config_dict`
+in `config_models` (same defaults as `AppConfig`).
 
 The merged dict is validated via `ensure_app_config(cfg)` (same coercion rules as
 everywhere else), then returned as a plain dict with `model_dump()` for
@@ -344,7 +347,7 @@ message parts, which increases token usage but enables grading of plots.
 
 ### 4.3 Generate rubrics
 
-**Module:** `rubric/` (see `rubric/impl.py`)  
+**Module:** `rubric/` (`rubric/generate.py`, `rubric/review.py`, …; `rubric/impl.py` re-exports for compatibility)  
 **Key function:** `generate_rubrics(config, client, progress_callback, group_indices)`
 
 Flow:
@@ -584,6 +587,9 @@ Grading and rubric generation run in background threads, streaming progress via
 Server-Sent Events (SSE) through `_threaded_sse_response`. The async route suspends
 on a queue that the background thread feeds via `loop.call_soon_threadsafe`.
 
+**Blocking work in routes:** CPU- or disk-heavy steps (e.g. `run_parse`) run inside
+`asyncio.to_thread(...)` so the event loop stays responsive; lightweight handlers may stay synchronous.
+
 ### Config update behavior (`PUT /config`)
 
 The endpoint accepts a partial config payload from the UI. The incoming dict is
@@ -593,8 +599,8 @@ deep-merged with defaults and existing config before saving:
 2. If assignment name changes and `solution_notebook` is omitted, force
   `solution_notebook = ""` to avoid stale cross-assignment paths.
 3. Deep-merge `default_config("default")`, existing config, and incoming payload.
-4. Validate via `AppConfig.model_validate(merged)`.
-5. Save via `save_config(merged)`.
+4. Validate via `ensure_app_config(merged)` (same coercion as the rest of the pipeline).
+5. Save via `save_config(app_config_to_yaml_data(validated), ...)`.
 
 The UI sends only the fields the user changed; the merge preserves everything else.
 
@@ -729,7 +735,7 @@ an assignment-specific override). Call `load_prompt("{name}", assignment_name=..
 
 1. Add it to the appropriate Pydantic model (`AppConfig`, `GradingConfig`, etc.)
    with a default value.
-2. Add it to `_apply_config_defaults` if it needs to be back-filled in old configs
+2. Add a default on `AppConfig` / nested models (and rely on `merge_partial_config_dict`) if it needs to be back-filled in old configs
    for load-time safety.
 3. The assignment config is fully authoritative; no special root-override handling
    is needed for new fields.

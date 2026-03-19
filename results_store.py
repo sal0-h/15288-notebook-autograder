@@ -2,6 +2,8 @@
 
 Used by app.py and batch_grader to avoid duplicating the results-update pattern.
 Callers hold the appropriate lock when invoking these functions.
+
+Each row should match ``results_models.GradedResult`` (validated in ``export.export_all``).
 """
 
 import json
@@ -21,7 +23,7 @@ def load_results_with_backup(
         return []
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, KeyError):
+    except json.JSONDecodeError:
         backup_path = path.parent / f"{path.name}.broken"
         try:
             shutil.copy2(path, backup_path)

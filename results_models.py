@@ -1,0 +1,35 @@
+"""Pydantic models for on-disk JSON artifacts (graded results, parsed notebooks)."""
+
+from __future__ import annotations
+
+from typing import Any
+
+from pydantic import BaseModel, ConfigDict, Field
+
+
+class GradedResult(BaseModel):
+    """Shape of one entry in ``graded_results.json`` (matches ``grade._build_result_dict``)."""
+
+    model_config = ConfigDict(populate_by_name=True, extra="ignore")
+
+    student_name: str
+    questions: dict[str, Any] = Field(default_factory=dict)
+    total_score: float = 0.0
+    total_max: float = 0.0
+    summary_feedback: str = ""
+    usage: dict[str, int] | None = Field(default=None, alias="_usage")
+
+
+class ParsedNotebook(BaseModel):
+    """Minimal typed shell for parsed ``*.json`` from ``parse_notebook`` (unknown keys allowed)."""
+
+    model_config = ConfigDict(extra="allow")
+
+    student_name: str | None = None
+    sections: dict[str, Any] = Field(default_factory=dict)
+    duplicate_qids: list[str] = Field(default_factory=list)
+
+
+def graded_result_to_disk_dict(r: GradedResult) -> dict[str, Any]:
+    """Serialize for ``graded_results.json`` (``_usage`` key when present)."""
+    return r.model_dump(mode="python", by_alias=True, exclude_none=True)

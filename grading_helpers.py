@@ -4,13 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from config_models import get_config_field
 from grading_models import GRADING_FAILED, SKIP_FEEDBACKS
-
-
-def _config_get(config: dict | Any, key: str, default: Any = None) -> Any:
-    if hasattr(config, "model_dump"):
-        return getattr(config, key, default)
-    return config.get(key, default) if isinstance(config, dict) else default
 
 
 def filter_groups_by_grade_only(
@@ -29,20 +24,20 @@ def filter_groups_by_grade_only(
 
 def grade_only_list(grading_config: dict | Any) -> list[str] | None:
     """Return grade_only list from grading config, or None."""
-    grade_only = _config_get(grading_config, "grade_only")
+    grade_only = get_config_field(grading_config, "grade_only")
     return grade_only if grade_only else None
 
 
 def effective_groups(grading_config: dict | Any) -> list[list[str]]:
     """Return question groups filtered by grade_only when set."""
-    groups = _config_get(grading_config, "question_groups", [])
+    groups = get_config_field(grading_config, "question_groups", [])
     return filter_groups_by_grade_only(groups, grade_only_list(grading_config))
 
 
 def is_grade_only_merge_enabled(grading_config: dict | Any) -> bool:
     """True if grade_only_merge is on and grade_only is set."""
     return bool(
-        _config_get(grading_config, "grade_only_merge")
+        get_config_field(grading_config, "grade_only_merge")
         and grade_only_list(grading_config)
     )
 

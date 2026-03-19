@@ -1,6 +1,6 @@
 """``python -m rubric --config ...`` CLI."""
 
-from rubric.impl import main
+from rubric.cli import main
 
 if __name__ == "__main__":
     main()

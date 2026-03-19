@@ -1,6 +1,10 @@
 """Pydantic models and constants for the grading engine."""
 
-from pydantic import BaseModel, field_validator
+import logging
+
+from pydantic import BaseModel, ValidationError, field_validator
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -85,7 +89,12 @@ class GradingResponse(BaseModel):
             if isinstance(v, dict):
                 try:
                     grades[normalized] = QuestionGrade.model_validate(v)
-                except Exception:
+                except ValidationError as e:
+                    logger.warning(
+                        "QuestionGrade validation failed for key %r: %s",
+                        normalized,
+                        e,
+                    )
                     grades[normalized] = QuestionGrade(
                         score=0.0,
                         feedback=LLM_PARSE_ERROR,

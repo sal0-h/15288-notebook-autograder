@@ -1,4 +1,6 @@
-"""Tests for prompt_builder token estimation behavior."""
+"""Tests for prompt_builder token estimation and prompt building."""
+
+from config_models import RubricEntry, RubricItem
 
 import prompt_builder
 
@@ -39,3 +41,105 @@ def test_load_prompt_works_outside_project_cwd(monkeypatch, tmp_path):
     text = prompt_builder.load_prompt("grade_system")
     assert isinstance(text, str)
     assert text.strip()
+
+
+def test_build_group_prompt_includes_rubric_from_rubric_entry_models():
+    """Regression: AppConfig.rubrics values are RubricEntry models, not dicts."""
+    solution_parsed = {
+        "sections": {
+            "1": {
+                "questions": {
+                    "1.1": {
+                        "points": 10,
+                        "question_markdown": "Q1.1",
+                        "answer_code_concat": "",
+                        "answer_text_concat": "",
+                        "answer_markdown_concat": "",
+                        "answer_cells": [],
+                    }
+                }
+            }
+        }
+    }
+    student_parsed = {
+        "sections": {
+            "1": {
+                "questions": {
+                    "1.1": {
+                        "points": 10,
+                        "question_markdown": "Q1.1",
+                        "answer_code_concat": "x=1",
+                        "answer_text_concat": "",
+                        "answer_markdown_concat": "",
+                        "answer_cells": [],
+                    }
+                }
+            }
+        }
+    }
+    rubrics = {
+        "1.1": RubricEntry(
+            points=10,
+            items=[
+                RubricItem(description="Wrong approach", deduction=5.0),
+                RubricItem(description="No explanation", deduction=5.0),
+            ],
+        )
+    }
+    messages, qid_to_max = prompt_builder.build_group_prompt(
+        ["1.1"],
+        solution_parsed,
+        student_parsed,
+        "You are a grader.",
+        rubrics=rubrics,
+    )
+    user = messages[1]["content"]
+    text_blob = "\n".join(
+        p["text"] for p in user if isinstance(p, dict) and p.get("type") == "text"
+    )
+    assert "RUBRIC (deduct from 10 pts):" in text_blob
+    assert "Wrong approach: -5.0 pts" in text_blob
+    assert "No explanation: -5.0 pts" in text_blob
+    assert qid_to_max["1.1"] == 10
+
+
+def test_build_group_prompt_includes_rubric_from_plain_dicts():
+    rubrics = {
+        "1.1": {
+            "points": 10,
+            "items": [
+                {"description": "Off by one", "deduction": 3.0},
+            ],
+        }
+    }
+    solution_parsed = {
+        "sections": {"1": {"questions": {"1.1": {"points": 10, "question_markdown": "Q"}}}}
+    }
+    student_parsed = {
+        "sections": {
+            "1": {
+                "questions": {
+                    "1.1": {
+                        "points": 10,
+                        "question_markdown": "Q",
+                        "answer_code_concat": "1",
+                        "answer_text_concat": "",
+                        "answer_markdown_concat": "",
+                        "answer_cells": [],
+                    }
+                }
+            }
+        }
+    }
+    messages, _ = prompt_builder.build_group_prompt(
+        ["1.1"],
+        solution_parsed,
+        student_parsed,
+        "sys",
+        rubrics=rubrics,
+    )
+    user = messages[1]["content"]
+    text_blob = "\n".join(
+        p["text"] for p in user if isinstance(p, dict) and p.get("type") == "text"
+    )
+    assert "Off by one: -3.0 pts" in text_blob

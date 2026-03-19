@@ -17,6 +17,7 @@ from grading_models import (
 )
 from llm import complete_json_chat, retry_with_exponential_backoff
 from llm.types import TokenUsage
+from results_models import GradedResult, graded_result_to_disk_dict
 from prompt_builder import (
     build_group_prompt,
     get_question_data,
@@ -264,18 +265,17 @@ def _build_result_dict(
     usage_total: TokenUsage,
 ) -> dict:
     """Build the final graded result dict for graded_results.json."""
-    result = {
-        "student_name": student_name,
-        "questions": questions,
-        "total_score": round(total_score, 2),
-        "total_max": round(total_max, 2),
-        "summary_feedback": (
+    gr = GradedResult(
+        student_name=student_name,
+        questions=questions,
+        total_score=round(total_score, 2),
+        total_max=round(total_max, 2),
+        summary_feedback=(
             ". ".join(feedback_parts) if feedback_parts else "Full marks."
         ),
-    }
-    if usage_total.has_tokens():
-        result["_usage"] = usage_total.to_json_dict()
-    return result
+        usage=usage_total.to_json_dict() if usage_total.has_tokens() else None,
+    )
+    return graded_result_to_disk_dict(gr)
 
 
 def grade_student(
@@ -338,7 +338,7 @@ def grade_student(
                 sol_q = get_question_data(solution_parsed, qid)
                 qid_to_max[qid] = (sol_q or {}).get("points", 0)
             grades = {
-                qid: QuestionGrade(score=0.0, feedback="[no submission]")
+                qid: QuestionGrade(score=0.0, feedback=NO_SUBMISSION)
                 for qid in group
             }
             grading_response = GradingResponse(grades=grades)

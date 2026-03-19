@@ -8,6 +8,7 @@ import pandas as pd
 
 from linter_export import build_linter_summary, fmt_qid_list
 from parse_notebook import get_all_question_ids, sort_key_qid
+from results_models import GradedResult
 from utils import AppConfig, ensure_app_config, get_assignment_output_paths, load_config
 
 # Unix executable bits used when creating Gradescope autograder zip entries
@@ -142,16 +143,20 @@ def export_all(config: AppConfig | dict) -> dict[str, str | int]:
     if not graded_path.exists():
         raise FileNotFoundError(f"Graded results not found: {graded_path}")
 
-    results = json.loads(graded_path.read_text(encoding="utf-8"))
-    if not results:
+    raw_results = json.loads(graded_path.read_text(encoding="utf-8"))
+    if not raw_results:
         return {"students": 0, "gradescope_dir": str(gradescope_dir), "excel_path": ""}
+
+    results: list[GradedResult] = [
+        GradedResult.model_validate(r) for r in raw_results
+    ]
 
     gradescope_dir.mkdir(parents=True, exist_ok=True)
 
     # Collect all question IDs for Excel columns
     all_qids: set[str] = set()
     for r in results:
-        all_qids.update(r.get("questions", {}).keys())
+        all_qids.update(r.questions.keys())
     q_cols = sorted(all_qids, key=sort_key_qid)
 
     # For Gradescope: only include grade_only questions if set; use optional title mapping
@@ -174,8 +179,8 @@ def export_all(config: AppConfig | dict) -> dict[str, str | int]:
 
     # Export Gradescope JSON per student
     for r in results:
-        student_name = r.get("student_name", "Unknown")
-        questions = r.get("questions", {})
+        student_name = r.student_name or "Unknown"
+        questions = r.questions
 
         tests = []
         for qid in gs_q_cols:
@@ -210,13 +215,13 @@ def export_all(config: AppConfig | dict) -> dict[str, str | int]:
     rows = []
     for r in results:
         row = {
-            "student_name": r.get("student_name", ""),
-            "total_score": r.get("total_score", 0),
+            "student_name": r.student_name,
+            "total_score": r.total_score,
         }
         for qid in q_cols:
-            q_data = r.get("questions", {}).get(qid, {})
+            q_data = r.questions.get(qid, {})
             row[f"Q{qid}"] = q_data.get("score", "")
-        row["summary_feedback"] = r.get("summary_feedback", "")
+        row["summary_feedback"] = r.summary_feedback
         rows.append(row)
 
     cols = (
