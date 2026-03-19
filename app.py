@@ -18,13 +18,6 @@ from api.routers import (
     rubric_routes,
     static_routes,
 )
-# Backward compatibility for tests that patch ``app.*`` (monolithic app surface).
-_get_active_config = state.get_active_config
-_setup_file_logging = state.setup_file_logging
-_PROJECT_ROOT = state.PROJECT_ROOT
-_grading_lock = state.grading_lock
-_results_lock = state.results_lock
-_rubric_lock = state.rubric_lock
 
 
 @asynccontextmanager

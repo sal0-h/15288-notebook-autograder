@@ -7,6 +7,7 @@ from pathlib import Path
 
 import tiktoken
 
+from results_models import ParsedNotebook
 from utils import DEFAULT_MODEL
 
 # ---------------------------------------------------------------------------
@@ -178,20 +179,22 @@ def _sanitize_student_text(text: str) -> str:
 # ---------------------------------------------------------------------------
 
 
-def get_question_data(parsed: dict, qid: str) -> dict | None:
-    for sec_data in parsed.get("sections", {}).values():
+def get_question_data(parsed: dict | ParsedNotebook, qid: str) -> dict | None:
+    data = parsed if isinstance(parsed, dict) else parsed.model_dump()
+    for sec_data in data.get("sections", {}).values():
         if qid in sec_data.get("questions", {}):
             return sec_data["questions"][qid]
     return None
 
 
 def validate_question_groups(
-    groups: list[list[str]], solution_parsed: dict
+    groups: list[list[str]], solution_parsed: dict | ParsedNotebook
 ) -> list[str]:
     """Return list of solution question IDs not covered by any group."""
+    sol = solution_parsed if isinstance(solution_parsed, dict) else solution_parsed.model_dump()
     grouped: set[str] = {qid for group in groups for qid in group}
     all_sol_qids: list[str] = []
-    for sec_data in solution_parsed.get("sections", {}).values():
+    for sec_data in sol.get("sections", {}).values():
         all_sol_qids.extend(sec_data.get("questions", {}).keys())
     return [q for q in all_sol_qids if q not in grouped]
 
@@ -216,6 +219,30 @@ def _append_image_parts(content_parts: list[dict], images: list[dict]) -> None:
 # ---------------------------------------------------------------------------
 # Prompt builder
 # ---------------------------------------------------------------------------
+
+
+def _rubric_item_lines(rubric_entry: object | None) -> list[str]:
+    """Build rubric bullet lines from a dict or RubricEntry (Pydantic) value."""
+    if rubric_entry is None:
+        return []
+    items_raw: list = []
+    if isinstance(rubric_entry, dict):
+        items_raw = list(rubric_entry.get("items") or [])
+    else:
+        raw = getattr(rubric_entry, "items", None)
+        if not isinstance(raw, list):
+            return []
+        items_raw = raw
+    lines: list[str] = []
+    for item in items_raw:
+        if isinstance(item, dict):
+            desc = str(item.get("description", ""))
+            ded = float(item.get("deduction", 0) or 0)
+        else:
+            desc = str(getattr(item, "description", ""))
+            ded = float(getattr(item, "deduction", 0) or 0)
+        lines.append(f"  - {desc}: -{ded} pts")
+    return lines
 
 
 def build_group_prompt(
@@ -254,16 +281,8 @@ def build_group_prompt(
 
         q_md = (sol_q or stu_q or {}).get("question_markdown", f"Question {qid}")
         q_header = f"--- QUESTION {qid} ({pts} pts) ---\n{q_md}\n\n"
-        rubric_entry = rubrics.get(qid)
-        items = (
-            (rubric_entry or {}).get("items", [])
-            if isinstance(rubric_entry, dict)
-            else []
-        )
-        if items:
-            rubric_lines = "\n".join(
-                f"  - {item['description']}: -{item['deduction']} pts" for item in items
-            )
+        rubric_lines = "\n".join(_rubric_item_lines(rubrics.get(qid)))
+        if rubric_lines:
             q_header += (
                 f"RUBRIC (deduct from {pts} pts):\n{rubric_lines}\nMinimum score: 0\n\n"
             )

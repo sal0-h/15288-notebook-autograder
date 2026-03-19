@@ -5,7 +5,9 @@ Extracted from utils.py to separate config schema from I/O, logging, and client 
 
 from __future__ import annotations
 
+import copy
 import re
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -146,6 +148,27 @@ class AppConfig(BaseModel):
         if v < 1:
             raise ValueError("workers must be >= 1")
         return v
+
+
+def get_config_field(config: dict | Any, key: str, default: Any = None) -> Any:
+    """Read a top-level field from a dict or Pydantic model (e.g. AppConfig, GradingConfig)."""
+    if isinstance(config, BaseModel):
+        return getattr(config, key, default)
+    if isinstance(config, dict):
+        return config.get(key, default)
+    return default
+
+
+def merge_partial_config_dict(user: dict | None) -> dict:
+    """Merge user YAML/dict over ``AppConfig`` defaults; deep-merge ``parsing`` and ``grading``."""
+    merged = copy.deepcopy(AppConfig().model_dump(mode="python"))
+    overrides = dict(user or {})
+    for k, v in overrides.items():
+        if k in ("parsing", "grading") and isinstance(v, dict):
+            merged[k] = {**(merged.get(k) or {}), **v}
+        else:
+            merged[k] = v
+    return merged
 
 
 def default_config(assignment_name: str = "default", **overrides) -> dict:

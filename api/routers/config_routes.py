@@ -9,7 +9,9 @@ from fastapi import APIRouter, Body, File, Form, HTTPException, UploadFile
 
 from api.helpers import build_parse_solution_response
 from api import state
-from config_models import AppConfig, default_config
+from pydantic import ValidationError
+
+from config_models import AppConfig, app_config_to_yaml_data, default_config, ensure_app_config
 from parse_notebook import parse_notebook
 from utils import load_config, sanitize_assignment_name, save_config
 
@@ -23,7 +25,7 @@ def api_get_config():
         return {}
     try:
         return load_config(state.get_active_config_path())  # type: ignore[arg-type]
-    except Exception as e:
+    except (FileNotFoundError, ValueError, OSError) as e:
         raise HTTPException(
             status_code=500,
             detail=f"Failed to load active assignment config: {e}",
@@ -69,15 +71,18 @@ def api_put_config(config: dict = Body(...)):
 
     merged = _deep_merge(default_config("default"), _deep_merge(existing, config))
     try:
-        AppConfig.model_validate(merged)
-    except Exception as e:
+        validated = ensure_app_config(merged)
+    except ValidationError as e:
         raise HTTPException(status_code=422, detail=f"Invalid config: {e}")
     if state.get_active_config_path() is None:
         raise HTTPException(
             status_code=400,
             detail="No assignment loaded. Use Setup to load or create an assignment.",
         )
-    save_config(merged, state.get_active_config_path())  # type: ignore[arg-type]
+    # Plain dict for save_config / YAML I/O; already validated above.
+    save_config(
+        app_config_to_yaml_data(validated), state.get_active_config_path()
+    )  # type: ignore[arg-type]
     state.setup_file_logging()
     return {"ok": True}
 

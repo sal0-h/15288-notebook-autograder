@@ -36,7 +36,7 @@ class TestGenerateRubrics:
         custom_prompt = "CUSTOM RUBRIC SYSTEM PROMPT"
 
         monkeypatch.setattr(
-            "rubric.impl.load_prompt", lambda name, assignment_name=None: custom_prompt
+            "rubric.prompts.load_prompt", lambda name, assignment_name=None: custom_prompt
         )
 
         config = {
@@ -88,7 +88,7 @@ class TestGenerateRubrics:
 
         custom_review_prompt = "CUSTOM RUBRIC REVIEW PROMPT"
         monkeypatch.setattr(
-            "rubric.impl.load_prompt",
+            "rubric.prompts.load_prompt",
             lambda name, assignment_name=None: (
                 custom_review_prompt if name == "review_system" else "OTHER"
             ),
@@ -171,7 +171,7 @@ class TestGenerateRubrics:
             }
         )
 
-        with patch("rubric.impl.get_openai_client") as mock_get_client:
+        with patch("rubric.generate_one.get_openai_client") as mock_get_client:
             mock_client = MagicMock()
             mock_client.chat.completions.create.return_value = mock_response
             mock_get_client.return_value = mock_client
@@ -209,7 +209,7 @@ class TestGenerateRubrics:
             }
         )
 
-        with patch("rubric.impl.get_openai_client") as mock_get_client:
+        with patch("rubric.generate_one.get_openai_client") as mock_get_client:
             mock_client = MagicMock()
             mock_client.chat.completions.create.return_value = mock_response
             mock_get_client.return_value = mock_client
@@ -233,7 +233,7 @@ class TestGenerateRubrics:
             "max_completion_tokens": 4096,
         }
 
-        with patch("rubric.impl.get_openai_client") as mock_get_client:
+        with patch("rubric.generate_one.get_openai_client") as mock_get_client:
             mock_client = MagicMock()
             mock_client.chat.completions.create.side_effect = Exception("API error")
             mock_get_client.return_value = mock_client
@@ -274,7 +274,7 @@ class TestGenerateRubrics:
             }
         )
 
-        with patch("rubric.impl.get_openai_client") as mock_get_client:
+        with patch("rubric.generate_one.get_openai_client") as mock_get_client:
             mock_client = MagicMock()
             mock_client.chat.completions.create.return_value = mock_response
             mock_get_client.return_value = mock_client
@@ -331,7 +331,7 @@ class TestGenerateRubrics:
             }
         )
 
-        with patch("rubric.impl.get_openai_client") as mock_get_client:
+        with patch("rubric.generate_one.get_openai_client") as mock_get_client:
             mock_client = MagicMock()
             mock_client.chat.completions.create.return_value = mock_response
             mock_get_client.return_value = mock_client
@@ -373,7 +373,7 @@ class TestGenerateRubrics:
             }
         )
 
-        with patch("rubric.impl.get_openai_client") as mock_get_client:
+        with patch("rubric.generate_one.get_openai_client") as mock_get_client:
             mock_client = MagicMock()
             mock_client.chat.completions.create.return_value = mock_response
             mock_get_client.return_value = mock_client

@@ -1,13 +1,13 @@
 """Pipeline step runners for the web app. Encapsulates config + pipeline call pattern."""
 
-import json
 from pathlib import Path
 
 from calibrate import run_calibration
 from estimate import estimate_grade, estimate_rubrics
 from export import export_all, export_autograder_zip
 from gather import gather_submissions
-from parse_notebook import get_all_question_ids, parse_all_students
+from parse_notebook import parse_all_students
+from parse_outputs import build_parse_run_payload
 
 
 def run_gather(config: dict, zip_path: Path) -> dict:
@@ -35,23 +35,8 @@ def run_gather_from_folder(config: dict, folder_path: str, project_root: Path) -
 def run_parse(config: dict) -> dict:
     """Run parse step. Returns report, preview, solution_questions, solution_duplicate_qids."""
     solution_parsed, report = parse_all_students(config)
-    preview = None
-    if report:
-        first_student = report[0]["student_name"]
-        parsed_dir = Path(config.get("parsed_dir", "output/parsed"))
-        preview_path = parsed_dir / f"{first_student}.json"
-        if preview_path.exists():
-            preview = json.loads(preview_path.read_text(encoding="utf-8"))
-    return {
-        "report": report,
-        "preview": preview,
-        "solution_questions": (
-            get_all_question_ids(solution_parsed) if solution_parsed else []
-        ),
-        "solution_duplicate_qids": (
-            solution_parsed.get("duplicate_qids", []) if solution_parsed else []
-        ),
-    }
+    parsed_dir = Path(config.get("parsed_dir", "output/parsed"))
+    return build_parse_run_payload(report, parsed_dir, solution_parsed)
 
 
 def run_calibrate_step(config: dict) -> list:
