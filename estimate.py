@@ -10,10 +10,9 @@ from prompt_builder import build_group_prompt, estimate_tokens, load_prompt
 from rubric import build_rubric_group_prompt
 from utils import (
     AppConfig,
-    ensure_app_config,
     DEFAULT_MODEL,
+    ensure_app_config,
     get_effective_question_groups,
-    load_config,
 )
 
 RUBRIC_SYSTEM_LEN = 800  # approx chars

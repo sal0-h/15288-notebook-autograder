@@ -4,7 +4,7 @@ import json
 import math
 from pathlib import Path
 
-from utils import AppConfig, ensure_app_config, load_config
+from utils import AppConfig, ensure_app_config, load_app_config
 
 
 def run_calibration(config: AppConfig | dict) -> list[dict[str, str | float]]:
@@ -93,7 +93,7 @@ def main():
             "--config is required and must point to output/{assignment_name}/config.yaml"
         )
 
-    config = load_config(args.config)
+    config = load_app_config(args.config)
     flagged = run_calibration(config)
     print(f"Calibration: {len(flagged)} outlier(s) flagged")
     for f in flagged[:20]:

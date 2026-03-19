@@ -19,8 +19,8 @@ router = APIRouter()
 @router.get("/results")
 def api_get_results():
     """Return full graded_results.json."""
-    config = state.get_active_config()
-    path = get_assignment_output_paths(config).graded_results
+    cfg = state.get_active_app_config()
+    path = get_assignment_output_paths(cfg).graded_results
     with state.results_lock:
         try:
             return load_results(path)
@@ -40,8 +40,8 @@ def api_put_results(student_name: str, result: dict = Body(...)):
             status_code=422,
             detail=f"Missing required keys: {[k for k in required if k not in result]}",
         )
-    config = state.get_active_config()
-    path = get_assignment_output_paths(config).graded_results
+    cfg = state.get_active_app_config()
+    path = get_assignment_output_paths(cfg).graded_results
 
     if not path.exists():
         raise HTTPException(status_code=404, detail="No graded results yet")
@@ -60,8 +60,8 @@ def api_put_results(student_name: str, result: dict = Body(...)):
 def api_get_parsed(student_name: str):
     """Return parsed JSON for a specific student."""
     student_name = unquote(student_name)
-    config = state.get_active_config()
-    parsed_dir = Path(config.get("parsed_dir", "output/parsed"))
+    cfg = state.get_active_app_config()
+    parsed_dir = Path(cfg.parsed_dir)
     path = safe_path(parsed_dir, f"{student_name}.json")
     if not path.exists():
         raise HTTPException(

@@ -9,7 +9,7 @@ import pandas as pd
 from linter_export import build_linter_summary, fmt_qid_list
 from parse_notebook import get_all_question_ids, sort_key_qid
 from results_models import GradedResult
-from utils import AppConfig, ensure_app_config, get_assignment_output_paths, load_config
+from utils import AppConfig, ensure_app_config, get_assignment_output_paths, load_app_config
 
 # Unix executable bits used when creating Gradescope autograder zip entries
 _UNIX_EXEC_ATTR = 0o755 << 16
@@ -309,7 +309,7 @@ def main():
             "--config is required and must point to output/{assignment_name}/config.yaml"
         )
 
-    config = load_config(args.config)
+    config = load_app_config(args.config)
     if args.autograder_zip:
         export_all(config)  # Ensure gradescope/*.json exist
         zip_path = export_autograder_zip(config)

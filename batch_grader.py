@@ -7,8 +7,8 @@ from typing import Generator
 
 from openai import OpenAI
 
-from llm.cost import usage_cost_usd
 from llm.types import TokenUsage
+from llm.usage_helpers import detach_usage_from_graded_result, graded_usage_summary_event
 from llm.parallel import iter_unordered_parallel_results
 from prompt_builder import validate_question_groups
 from results_store import load_results_with_backup, save_results, update_student
@@ -176,9 +176,9 @@ def grade_all_students(
                     ungrouped=ungrouped,
                     merge_into=merge_into,
                 )
-                u = result.pop("_usage", None)
-                if u:
-                    usage_total = usage_total.merged(TokenUsage.from_json_dict(u))
+                result, u_part = detach_usage_from_graded_result(result)
+                if u_part is not None and u_part.has_tokens():
+                    usage_total = usage_total.merged(u_part)
                 if results_lock:
                     with results_lock:
                         _store_result(student_name, result)
@@ -206,24 +206,16 @@ def grade_all_students(
 
         # Final usage summary
         if usage_total.has_tokens():
-            cost = usage_cost_usd(usage_total, model)
+            cost_evt = graded_usage_summary_event(usage_total, model)
             logger.info(
                 "Grading complete: %d students, %d tokens (%.0f in / %.0f out), ~$%.4f",
                 graded_count,
                 usage_total.total_tokens,
                 usage_total.prompt_tokens,
                 usage_total.completion_tokens,
-                cost,
+                cost_evt["cost_usd"],
             )
-            yield {
-                "student": "",
-                "status": "usage",
-                "result": None,
-                "error": None,
-                "usage": usage_total.to_json_dict(),
-                "cost_usd": round(cost, 4),
-                "model": model,
-            }
+            yield cost_evt
     else:
         # Parallel grading — shared client is thread-safe (httpx.Client); connection pooling reduces latency
         def _grade_one(args):
@@ -277,9 +269,9 @@ def grade_all_students(
                         "Worker returned done without result for %s", student_name
                     )
                     continue
-                u = result.pop("_usage", None)
-                if u:
-                    usage_total = usage_total.merged(TokenUsage.from_json_dict(u))
+                result, u_part = detach_usage_from_graded_result(result)
+                if u_part is not None and u_part.has_tokens():
+                    usage_total = usage_total.merged(u_part)
                 assert (
                     result is not None
                 )  # status == "done" always has a dict result
@@ -299,21 +291,13 @@ def grade_all_students(
             }
 
         if usage_total.has_tokens():
-            cost = usage_cost_usd(usage_total, model)
+            cost_evt = graded_usage_summary_event(usage_total, model)
             logger.info(
                 "Grading complete: %d students, %d tokens (%.0f in / %.0f out), ~$%.4f",
                 graded_count,
                 usage_total.total_tokens,
                 usage_total.prompt_tokens,
                 usage_total.completion_tokens,
-                cost,
+                cost_evt["cost_usd"],
             )
-            yield {
-                "student": "",
-                "status": "usage",
-                "result": None,
-                "error": None,
-                "usage": usage_total.to_json_dict(),
-                "cost_usd": round(cost, 4),
-                "model": model,
-            }
+            yield cost_evt

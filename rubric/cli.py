@@ -6,7 +6,7 @@ import logging
 from pathlib import Path
 
 from rubric.generate import generate_rubrics
-from utils import load_config
+from utils import load_app_config
 
 
 def main() -> None:
@@ -26,7 +26,7 @@ def main() -> None:
             "--config is required and must point to output/{assignment_name}/config.yaml"
         )
 
-    config = load_config(args.config)
+    config = load_app_config(args.config)
     rubrics = generate_rubrics(config)
     print(json.dumps(rubrics, indent=2))
 

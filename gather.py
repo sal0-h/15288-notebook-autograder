@@ -7,7 +7,7 @@ from pathlib import Path
 
 import yaml  # Used for Gradescope submission_metadata.yml (Ruby-style keys)
 
-from utils import load_config as _load_config
+from utils import load_app_config as _load_app_config
 
 
 def load_submission_metadata(metadata_path: Path) -> dict:
@@ -194,9 +194,9 @@ def main():
     # Override out_dir from config if available
     out_dir = args.out
     if args.config is not None and args.config.exists():
-        cfg = _load_config(args.config)
-        if cfg and "submissions_dir" in cfg:
-            out_dir = Path(cfg["submissions_dir"])
+        cfg = _load_app_config(args.config)
+        if cfg.submissions_dir:
+            out_dir = Path(cfg.submissions_dir)
 
     if args.zip:
         results = gather_submissions(args.zip, out_dir, from_zip=True)

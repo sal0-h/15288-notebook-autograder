@@ -1,6 +1,11 @@
 """Tests for graded / parsed artifact models."""
 
-from results_models import GradedResult, ParsedNotebook, graded_result_to_disk_dict
+from results_models import (
+    GRADED_RESULT_USAGE_KEY,
+    GradedResult,
+    ParsedNotebook,
+    graded_result_to_disk_dict,
+)
 
 
 def test_graded_result_roundtrip_usage_alias():
@@ -13,7 +18,10 @@ def test_graded_result_roundtrip_usage_alias():
         usage={"prompt_tokens": 10, "completion_tokens": 5},
     )
     d = graded_result_to_disk_dict(gr)
-    assert d["_usage"] == {"prompt_tokens": 10, "completion_tokens": 5}
+    assert d[GRADED_RESULT_USAGE_KEY] == {
+        "prompt_tokens": 10,
+        "completion_tokens": 5,
+    }
     again = GradedResult.model_validate(d)
     assert again.student_name == "Alice"
     assert again.usage == {"prompt_tokens": 10, "completion_tokens": 5}

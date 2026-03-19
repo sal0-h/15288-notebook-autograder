@@ -47,8 +47,8 @@ async def api_gather(zip_file: UploadFile = File(...)):
         except zipfile.BadZipFile:
             raise HTTPException(status_code=400, detail="Invalid or corrupted ZIP file")
 
-        config = state.get_active_config()
-        return run_gather(config, tmp_path)
+        cfg = state.get_active_app_config()
+        return run_gather(cfg, tmp_path)
     finally:
         if tmp_path is not None:
             tmp_path.unlink(missing_ok=True)
@@ -57,9 +57,9 @@ async def api_gather(zip_file: UploadFile = File(...)):
 @router.post("/gather-from-folder")
 def api_gather_from_folder(folder_path: str):
     """Run gather from an already-extracted folder path under project root."""
-    config = state.get_active_config()
+    cfg = state.get_active_app_config()
     try:
-        return run_gather_from_folder(config, folder_path, state.PROJECT_ROOT)
+        return run_gather_from_folder(cfg, folder_path, state.PROJECT_ROOT)
     except FileNotFoundError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except ValueError as e:
@@ -69,5 +69,5 @@ def api_gather_from_folder(folder_path: str):
 @router.post("/parse")
 async def api_parse():
     """Run parse step. Returns verification report + first student preview."""
-    config = state.get_active_config()
-    return await asyncio.to_thread(run_parse, config)
+    cfg = state.get_active_app_config()
+    return await asyncio.to_thread(run_parse, cfg)

@@ -33,7 +33,7 @@ from utils import (
     get_openai_client,
     get_effective_question_groups,
     get_skipped_feedback,
-    load_config,
+    load_app_config,
     get_job_logger,
 )
 
@@ -448,7 +448,7 @@ def main():
             "--config is required and must point to output/{assignment_name}/config.yaml"
         )
 
-    config = load_config(args.config)
+    config = load_app_config(args.config)
     for evt in grade_all_students(config):
         if evt["status"] == "done":
             r = evt["result"]

@@ -11,7 +11,9 @@ from fastapi import APIRouter, Body, HTTPException, Query
 from api.helpers import error_event, parse_group_indices_param
 from api import sse as sse_mod
 from api import state
-from config_models import AppConfig
+from pydantic import ValidationError
+
+from config_models import ensure_app_config
 from rubric import generate_rubrics
 from utils import save_config
 
@@ -33,7 +35,7 @@ async def api_generate_rubrics_stream(
             status_code=409,
             detail="Rubric generation already in progress. Wait for it to finish or refresh.",
         )
-    config = state.get_active_config()
+    cfg = state.get_active_app_config()
     group_indices = parse_group_indices_param(groups)
 
     def worker(emit: Callable[[dict], None]) -> None:
@@ -52,12 +54,13 @@ async def api_generate_rubrics_stream(
                 )
 
             rubrics = generate_rubrics(
-                config,
+                cfg,
                 progress_callback=progress_cb,
                 group_indices=group_indices,
             )
-            config["rubrics"] = rubrics
-            save_config(config, state.get_active_config_path())  # type: ignore[arg-type]
+            data = cfg.model_dump(mode="python")
+            data["rubrics"] = rubrics
+            save_config(data, state.get_active_config_path())  # type: ignore[arg-type]
             emit({"status": "done", "rubrics": rubrics})
         except Exception as e:
             emit(error_event(str(e)))
@@ -80,12 +83,13 @@ async def api_generate_rubrics_post(
         gi = body["group_indices"]
         group_indices = gi if isinstance(gi, list) else [int(gi)]
     try:
-        config = state.get_active_config()
+        cfg = state.get_active_app_config()
         rubrics = await asyncio.to_thread(
-            generate_rubrics, config, group_indices=group_indices
+            generate_rubrics, cfg, group_indices=group_indices
         )
-        config["rubrics"] = rubrics
-        save_config(config, state.get_active_config_path())  # type: ignore[arg-type]
+        data = cfg.model_dump(mode="python")
+        data["rubrics"] = rubrics
+        save_config(data, state.get_active_config_path())  # type: ignore[arg-type]
         return {"rubrics": rubrics}
     finally:
         state.rubric_lock.release()
@@ -101,11 +105,11 @@ def api_get_rubrics():
 @router.put("/rubrics")
 def api_put_rubrics(rubrics: dict = Body(...)):
     """Save edited rubrics to config."""
-    config = state.get_active_config()
-    config["rubrics"] = rubrics
+    merged = dict(state.get_active_config())
+    merged["rubrics"] = rubrics
     try:
-        AppConfig.model_validate(config)
-    except Exception as e:
+        ensure_app_config(merged)
+    except ValidationError as e:
         raise HTTPException(status_code=422, detail=f"Invalid rubrics: {e}")
-    save_config(config, state.get_active_config_path())  # type: ignore[arg-type]
+    save_config(merged, state.get_active_config_path())  # type: ignore[arg-type]
     return {"ok": True}

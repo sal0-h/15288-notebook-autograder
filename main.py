@@ -16,9 +16,8 @@ from pydantic import ValidationError
 
 from config_models import default_config
 from utils import (
-    load_config,
+    load_app_config,
     save_config,
-    AppConfig,
     setup_assignment_logging,
     sanitize_assignment_name,
 )
@@ -125,17 +124,15 @@ Examples:
         config_path.parent.mkdir(parents=True, exist_ok=True)
         save_config(config, config_path)
         print(f"Wrote config to {config_path}")
-    config = load_config(config_path)  # Reload to resolve paths relative to config file
-
     try:
-        AppConfig.model_validate(config)
+        cfg = load_app_config(config_path)
     except ValidationError as e:
         print(f"Invalid config: {e}")
         return 1
 
     # Set up file logging to output_dir/autograder.log (same as web app)
-    out_dir = Path(config["output_dir"])
-    assign_name = config["assignment_name"]
+    out_dir = Path(cfg.output_dir)
+    assign_name = cfg.assignment_name
     log_path = setup_assignment_logging(assign_name, out_dir)
     logging.info("Logging to %s", log_path)
 
@@ -153,7 +150,7 @@ Examples:
             return 1
         from gather import gather_submissions
 
-        out_dir = Path(config["submissions_dir"])
+        out_dir = Path(cfg.submissions_dir)
         results = gather_submissions(args.zip, out_dir, from_zip=True)
         ok = sum(1 for r in results if r["status"] == "ok")
         print(f"Gather: {ok}/{len(results)} notebooks copied to {out_dir}")
@@ -165,7 +162,7 @@ Examples:
             get_total_points,
         )
 
-        solution_parsed, report = parse_all_students(config)
+        solution_parsed, report = parse_all_students(cfg)
         if solution_parsed:
             qids = get_all_question_ids(solution_parsed)
             pts = get_total_points(solution_parsed)
@@ -179,15 +176,17 @@ Examples:
     if "generate-rubrics" in steps:
         from rubric import generate_rubrics
 
-        rubrics = generate_rubrics(config)
-        config["rubrics"] = rubrics
-        save_config(config, config_path)
+        rubrics = generate_rubrics(cfg)
+        merged = cfg.model_dump(mode="python")
+        merged["rubrics"] = rubrics
+        save_config(merged, config_path)
+        cfg = load_app_config(config_path)
         print(f"Generate rubrics: {len(rubrics)} questions")
 
     if "grade" in steps:
         from batch_grader import grade_all_students
 
-        for evt in grade_all_students(config):
+        for evt in grade_all_students(cfg):
             if evt["status"] == "done" and evt.get("result"):
                 r = evt["result"]
                 print(f"  ✓ {r['student_name']}: {r['total_score']}/{r['total_max']}")
@@ -198,13 +197,13 @@ Examples:
     if "calibrate" in steps:
         from calibrate import run_calibration
 
-        flagged = run_calibration(config)
+        flagged = run_calibration(cfg)
         print(f"Calibrate: {len(flagged)} outlier(s) flagged")
 
     if "export" in steps:
         from export import export_all
 
-        summary = export_all(config)
+        summary = export_all(cfg)
         print(f"Export: {summary['students']} students → {summary['excel_path']}")
 
     return 0

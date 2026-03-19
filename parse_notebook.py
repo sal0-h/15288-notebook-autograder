@@ -1,12 +1,18 @@
 """Config-driven notebook parser for solution and student notebooks."""
 
+from __future__ import annotations
+
 import argparse
 import json
 import logging
 import re
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-from utils import load_config
+from utils import ensure_app_config, load_app_config
+
+if TYPE_CHECKING:
+    from config_models import AppConfig
 
 logger = logging.getLogger(__name__)
 
@@ -52,28 +58,20 @@ def extract_code_outputs(
     }
 
 
-def parse_notebook(nb_path: Path, config: dict) -> dict:
+def parse_notebook(nb_path: Path, config: AppConfig | dict) -> dict:
     """
     Parse a Jupyter notebook into structured sections and questions.
 
     Captures per-question: code cells, text outputs, markdown answer cells, and base64 images.
     """
+    cfg = ensure_app_config(config)
     nb = json.loads(nb_path.read_text(encoding="utf-8"))
     cells = nb.get("cells", [])
 
-    parsing = config.get("parsing", {})
-    section_re = re.compile(
-        parsing.get("section_regex", r"(?m)^\s*#\s*<font[^>]*>\s*(\d+)\b"),
-        re.IGNORECASE,
-    )
-    # Dash before Q is optional: some handouts use "Q7.1" instead of "- Q7.1"
-    question_re = re.compile(
-        parsing.get(
-            "question_regex", r"(?i)^\s*(-\s*)?Q(\d+)\.(\d+)\s*.*?\[\s*(\d+)\s*PTS\s*\]"
-        ),
-        re.MULTILINE,
-    )
-    keep_images = parsing.get("keep_images", True)
+    parsing = cfg.parsing
+    section_re = re.compile(parsing.section_regex, re.IGNORECASE)
+    question_re = re.compile(parsing.question_regex, re.MULTILINE)
+    keep_images = parsing.keep_images
 
     def is_section(cell: dict, *, strict: bool = False) -> bool:
         """Check if cell is a section header. When strict=True (used while gathering
@@ -255,7 +253,7 @@ def get_total_points(parsed: dict) -> int | float:
     return total
 
 
-def parse_all_students(config: dict) -> tuple[dict | None, list[dict]]:
+def parse_all_students(config: AppConfig | dict) -> tuple[dict | None, list[dict]]:
     """
     Parse solution notebook and all student notebooks.
 
@@ -266,12 +264,13 @@ def parse_all_students(config: dict) -> tuple[dict | None, list[dict]]:
     """
     from utils import get_assignment_output_paths, get_job_logger
 
-    logger = get_job_logger(config, __name__)
+    cfg = ensure_app_config(config)
+    logger = get_job_logger(cfg, __name__)
 
-    paths = get_assignment_output_paths(config)
-    submissions_dir = Path(config.get("submissions_dir", "output/submissions"))
+    paths = get_assignment_output_paths(cfg)
+    submissions_dir = Path(cfg.submissions_dir)
     parsed_dir = paths.parsed_dir
-    solution_notebook = Path(config.get("solution_notebook", ""))
+    solution_notebook = Path(cfg.solution_notebook)
 
     parsed_dir.mkdir(parents=True, exist_ok=True)
 
@@ -280,7 +279,7 @@ def parse_all_students(config: dict) -> tuple[dict | None, list[dict]]:
     solution_total_pts = 0
 
     if solution_notebook and Path(solution_notebook).exists():
-        solution_parsed = parse_notebook(Path(solution_notebook), config)
+        solution_parsed = parse_notebook(Path(solution_notebook), cfg)
         solution_question_ids = get_all_question_ids(solution_parsed)
         solution_total_pts = get_total_points(solution_parsed)
 
@@ -296,7 +295,7 @@ def parse_all_students(config: dict) -> tuple[dict | None, list[dict]]:
     for nb_path in student_files:
         student_name = nb_path.stem
         try:
-            parsed = parse_notebook(nb_path, config)
+            parsed = parse_notebook(nb_path, cfg)
         except (json.JSONDecodeError, KeyError, ValueError, OSError) as e:
             logger.warning("Parse failed for %s: %s", student_name, e)
             report.append(
@@ -358,7 +357,7 @@ def main():
             "--config is required and must point to output/{assignment_name}/config.yaml"
         )
 
-    config = load_config(args.config)
+    config = load_app_config(args.config)
     solution_parsed, report = parse_all_students(config)
 
     if solution_parsed:
