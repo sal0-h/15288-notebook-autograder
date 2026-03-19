@@ -8,11 +8,6 @@ import pytest
 from calibrate import run_calibration
 
 
-def _graded_results(entries: list[dict]) -> list[dict]:
-    """Build graded_results.json structure from list of {student_name, questions}."""
-    return entries
-
-
 class TestRunCalibration:
     def test_empty_results_returns_empty(self, tmp_path):
         (tmp_path / "graded_results.json").write_text("[]", encoding="utf-8")

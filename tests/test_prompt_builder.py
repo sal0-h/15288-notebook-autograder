@@ -113,7 +113,9 @@ def test_build_group_prompt_includes_rubric_from_plain_dicts():
         }
     }
     solution_parsed = {
-        "sections": {"1": {"questions": {"1.1": {"points": 10, "question_markdown": "Q"}}}}
+        "sections": {
+            "1": {"questions": {"1.1": {"points": 10, "question_markdown": "Q"}}}
+        }
     }
     student_parsed = {
         "sections": {

@@ -9,7 +9,12 @@ import pandas as pd
 from linter_export import build_linter_summary, fmt_qid_list
 from parse_notebook import get_all_question_ids, sort_key_qid
 from results_models import GradedResult
-from utils import AppConfig, ensure_app_config, get_assignment_output_paths, load_app_config
+from utils import (
+    AppConfig,
+    ensure_app_config,
+    get_assignment_output_paths,
+    load_app_config,
+)
 
 # Unix executable bits used when creating Gradescope autograder zip entries
 _UNIX_EXEC_ATTR = 0o755 << 16
@@ -147,9 +152,7 @@ def export_all(config: AppConfig | dict) -> dict[str, str | int]:
     if not raw_results:
         return {"students": 0, "gradescope_dir": str(gradescope_dir), "excel_path": ""}
 
-    results: list[GradedResult] = [
-        GradedResult.model_validate(r) for r in raw_results
-    ]
+    results: list[GradedResult] = [GradedResult.model_validate(r) for r in raw_results]
 
     gradescope_dir.mkdir(parents=True, exist_ok=True)
 

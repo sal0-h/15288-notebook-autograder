@@ -11,7 +11,12 @@ from api.helpers import build_parse_solution_response
 from api import state
 from pydantic import ValidationError
 
-from config_models import AppConfig, app_config_to_yaml_data, default_config, ensure_app_config
+from config_models import (
+    AppConfig,
+    app_config_to_yaml_data,
+    default_config,
+    ensure_app_config,
+)
 from parse_notebook import parse_notebook
 from utils import load_config, sanitize_assignment_name, save_config
 

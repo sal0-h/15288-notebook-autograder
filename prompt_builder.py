@@ -191,7 +191,11 @@ def validate_question_groups(
     groups: list[list[str]], solution_parsed: dict | ParsedNotebook
 ) -> list[str]:
     """Return list of solution question IDs not covered by any group."""
-    sol = solution_parsed if isinstance(solution_parsed, dict) else solution_parsed.model_dump()
+    sol = (
+        solution_parsed
+        if isinstance(solution_parsed, dict)
+        else solution_parsed.model_dump()
+    )
     grouped: set[str] = {qid for group in groups for qid in group}
     all_sol_qids: list[str] = []
     for sec_data in sol.get("sections", {}).values():

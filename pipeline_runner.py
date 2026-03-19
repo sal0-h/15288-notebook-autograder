@@ -82,6 +82,8 @@ def run_estimate_rubrics(config: AppConfig | dict) -> dict:
     return estimate_rubrics(config)
 
 
-def run_estimate_grade(config: AppConfig | dict, student_name: str | None = None) -> dict:
+def run_estimate_grade(
+    config: AppConfig | dict, student_name: str | None = None
+) -> dict:
     """Estimate grading cost."""
     return estimate_grade(config, student_name=student_name)

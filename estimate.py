@@ -90,9 +90,7 @@ def estimate_rubrics(config: AppConfig | dict) -> dict:
             completion_tokens += OUTPUT_TOKENS_PER_GROUP
         prompt_tokens += review_prompt
 
-    usage = TokenUsage(
-        prompt_tokens=prompt_tokens, completion_tokens=completion_tokens
-    )
+    usage = TokenUsage(prompt_tokens=prompt_tokens, completion_tokens=completion_tokens)
     return {
         **usage.to_json_dict(),
         "cost_usd": round(_cost(usage, model), 4),
@@ -157,9 +155,7 @@ def estimate_grade(config: AppConfig | dict, student_name: str | None = None) ->
     prompt_tokens = prompt_tokens_one * n_students
     completion_tokens = completion_tokens_one * n_students
 
-    usage = TokenUsage(
-        prompt_tokens=prompt_tokens, completion_tokens=completion_tokens
-    )
+    usage = TokenUsage(prompt_tokens=prompt_tokens, completion_tokens=completion_tokens)
     return {
         **usage.to_json_dict(),
         "cost_usd": round(_cost(usage, model), 4),
