@@ -8,11 +8,10 @@ applyTo: "tests/test_*.py"
 
 ## Pytest Fixtures and Conftest
 
-Use fixtures from `tests/conftest.py` for common setup:
-- Temporary assignment directories (`tmp_assignment`).
-- Mock OpenAI client (`mock_openai_client`).
-- Sample config objects (`sample_config`).
-- Pre-parsed student/solution data.
+`tests/conftest.py` adds the project root to `sys.path` for imports. Tests construct their own setup:
+- Use pytest's built-in `tmp_path` for temporary assignment directories.
+- Build minimal config dicts inline with required fields (e.g. `model`, `grading.question_groups`, `rubrics`); use `DEFAULT_MODEL` from utils.
+- Mock OpenAI via `unittest.mock.patch` on the relevant client or completion methods.
 
 Fixtures ensure tests are isolated and do not pollute the real `output/` directory.
 
@@ -25,9 +24,10 @@ Always use `tmp_path` (pytest built-in) for output artifacts:
 
 **Example**:
 ```python
-def test_grade_student(tmp_path, sample_config):
+def test_grade_student(tmp_path):
     assignment_dir = tmp_path / "LabTest_3_S26"
-    config = sample_config(str(assignment_dir))
+    assignment_dir.mkdir(parents=True)
+    config = {"output_dir": str(assignment_dir), "model": DEFAULT_MODEL, "grading": {"question_groups": [["1.1"]], "grade_only": None}, "rubrics": {}}
     # Grade into tmp_path, not output/
 ```
 

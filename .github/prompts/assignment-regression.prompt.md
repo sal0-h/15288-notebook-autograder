@@ -12,7 +12,7 @@ Analyze grading behavior changes after modifying assignment config, rubrics, or 
 ## What to Provide
 
 - **Assignment name**: e.g., `LabTest_3_S26`
-- **Changes made**: Brief list of modifications (e.g., "updated Q2.3 rubric for clarity", "switched to gpt-5-mini")
+- **Changes made**: Brief list of modifications (e.g., "updated Q2.3 rubric for clarity", "switched to gpt-4.1-mini")
 - **Baseline reference**: Prior results or expected behavior if available
 
 ## Analysis

@@ -4,7 +4,7 @@
 # The web UI does not read this file automatically.
 
 assignment_name: Example_Assignment
-model: gpt-5-mini
+model: gpt-4.1-mini
 rubric_model: ""
 rubric_review: true
 include_reference_in_grading: false

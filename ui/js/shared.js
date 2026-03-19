@@ -1,6 +1,6 @@
 /** Shared utilities and API for AI Autograder UI */
 const API = "";
-const DEFAULT_MODEL = "gpt-5-mini";
+const DEFAULT_MODEL = "gpt-4.1-mini";
 
 const FETCH_RETRIES = 2;
 const FETCH_RETRY_DELAY_MS = 1000;

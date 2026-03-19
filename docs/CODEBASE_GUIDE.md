@@ -630,6 +630,7 @@ Tests live in `tests/` and are run with `pytest tests/ -q`.
 | `test_app.py` | FastAPI endpoints including config CRUD, grading SSE, export downloads |
 | `test_prompt_builder.py` | Prompt construction, sanitization, token budgeting |
 | `test_linter_export.py` | Linter ZIP creation |
+| `test_results_store.py` | `load_results`, `save_results`, `load_results_with_backup`, update_student |
 | `test_integration.py` | End-to-end parse → grade → export with mocked LLM |
 
 LLM calls are always mocked in tests via `unittest.mock.patch`. Tests never hit
