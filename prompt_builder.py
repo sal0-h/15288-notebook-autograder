@@ -1,7 +1,6 @@
 """LLM prompt construction utilities for question-group grading."""
 
 import json
-import logging
 import re
 import threading
 from pathlib import Path
@@ -10,17 +9,20 @@ import tiktoken
 
 from utils import DEFAULT_MODEL
 
-logger = logging.getLogger(__name__)
-
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
 
-CHARS_PER_TOKEN = 3.5
 TOKENS_PER_IMAGE = 1_000  # typical matplotlib plot at high detail
 
 _enc_cache: dict[str, object] = {}
 _enc_lock = threading.Lock()
+
+
+def _grading_body_char_cap(max_prompt_tokens: int) -> int:
+    """Cap for each long text field (code / output / markdown); scales loosely with config."""
+    return max(4_096, min(300_000, max_prompt_tokens * 4))
+
 
 # ---------------------------------------------------------------------------
 # Prompt Loading
@@ -222,18 +224,15 @@ def build_group_prompt(
     student_parsed: dict,
     system_prompt: str,
     max_prompt_tokens: int = 80_000,
-    model: str | None = None,
     rubrics: dict | None = None,
     include_reference: bool = False,
-    logger: logging.Logger | None = None,
 ) -> tuple[list[dict], dict[str, int]]:
     """
     Build messages for one question group with inline image labeling.
     Returns (messages, qid_to_max_pts).
     """
-    logger = logger or logging.getLogger(__name__)
-    model = model or DEFAULT_MODEL
     rubrics = rubrics or {}
+    cap = _grading_body_char_cap(max_prompt_tokens)
     qid_to_max: dict[str, int] = {}
     content_parts: list[dict] = []
 
@@ -247,21 +246,11 @@ def build_group_prompt(
     )
     content_parts.append({"type": "text", "text": header})
 
-    # Estimate total chars across the group for truncation budget
-    total_estimated_tokens = estimate_tokens(header, 0, model)
-
-    for i, qid in enumerate(group):
+    for qid in group:
         sol_q = get_question_data(solution_parsed, qid)
         stu_q = get_question_data(student_parsed, qid)
         pts = (sol_q or stu_q or {}).get("points", 0)
         qid_to_max[qid] = pts
-
-        # Per-question budget: distribute remaining tokens evenly across questions left
-        remaining_questions = len(group) - i
-        per_q_token_budget = max(
-            2_000, (max_prompt_tokens - total_estimated_tokens) // remaining_questions
-        )
-        max_output_chars = int(per_q_token_budget * CHARS_PER_TOKEN * 0.5)
 
         q_md = (sol_q or stu_q or {}).get("question_markdown", f"Question {qid}")
         q_header = f"--- QUESTION {qid} ({pts} pts) ---\n{q_md}\n\n"
@@ -290,11 +279,11 @@ def build_group_prompt(
             ref_text = "REFERENCE SOLUTION:\n"
             if sol_q:
                 if sol_q.get("answer_code_concat"):
-                    ref_text += f"Code:\n{sol_q['answer_code_concat']}\n\n"
+                    ref_text += f"Code:\n{truncate_output(sol_q['answer_code_concat'], cap)}\n\n"
                 if sol_q.get("answer_text_concat"):
-                    ref_text += f"Output:\n{truncate_output(sol_q['answer_text_concat'], max_output_chars)}\n\n"
+                    ref_text += f"Output:\n{truncate_output(sol_q['answer_text_concat'], cap)}\n\n"
                 if sol_q.get("answer_markdown_concat"):
-                    ref_text += f"Answer:\n{sol_q['answer_markdown_concat']}\n\n"
+                    ref_text += f"Answer:\n{truncate_output(sol_q['answer_markdown_concat'], cap)}\n\n"
                 for cell in sol_q.get("answer_cells", []):
                     for img in cell.get("images", []):
                         ref_images.append(img)
@@ -319,13 +308,11 @@ def build_group_prompt(
                 stu_text += "WARNING: This question has NO code, NO output, and NO images — only markdown (if any). Score accordingly; do not award points for code/output that is not present.\n\n"
             has_any = has_code or has_output or stu_q.get("answer_markdown_concat")
             if stu_q.get("answer_code_concat"):
-                stu_text += (
-                    f"Code:\n{_sanitize_student_text(stu_q['answer_code_concat'])}\n\n"
-                )
+                stu_text += f"Code:\n{_sanitize_student_text(truncate_output(stu_q['answer_code_concat'], cap))}\n\n"
             if stu_q.get("answer_text_concat"):
-                stu_text += f"Output:\n{_sanitize_student_text(truncate_output(stu_q['answer_text_concat'], max_output_chars))}\n\n"
+                stu_text += f"Output:\n{_sanitize_student_text(truncate_output(stu_q['answer_text_concat'], cap))}\n\n"
             if stu_q.get("answer_markdown_concat"):
-                stu_text += f"Answer:\n{_sanitize_student_text(stu_q['answer_markdown_concat'])}\n\n"
+                stu_text += f"Answer:\n{_sanitize_student_text(truncate_output(stu_q['answer_markdown_concat'], cap))}\n\n"
             if not has_any:
                 stu_text += "(no submission)\n"
             for cell in stu_q.get("answer_cells", []):
@@ -339,19 +326,6 @@ def build_group_prompt(
 
         content_parts.append({"type": "text", "text": stu_text})
         _append_image_parts(content_parts, stu_images)
-
-        # Update token estimate
-        total_estimated_tokens += estimate_tokens(
-            q_header + ref_text + stu_text, len(ref_images) + len(stu_images), model
-        )
-
-    if total_estimated_tokens > max_prompt_tokens:
-        logger.warning(
-            "Group %s estimated ~%d tokens (limit %d). Outputs were truncated.",
-            group,
-            total_estimated_tokens,
-            max_prompt_tokens,
-        )
 
     messages = [
         {"role": "system", "content": system_prompt},

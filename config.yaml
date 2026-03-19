@@ -11,7 +11,7 @@ include_reference_in_grading: false
 solution_notebook: path/to/solution.ipynb
 output_dir: output
 workers: 1
-max_prompt_tokens: 80000
+max_prompt_tokens: 80000  # scales max chars per code/output/markdown block in grading prompts
 max_completion_tokens: 4096
 
 parsing:

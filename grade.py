@@ -2,7 +2,6 @@
 
 import json
 import logging
-import time
 from pathlib import Path
 
 from openai import OpenAI
@@ -16,6 +15,8 @@ from grading_models import (
     QuestionGrade,
     SKIP_FEEDBACKS,
 )
+from llm import complete_json_chat, retry_with_exponential_backoff
+from llm.types import TokenUsage
 from prompt_builder import (
     build_group_prompt,
     get_question_data,
@@ -32,7 +33,6 @@ from utils import (
     get_effective_question_groups,
     get_skipped_feedback,
     load_config,
-    temperature_for_model,
     get_job_logger,
 )
 
@@ -93,27 +93,19 @@ def _grade_group_attempt(
     qid_to_max: dict[str, int],
     config: AppConfig,
     client: OpenAI,
-) -> tuple[GradingResponse, dict[str, int], dict]:
+) -> tuple[GradingResponse, dict[str, int], TokenUsage]:
     """Single grading attempt. Raises on validation failure."""
     model = config.model or DEFAULT_MODEL
-    temperature = temperature_for_model(model)
     effective_max = min(config.max_completion_tokens, max(2048, len(group) * 1024))
-    response = client.chat.completions.create(
+    completion = complete_json_chat(
+        client,
         model=model,
         messages=messages,
-        temperature=temperature,
         max_completion_tokens=effective_max,
-        response_format={"type": "json_object"},
     )
-    raw_content = response.choices[0].message.content
-    content = raw_content or "{}"
+    content = completion.text
     raw = parse_llm_json(content)
-    usage = {}
-    if getattr(response, "usage", None):
-        usage = {
-            "prompt_tokens": getattr(response.usage, "prompt_tokens", 0) or 0,
-            "completion_tokens": getattr(response.usage, "completion_tokens", 0) or 0,
-        }
+    usage = completion.usage
 
     grading_response = GradingResponse.from_raw(raw, group)
     placeholder_feedback = (LLM_NOT_RETURNED, LLM_PARSE_ERROR)
@@ -141,7 +133,7 @@ def grade_group(
     config: AppConfig,
     client: OpenAI,
     student_name: str | None = None,
-) -> tuple[GradingResponse, dict[str, int], dict]:
+) -> tuple[GradingResponse, dict[str, int], TokenUsage]:
     """
     Grade one question group. Retries up to MAX_VALIDATION_RETRIES times
     if the LLM response fails Pydantic validation.
@@ -154,35 +146,38 @@ def grade_group(
         solution_parsed,
         student_parsed,
         system_prompt,
-        config.max_prompt_tokens,
-        model,
+        max_prompt_tokens=config.max_prompt_tokens,
         rubrics=config.rubrics,
         include_reference=config.include_reference_in_grading,
     )
 
     ctx = f" [{student_name}]" if student_name else ""
-    last_error: Exception | None = None
 
-    for attempt in range(MAX_VALIDATION_RETRIES + 1):
-        if attempt > 0:
-            wait = 2**attempt
-            logger.warning(
-                "Retry %d for group %s%s after %ds", attempt, group, ctx, wait
-            )
-            time.sleep(wait)
+    def _attempt():
+        return _grade_group_attempt(group, messages, qid_to_max, config, client)
 
-        try:
-            return _grade_group_attempt(group, messages, qid_to_max, config, client)
-        except Exception as e:
-            last_error = e
-            logger.warning(
-                "Validation failed on attempt %d for group %s%s: %s",
-                attempt,
-                group,
-                ctx,
-                e,
-            )
-            # Log response for debugging (we don't have it in scope; would need to refactor)
+    def _on_before_retry(attempt: int, delay: float) -> None:
+        logger.warning(
+            "Retry %d for group %s%s after %ds", attempt, group, ctx, int(delay)
+        )
+
+    def _on_failed(attempt: int, err: BaseException) -> None:
+        logger.warning(
+            "Validation failed on attempt %d for group %s%s: %s",
+            attempt,
+            group,
+            ctx,
+            err,
+        )
+
+    success, last_error = retry_with_exponential_backoff(
+        _attempt,
+        max_attempts=MAX_VALIDATION_RETRIES + 1,
+        on_before_retry=_on_before_retry,
+        on_attempt_failed=_on_failed,
+    )
+    if success is not None:
+        return success
 
     logger.error(
         "Giving up on group %s%s after %d attempts: %s",
@@ -204,7 +199,7 @@ def grade_group(
             }
         ),
         qid_to_max,
-        {},
+        TokenUsage(),
     )
 
 
@@ -266,7 +261,7 @@ def _build_result_dict(
     total_score: float,
     total_max: float,
     feedback_parts: list[str],
-    usage_total: dict[str, int],
+    usage_total: TokenUsage,
 ) -> dict:
     """Build the final graded result dict for graded_results.json."""
     result = {
@@ -278,8 +273,8 @@ def _build_result_dict(
             ". ".join(feedback_parts) if feedback_parts else "Full marks."
         ),
     }
-    if usage_total.get("prompt_tokens") or usage_total.get("completion_tokens"):
-        result["_usage"] = usage_total
+    if usage_total.has_tokens():
+        result["_usage"] = usage_total.to_json_dict()
     return result
 
 
@@ -316,7 +311,7 @@ def grade_student(
     total_score = 0.0
     total_max = 0.0
     feedback_parts: list[str] = []
-    usage_total = {"prompt_tokens": 0, "completion_tokens": 0}
+    usage_total = TokenUsage()
 
     logger.info("Grading %s (%d groups)", student_name, len(groups))
     for group_idx, group in enumerate(groups):
@@ -347,7 +342,7 @@ def grade_student(
                 for qid in group
             }
             grading_response = GradingResponse(grades=grades)
-            usage = {}
+            usage = TokenUsage()
         else:
             grading_response, qid_to_max, usage = grade_group(
                 group,
@@ -357,8 +352,7 @@ def grade_student(
                 client,
                 student_name=student_name,
             )
-        usage_total["prompt_tokens"] += usage.get("prompt_tokens", 0)
-        usage_total["completion_tokens"] += usage.get("completion_tokens", 0)
+        usage_total = usage_total.merged(usage)
         score_delta, max_delta = _process_group_result(
             questions, feedback_parts, group, grading_response, qid_to_max
         )
@@ -387,8 +381,8 @@ def grade_student(
         student_name,
         total_score,
         total_max,
-        usage_total.get("prompt_tokens", 0),
-        usage_total.get("completion_tokens", 0),
+        usage_total.prompt_tokens,
+        usage_total.completion_tokens,
     )
     return result
 
@@ -460,10 +454,10 @@ def main():
             r = evt["result"]
             print(f"✓ {r['student_name']}: {r['total_score']}/{r['total_max']}")
         elif evt["status"] == "usage":
-            u = evt.get("usage", {})
+            u = TokenUsage.from_json_dict(evt.get("usage"))
             cost = evt.get("cost_usd", 0)
             print(
-                f"Token usage: {u.get('prompt_tokens', 0):,} in / {u.get('completion_tokens', 0):,} out — ~${cost:.4f}"
+                f"Token usage: {u.prompt_tokens:,} in / {u.completion_tokens:,} out — ~${cost:.4f}"
             )
         else:
             print(f"✗ {evt['student']}: {evt['error']}")

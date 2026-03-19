@@ -2,13 +2,14 @@
 
 import json
 import logging
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Generator
 
 from openai import OpenAI
 
-from grading_models import MODEL_PRICING
+from llm.cost import usage_cost_usd
+from llm.types import TokenUsage
+from llm.parallel import iter_unordered_parallel_results
 from prompt_builder import validate_question_groups
 from results_store import load_results_with_backup, save_results, update_student
 from utils import (
@@ -144,7 +145,7 @@ def grade_all_students(
         logger.info("Grading %d students", len(to_grade))
 
     workers = cfg.workers
-    usage_total = {"prompt_tokens": 0, "completion_tokens": 0}
+    usage_total = TokenUsage()
     model = cfg.model or DEFAULT_MODEL
 
     if workers <= 1 or len(to_grade) <= 1:
@@ -177,8 +178,7 @@ def grade_all_students(
                 )
                 u = result.pop("_usage", None)
                 if u:
-                    usage_total["prompt_tokens"] += u.get("prompt_tokens", 0)
-                    usage_total["completion_tokens"] += u.get("completion_tokens", 0)
+                    usage_total = usage_total.merged(TokenUsage.from_json_dict(u))
                 if results_lock:
                     with results_lock:
                         _store_result(student_name, result)
@@ -205,17 +205,14 @@ def grade_all_students(
                 }
 
         # Final usage summary
-        if usage_total["prompt_tokens"] or usage_total["completion_tokens"]:
-            inp, out = MODEL_PRICING.get(model, MODEL_PRICING[DEFAULT_MODEL])
-            cost = (usage_total["prompt_tokens"] / 1e6 * inp) + (
-                usage_total["completion_tokens"] / 1e6 * out
-            )
+        if usage_total.has_tokens():
+            cost = usage_cost_usd(usage_total, model)
             logger.info(
                 "Grading complete: %d students, %d tokens (%.0f in / %.0f out), ~$%.4f",
                 graded_count,
-                usage_total["prompt_tokens"] + usage_total["completion_tokens"],
-                usage_total["prompt_tokens"],
-                usage_total["completion_tokens"],
+                usage_total.total_tokens,
+                usage_total.prompt_tokens,
+                usage_total.completion_tokens,
                 cost,
             )
             yield {
@@ -223,7 +220,7 @@ def grade_all_students(
                 "status": "usage",
                 "result": None,
                 "error": None,
-                "usage": usage_total,
+                "usage": usage_total.to_json_dict(),
                 "cost_usd": round(cost, 4),
                 "model": model,
             }
@@ -269,53 +266,46 @@ def grade_all_students(
                 "index": i + 1,
                 "total": len(student_files),
             }
-        with ThreadPoolExecutor(max_workers=workers) as pool:
-            futures = {
-                pool.submit(_grade_one, item): item for item in to_grade_with_merge
-            }
-            for future in as_completed(futures):
-                i, student_name, status, result, error = future.result()
-                if status == "done":
-                    if result is None:
-                        logger.error(
-                            "Worker returned done without result for %s", student_name
-                        )
-                        continue
-                    u = result.pop("_usage", None)
-                    if u:
-                        usage_total["prompt_tokens"] += u.get("prompt_tokens", 0)
-                        usage_total["completion_tokens"] += u.get(
-                            "completion_tokens", 0
-                        )
-                    assert (
-                        result is not None
-                    )  # status == "done" always has a dict result
-                    if results_lock:
-                        with results_lock:
-                            _store_result(student_name, result)
-                    else:
+        for i, student_name, status, result, error in iter_unordered_parallel_results(
+            to_grade_with_merge,
+            _grade_one,
+            max_workers=workers,
+        ):
+            if status == "done":
+                if result is None:
+                    logger.error(
+                        "Worker returned done without result for %s", student_name
+                    )
+                    continue
+                u = result.pop("_usage", None)
+                if u:
+                    usage_total = usage_total.merged(TokenUsage.from_json_dict(u))
+                assert (
+                    result is not None
+                )  # status == "done" always has a dict result
+                if results_lock:
+                    with results_lock:
                         _store_result(student_name, result)
-                    graded_count += 1
-                yield {
-                    "student": student_name,
-                    "status": status,
-                    "result": result,
-                    "error": error,
-                    "index": i + 1,
-                    "total": len(student_files),
-                }
+                else:
+                    _store_result(student_name, result)
+                graded_count += 1
+            yield {
+                "student": student_name,
+                "status": status,
+                "result": result,
+                "error": error,
+                "index": i + 1,
+                "total": len(student_files),
+            }
 
-        if usage_total["prompt_tokens"] or usage_total["completion_tokens"]:
-            inp, out = MODEL_PRICING.get(model, MODEL_PRICING[DEFAULT_MODEL])
-            cost = (usage_total["prompt_tokens"] / 1e6 * inp) + (
-                usage_total["completion_tokens"] / 1e6 * out
-            )
+        if usage_total.has_tokens():
+            cost = usage_cost_usd(usage_total, model)
             logger.info(
                 "Grading complete: %d students, %d tokens (%.0f in / %.0f out), ~$%.4f",
                 graded_count,
-                usage_total["prompt_tokens"] + usage_total["completion_tokens"],
-                usage_total["prompt_tokens"],
-                usage_total["completion_tokens"],
+                usage_total.total_tokens,
+                usage_total.prompt_tokens,
+                usage_total.completion_tokens,
                 cost,
             )
             yield {
@@ -323,7 +313,7 @@ def grade_all_students(
                 "status": "usage",
                 "result": None,
                 "error": None,
-                "usage": usage_total,
+                "usage": usage_total.to_json_dict(),
                 "cost_usd": round(cost, 4),
                 "model": model,
             }

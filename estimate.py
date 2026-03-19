@@ -2,8 +2,10 @@
 
 import json
 from pathlib import Path
+from typing import Any
 
-from grading_models import MODEL_PRICING
+from llm.cost import usage_cost_usd
+from llm.types import TokenUsage
 from prompt_builder import build_group_prompt, estimate_tokens, load_prompt
 from rubric import build_rubric_group_prompt
 from utils import (
@@ -20,9 +22,14 @@ OUTPUT_TOKENS_PER_GROUP = 500  # rubric output
 OUTPUT_TOKENS_PER_GRADE_GROUP = 1200  # grading output (LLM returns JSON with feedback per question; 400 was too low)
 
 
-def _cost(prompt_tokens: int, completion_tokens: int, model: str) -> float:
-    inp, out = MODEL_PRICING.get(model, MODEL_PRICING[DEFAULT_MODEL])
-    return (prompt_tokens / 1e6 * inp) + (completion_tokens / 1e6 * out)
+def _estimate_error(message: str) -> dict[str, Any]:
+    """Same token/cost shape as successful estimate responses."""
+    u = TokenUsage()
+    return {"error": message, **u.to_json_dict(), "cost_usd": 0}
+
+
+def _cost(usage: TokenUsage, model: str) -> float:
+    return usage_cost_usd(usage, model)
 
 
 def _tokens_from_messages(messages: list, model: str) -> int:
@@ -51,12 +58,7 @@ def estimate_rubrics(config: AppConfig | dict) -> dict:
     output_dir = Path(cfg.output_dir)
     solution_path = output_dir / "solution_parsed.json"
     if not solution_path.exists():
-        return {
-            "error": "Run parse first",
-            "prompt_tokens": 0,
-            "completion_tokens": 0,
-            "cost_usd": 0,
-        }
+        return _estimate_error("Run parse first")
 
     solution_parsed = json.loads(solution_path.read_text(encoding="utf-8"))
     grading_config = cfg.grading
@@ -89,10 +91,12 @@ def estimate_rubrics(config: AppConfig | dict) -> dict:
             completion_tokens += OUTPUT_TOKENS_PER_GROUP
         prompt_tokens += review_prompt
 
+    usage = TokenUsage(
+        prompt_tokens=prompt_tokens, completion_tokens=completion_tokens
+    )
     return {
-        "prompt_tokens": prompt_tokens,
-        "completion_tokens": completion_tokens,
-        "cost_usd": round(_cost(prompt_tokens, completion_tokens, model), 4),
+        **usage.to_json_dict(),
+        "cost_usd": round(_cost(usage, model), 4),
         "model": model,
         "num_groups": sum(1 for g in groups if g),
         "rubric_review": rubric_review,
@@ -106,19 +110,9 @@ def estimate_grade(config: AppConfig | dict, student_name: str | None = None) ->
     parsed_dir = Path(cfg.parsed_dir)
     solution_path = output_dir / "solution_parsed.json"
     if not solution_path.exists():
-        return {
-            "error": "Run parse first",
-            "prompt_tokens": 0,
-            "completion_tokens": 0,
-            "cost_usd": 0,
-        }
+        return _estimate_error("Run parse first")
     if not parsed_dir.exists():
-        return {
-            "error": "No parsed files. Run parse first.",
-            "prompt_tokens": 0,
-            "completion_tokens": 0,
-            "cost_usd": 0,
-        }
+        return _estimate_error("No parsed files. Run parse first.")
 
     solution_parsed = json.loads(solution_path.read_text(encoding="utf-8"))
     grading_config = cfg.grading
@@ -128,12 +122,7 @@ def estimate_grade(config: AppConfig | dict, student_name: str | None = None) ->
     if student_name:
         student_files = [p for p in student_files if p.stem == student_name]
     if not student_files:
-        return {
-            "error": "No students to grade",
-            "prompt_tokens": 0,
-            "completion_tokens": 0,
-            "cost_usd": 0,
-        }
+        return _estimate_error("No students to grade")
 
     model = cfg.model or DEFAULT_MODEL
 
@@ -157,8 +146,7 @@ def estimate_grade(config: AppConfig | dict, student_name: str | None = None) ->
                 solution_parsed,
                 sample,
                 system_prompt,
-                max_prompt_tokens,
-                model,
+                max_prompt_tokens=max_prompt_tokens,
                 rubrics=rubrics,
             )
             tok += _tokens_from_messages(messages, model)
@@ -170,10 +158,12 @@ def estimate_grade(config: AppConfig | dict, student_name: str | None = None) ->
     prompt_tokens = prompt_tokens_one * n_students
     completion_tokens = completion_tokens_one * n_students
 
+    usage = TokenUsage(
+        prompt_tokens=prompt_tokens, completion_tokens=completion_tokens
+    )
     return {
-        "prompt_tokens": prompt_tokens,
-        "completion_tokens": completion_tokens,
-        "cost_usd": round(_cost(prompt_tokens, completion_tokens, model), 4),
+        **usage.to_json_dict(),
+        "cost_usd": round(_cost(usage, model), 4),
         "model": model,
         "num_students": n_students,
         "num_groups": sum(1 for g in groups if g),

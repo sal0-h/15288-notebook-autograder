@@ -2,15 +2,17 @@
 
 import json
 import logging
-import re
 import threading
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass
 from pathlib import Path
 
 from openai import OpenAI
 
-from grading_models import MODEL_PRICING
+from llm import complete_json_chat
+from llm.cost import usage_cost_usd
+from llm.types import TokenUsage
+from llm.parallel import iter_unordered_parallel_results
 from prompt_builder import (
     get_question_data,
     parse_llm_json,
@@ -23,7 +25,6 @@ from utils import (
     get_assignment_output_paths,
     get_openai_client,
     load_config,
-    temperature_for_model,
     DEFAULT_MODEL,
     filter_groups_by_grade_only,
     get_job_logger,
@@ -32,6 +33,30 @@ from utils import (
 logger = logging.getLogger(__name__)
 
 _GENERATION_FAILED = "[generation failed]"
+
+
+@dataclass(frozen=True)
+class _RubricGenJob:
+    idx: int
+    group: list[str]
+    solution_parsed: dict
+    config: AppConfig
+    rubric_prompt: str
+    model: str
+    max_completion_tokens: int
+    client: OpenAI | None
+
+
+@dataclass(frozen=True)
+class _RubricReviewJob:
+    group: list[str]
+    rubrics: dict[str, dict]
+    solution_parsed: dict
+    config: AppConfig
+    review_prompt: str
+    model: str
+    max_completion_tokens: int
+    client: OpenAI | None
 
 
 def _sanitize_llm_text(text: str) -> str:
@@ -94,35 +119,32 @@ def build_rubric_group_prompt(group: list[str], solution_parsed: dict) -> str:
 
 
 def _generate_one_group(
-    args: tuple[int, list[str], dict, dict, str, str, int, OpenAI | None],
-) -> tuple[int, list[str], dict[str, dict], dict[str, int], bool]:
+    job: _RubricGenJob,
+) -> tuple[int, list[str], dict[str, dict], TokenUsage, bool]:
     """Generate rubric for one group.
 
     Returns:
         (group_idx, group, rubrics_for_group, usage, had_error)
     """
-    (
-        idx,
-        group,
-        solution_parsed,
-        config,
-        rubric_prompt,
-        model,
-        max_completion_tokens,
-        client,
-    ) = args
+    idx = job.idx
+    group = job.group
+    solution_parsed = job.solution_parsed
+    config = job.config
+    rubric_prompt = job.rubric_prompt
+    model = job.model
+    max_completion_tokens = job.max_completion_tokens
+    client = job.client
     logger = get_job_logger(config, __name__)
     if client is None:
         client = get_openai_client()
     rubrics_for_group: dict[str, dict] = {}
-    usage = {"prompt_tokens": 0, "completion_tokens": 0}
+    usage = TokenUsage()
     had_error = False
 
     if not group:
         return (idx, group, rubrics_for_group, usage, had_error)
 
     try:
-        temperature = temperature_for_model(model)
         logger.info(
             "Rubric generation - group %d: %s (model=%s)",
             idx + 1,
@@ -134,20 +156,14 @@ def _generate_one_group(
             {"role": "system", "content": rubric_prompt},
             {"role": "user", "content": user_content},
         ]
-        response = client.chat.completions.create(
+        completion = complete_json_chat(
+            client,
             model=model,
             messages=messages,
-            temperature=temperature,
             max_completion_tokens=max_completion_tokens,
-            response_format={"type": "json_object"},
         )
-        if getattr(response, "usage", None):
-            usage = {
-                "prompt_tokens": getattr(response.usage, "prompt_tokens", 0) or 0,
-                "completion_tokens": getattr(response.usage, "completion_tokens", 0)
-                or 0,
-            }
-        content = response.choices[0].message.content or "{}"
+        usage = completion.usage
+        content = completion.text
         raw = parse_llm_json(content)
 
         for k, v in raw.items():
@@ -195,8 +211,8 @@ def _generate_one_group(
             idx + 1,
             len(rubrics_for_group),
             len(group),
-            usage.get("prompt_tokens", 0),
-            usage.get("completion_tokens", 0),
+            usage.prompt_tokens,
+            usage.completion_tokens,
         )
     except Exception as e:
         had_error = True
@@ -212,24 +228,20 @@ def _generate_one_group(
     return (idx, group, rubrics_for_group, usage, had_error)
 
 
-def _review_one_group(
-    args: tuple[list[str], dict, dict, dict, str, str, int, OpenAI | None],
-) -> dict[str, dict]:
+def _review_one_group(job: _RubricReviewJob) -> dict[str, dict]:
     """Review rubrics for one group of questions against question text.
 
     Returns revised rubrics with softened wording where the criterion
     hardcoded reference-solution-specific values not required by the question.
     """
-    (
-        group,
-        rubrics,
-        solution_parsed,
-        config,
-        review_prompt,
-        model,
-        max_tokens,
-        client,
-    ) = args
+    group = job.group
+    rubrics = job.rubrics
+    solution_parsed = job.solution_parsed
+    config = job.config
+    review_prompt = job.review_prompt
+    model = job.model
+    max_tokens = job.max_completion_tokens
+    client = job.client
     logger = get_job_logger(config, __name__)
     if client is None:
         client = get_openai_client()
@@ -251,27 +263,19 @@ def _review_one_group(
         return {}
 
     try:
-        temperature = temperature_for_model(model)
         logger.info("Rubric review - group: %s (model=%s)", group, model)
         messages = [
             {"role": "system", "content": review_prompt},
             {"role": "user", "content": "\n".join(parts)},
         ]
-        response = client.chat.completions.create(
+        completion = complete_json_chat(
+            client,
             model=model,
             messages=messages,
-            temperature=temperature,
             max_completion_tokens=max_tokens,
-            response_format={"type": "json_object"},
         )
-        usage = {"prompt_tokens": 0, "completion_tokens": 0}
-        if getattr(response, "usage", None):
-            usage = {
-                "prompt_tokens": getattr(response.usage, "prompt_tokens", 0) or 0,
-                "completion_tokens": getattr(response.usage, "completion_tokens", 0)
-                or 0,
-            }
-        content = response.choices[0].message.content or "{}"
+        usage = completion.usage
+        content = completion.text
         raw = parse_llm_json(content)
 
         revised: dict[str, dict] = {}
@@ -316,8 +320,8 @@ def _review_one_group(
             "Rubric review - group complete: %d/%d questions revised (tokens: %d in / %d out)",
             len(revised),
             len(group_rubrics),
-            usage.get("prompt_tokens", 0),
-            usage.get("completion_tokens", 0),
+            usage.prompt_tokens,
+            usage.completion_tokens,
         )
         return revised
     except Exception as e:
@@ -356,25 +360,44 @@ def review_rubrics(
 
     revised = dict(rubrics)  # start with copy
     revised_in_pass = 0
-    groups_reviewed = 0
-    for group in groups:
-        if not group:
-            continue
-        groups_reviewed += 1
-        result = _review_one_group(
-            (
-                group,
-                rubrics,
-                solution_parsed,
-                cfg,
-                review_prompt,
-                model,
-                max_tokens,
-                client,
-            )
+    workers = cfg.workers
+    to_process: list[_RubricReviewJob] = [
+        _RubricReviewJob(
+            group=group,
+            rubrics=rubrics,
+            solution_parsed=solution_parsed,
+            config=cfg,
+            review_prompt=review_prompt,
+            model=model,
+            max_completion_tokens=max_tokens,
+            client=client,
         )
-        revised_in_pass += len(result)
-        revised.update(result)
+        for group in groups
+        if group
+    ]
+    groups_reviewed = len(to_process)
+
+    if workers <= 1 or len(to_process) <= 1:
+        for job in to_process:
+            result = _review_one_group(job)
+            revised_in_pass += len(result)
+            revised.update(result)
+    else:
+        logger.info(
+            "Rubric review started in parallel: %d groups, %d workers, model=%s",
+            len(to_process),
+            workers,
+            model,
+        )
+        review_lock = threading.Lock()
+        for result in iter_unordered_parallel_results(
+            to_process,
+            _review_one_group,
+            max_workers=workers,
+        ):
+            with review_lock:
+                revised_in_pass += len(result)
+                revised.update(result)
 
     logger.info(
         "Rubric review complete — %d groups reviewed, %d questions revised in pass",
@@ -444,20 +467,20 @@ def generate_rubrics(
         if partial
         else {}
     )
-    usage_total = {"prompt_tokens": 0, "completion_tokens": 0}
+    usage_total = TokenUsage()
     groups_failed = 0
     rubrics_lock = threading.Lock()
     total = len(groups)
     to_process = [
-        (
-            idx,
-            group,
-            solution_parsed,
-            cfg,
-            rubric_prompt,
-            model,
-            max_completion_tokens,
-            client,
+        _RubricGenJob(
+            idx=idx,
+            group=group,
+            solution_parsed=solution_parsed,
+            config=cfg,
+            rubric_prompt=rubric_prompt,
+            model=model,
+            max_completion_tokens=max_completion_tokens,
+            client=client,
         )
         for idx, group in enumerate(groups)
         if group
@@ -465,8 +488,8 @@ def generate_rubrics(
 
     if workers <= 1 or len(to_process) <= 1:
         # Sequential
-        for item in to_process:
-            idx, group = item[0], item[1]
+        for job in to_process:
+            idx, group = job.idx, job.group
             logger.info(
                 "Rubric generation progress: group %d/%d (%s)",
                 idx + 1,
@@ -475,10 +498,9 @@ def generate_rubrics(
             )
             if progress_callback:
                 progress_callback(idx + 1, total, group, dict(rubrics))
-            _, _, rubrics_for_group, usage, had_error = _generate_one_group(item)
+            _, _, rubrics_for_group, usage, had_error = _generate_one_group(job)
             rubrics.update(rubrics_for_group)
-            usage_total["prompt_tokens"] += usage.get("prompt_tokens", 0)
-            usage_total["completion_tokens"] += usage.get("completion_tokens", 0)
+            usage_total = usage_total.merged(usage)
             if had_error:
                 groups_failed += 1
             if progress_callback:
@@ -495,41 +517,36 @@ def generate_rubrics(
             for idx, group in enumerate(groups):
                 if group:
                     progress_callback(idx + 1, total, group, {})
-        with ThreadPoolExecutor(max_workers=workers) as pool:
-            futures = {
-                pool.submit(_generate_one_group, item): item for item in to_process
-            }
-            for future in as_completed(futures):
-                idx, group, rubrics_for_group, usage, had_error = future.result()
-                with rubrics_lock:
-                    rubrics.update(rubrics_for_group)
-                    rubrics_snapshot = dict(rubrics)
-                usage_total["prompt_tokens"] += usage.get("prompt_tokens", 0)
-                usage_total["completion_tokens"] += usage.get("completion_tokens", 0)
-                if had_error:
-                    groups_failed += 1
-                logger.info(
-                    "Rubric generation progress: group %d/%d complete (%s)",
-                    idx + 1,
-                    total,
-                    group,
-                )
-                if progress_callback:
-                    progress_callback(idx + 1, total, group, rubrics_snapshot)
+        for idx, group, rubrics_for_group, usage, had_error in iter_unordered_parallel_results(
+            to_process,
+            _generate_one_group,
+            max_workers=workers,
+        ):
+            with rubrics_lock:
+                rubrics.update(rubrics_for_group)
+                rubrics_snapshot = dict(rubrics)
+            usage_total = usage_total.merged(usage)
+            if had_error:
+                groups_failed += 1
+            logger.info(
+                "Rubric generation progress: group %d/%d complete (%s)",
+                idx + 1,
+                total,
+                group,
+            )
+            if progress_callback:
+                progress_callback(idx + 1, total, group, rubrics_snapshot)
 
-    if usage_total["prompt_tokens"] or usage_total["completion_tokens"]:
-        in_rate, out_rate = MODEL_PRICING.get(model, MODEL_PRICING[DEFAULT_MODEL])
-        cost = (usage_total["prompt_tokens"] / 1e6 * in_rate) + (
-            usage_total["completion_tokens"] / 1e6 * out_rate
-        )
+    if usage_total.has_tokens():
+        cost = usage_cost_usd(usage_total, model)
         logger.info(
             "Rubric generation complete: %d groups, %d failed, %d questions, %d tokens (%.0f in / %.0f out), ~$%.4f",
             len(to_process),
             groups_failed,
             len(rubrics),
-            usage_total["prompt_tokens"] + usage_total["completion_tokens"],
-            usage_total["prompt_tokens"],
-            usage_total["completion_tokens"],
+            usage_total.total_tokens,
+            usage_total.prompt_tokens,
+            usage_total.completion_tokens,
             cost,
         )
     else:

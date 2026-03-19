@@ -25,10 +25,41 @@ From `python test_openai_connection.py --list-models`:
 
 ## Temperature (deterministic grading)
 
-- **GPT-5 family** (gpt-5, gpt-5-mini, gpt-5-nano): Only support temperature=1. Regrades can vary significantly.
-- **GPT-4.1, GPT-4.1-mini, GPT-4o-mini**: Support temperature=0 for deterministic, reproducible grading.
+Implementation: `temperature_for_model()` in `utils.py` returns **1.0** for any model
+name starting with `gpt-5` (including `gpt-5.2`, `gpt-5-mini`, `gpt-5-nano`, dated
+snapshots), and **0.0** otherwise (e.g. `gpt-4.1`, `gpt-4.1-mini`, `gpt-4o-mini`).
 
-**HW1 nondeterminism experiment (Mar 2026):** 5 runs × 23 students showed gpt-5-mini had 13% student exact match (scores varied up to 6.5 pts); gpt-4.1 had 65% exact match (max 1 pt variance). Primary cause: temperature.
+- **GPT-5 family**: API only allows temperature=1 for these models; regrades can vary a lot.
+- **GPT-4.1 / GPT-4.1-mini / GPT-4o-mini**: temperature=0 is used for reproducible grading.
+
+### HW1 multi-model variance study (Mar 2026)
+
+Course HW1, **23 students**, **5 full grading runs per model**, students graded **in
+parallel** each run (OpenAI Tier 5). “Exact match” = same **total score** across all five runs for that student.
+“Conf. flips” = fraction of graded entries where reported **confidence** changed
+across runs (e.g. high → medium), per the experiment notes.
+
+**Cost and wall time (sum across the 5 runs)**
+
+| Model        | Cost (USD) | Total runtime |
+|--------------|------------|---------------|
+| gpt-5-mini   | $3.05      | 11m 5s        |
+| gpt-5        | $18.12     | 26m 2s        |
+| gpt-4.1-mini | $2.57      | 6m 45s        |
+| gpt-4.1      | $12.07     | 6m 44s        |
+
+**Stability across 5 runs**
+
+| Model        | Exact match (students) | Max variance (pts) | Conf. flips |
+|--------------|------------------------|--------------------|-------------|
+| gpt-5-mini   | 13.0%                  | 6.5                | 9.7%        |
+| gpt-5        | 13.0%                  | 5.0                | 7.9%        |
+| gpt-4.1-mini | 47.8%                  | 3.0                | 1.0%        |
+| gpt-4.1      | 65.2%                  | 1.0                | 0.0%        |
+
+**Takeaway:** GPT-4.1-class models were **faster and far more score-stable** in this
+setup; the dominant difference versus GPT-5 here is **temperature=0 vs 1**, not vision
+or pricing alone.
 
 ---
 
