@@ -338,8 +338,7 @@ def grade_student(
                 sol_q = get_question_data(solution_parsed, qid)
                 qid_to_max[qid] = (sol_q or {}).get("points", 0)
             grades = {
-                qid: QuestionGrade(score=0.0, feedback=NO_SUBMISSION)
-                for qid in group
+                qid: QuestionGrade(score=0.0, feedback=NO_SUBMISSION) for qid in group
             }
             grading_response = GradingResponse(grades=grades)
             usage = TokenUsage()
@@ -390,42 +389,6 @@ def grade_student(
 # ---------------------------------------------------------------------------
 # Post-processing utilities
 # ---------------------------------------------------------------------------
-
-
-def cleanup_graded_results(path: Path) -> int:
-    """Normalize [no submission] feedback in graded_results.json. Returns count of cleaned entries."""
-    data = json.loads(path.read_text())
-    count = 0
-    for result in data:
-        for qid, q in result.get("questions", {}).items():
-            fb = q.get("feedback", "")
-            normalized = _normalize_no_submission_feedback(fb)
-            if normalized != fb:
-                q["feedback"] = normalized
-                count += 1
-    path.write_text(json.dumps(data, indent=2))
-    return count
-
-
-def fix_graded_results_totals(path: Path, config: dict | None = None) -> int:
-    """Recompute total_score and total_max from graded questions only (exclude skipped). Returns count fixed."""
-    data = json.loads(path.read_text())
-    count = 0
-    for result in data:
-        qs = result.get("questions", {})
-        if not qs:
-            continue
-        total_score, total_max, _ = compute_totals_from_questions(qs)
-        if (
-            abs(result.get("total_score", 0) - total_score) > 0.01
-            or abs(result.get("total_max", 0) - total_max) > 0.01
-        ):
-            result["total_score"] = round(total_score, 2)
-            result["total_max"] = round(total_max, 2)
-            count += 1
-    if count:
-        path.write_text(json.dumps(data, indent=2))
-    return count
 
 
 def main():

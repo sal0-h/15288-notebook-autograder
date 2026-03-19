@@ -258,9 +258,7 @@ def get_openai_client(
     load_dotenv()
     api_key = os.environ.get("OPENAI_API_KEY") or os.environ.get("key")
     if not api_key:
-        raise ValueError(
-            "API key not found. Set OPENAI_API_KEY or 'key' in .env."
-        )
+        raise ValueError("API key not found. Set OPENAI_API_KEY or 'key' in .env.")
     limits = httpx.Limits(
         max_connections=max(1, int(max_connections)),
         max_keepalive_connections=max(1, int(max_keepalive_connections)),

@@ -8,7 +8,10 @@ from typing import Generator
 from openai import OpenAI
 
 from llm.types import TokenUsage
-from llm.usage_helpers import detach_usage_from_graded_result, graded_usage_summary_event
+from llm.usage_helpers import (
+    detach_usage_from_graded_result,
+    graded_usage_summary_event,
+)
 from llm.parallel import iter_unordered_parallel_results
 from prompt_builder import validate_question_groups
 from results_store import load_results_with_backup, save_results, update_student
@@ -272,9 +275,7 @@ def grade_all_students(
                 result, u_part = detach_usage_from_graded_result(result)
                 if u_part is not None and u_part.has_tokens():
                     usage_total = usage_total.merged(u_part)
-                assert (
-                    result is not None
-                )  # status == "done" always has a dict result
+                assert result is not None  # status == "done" always has a dict result
                 if results_lock:
                     with results_lock:
                         _store_result(student_name, result)

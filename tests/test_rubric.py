@@ -36,7 +36,8 @@ class TestGenerateRubrics:
         custom_prompt = "CUSTOM RUBRIC SYSTEM PROMPT"
 
         monkeypatch.setattr(
-            "rubric.prompts.load_prompt", lambda name, assignment_name=None: custom_prompt
+            "rubric.prompts.load_prompt",
+            lambda name, assignment_name=None: custom_prompt,
         )
 
         config = {

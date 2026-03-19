@@ -128,7 +128,13 @@ def generate_rubrics(
             for idx, group in enumerate(groups):
                 if group:
                     progress_callback(idx + 1, total, group, {})
-        for idx, group, rubrics_for_group, usage, had_error in iter_unordered_parallel_results(
+        for (
+            idx,
+            group,
+            rubrics_for_group,
+            usage,
+            had_error,
+        ) in iter_unordered_parallel_results(
             to_process,
             generate_one_group,
             max_workers=workers,
