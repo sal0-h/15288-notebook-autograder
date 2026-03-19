@@ -16,11 +16,11 @@ def test_detach_usage_immutable():
         "total_max": 1.0,
         "questions": {},
         "summary_feedback": ".",
-        "_usage": {"prompt_tokens": 3, "completion_tokens": 2},
+        GRADED_RESULT_USAGE_KEY: {"prompt_tokens": 3, "completion_tokens": 2},
     }
     out, u = detach_usage_from_graded_result(raw)
-    assert "_usage" not in out
-    assert "_usage" in raw
+    assert GRADED_RESULT_USAGE_KEY not in out
+    assert GRADED_RESULT_USAGE_KEY in raw
     assert u is not None
     assert u.prompt_tokens == 3
     assert u.completion_tokens == 2

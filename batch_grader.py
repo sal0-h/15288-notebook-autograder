@@ -11,6 +11,7 @@ from llm.types import TokenUsage
 from llm.usage_helpers import (
     detach_usage_from_graded_result,
     graded_usage_summary_event,
+    merge_graded_usage,
 )
 from llm.parallel import iter_unordered_parallel_results
 from prompt_builder import validate_question_groups
@@ -179,9 +180,8 @@ def grade_all_students(
                     ungrouped=ungrouped,
                     merge_into=merge_into,
                 )
-                result, u_part = detach_usage_from_graded_result(result)
-                if u_part is not None and u_part.has_tokens():
-                    usage_total = usage_total.merged(u_part)
+                usage_total = merge_graded_usage(usage_total, result)
+                result, _ = detach_usage_from_graded_result(result)
                 if results_lock:
                     with results_lock:
                         _store_result(student_name, result)
@@ -272,9 +272,8 @@ def grade_all_students(
                         "Worker returned done without result for %s", student_name
                     )
                     continue
-                result, u_part = detach_usage_from_graded_result(result)
-                if u_part is not None and u_part.has_tokens():
-                    usage_total = usage_total.merged(u_part)
+                usage_total = merge_graded_usage(usage_total, result)
+                result, _ = detach_usage_from_graded_result(result)
                 assert result is not None  # status == "done" always has a dict result
                 if results_lock:
                     with results_lock:
