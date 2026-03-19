@@ -12,6 +12,8 @@ This repository is built for course staff who need a practical workflow to:
 
 The codebase currently targets Python notebook assignments and is organized around assignment-scoped outputs so each run is reproducible, resumable, and easy to inspect.
 
+**Contributing / changing code:** see [docs/DEV_GUIDE.md](docs/DEV_GUIDE.md) for config types, usage helpers, and where to edit.
+
 ## Why this exists
 
 Manual notebook grading is slow, inconsistent, and difficult to scale once classes get large. This project automates the repetitive parts of the grading loop while still keeping humans in control of:

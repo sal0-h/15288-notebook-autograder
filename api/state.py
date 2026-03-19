@@ -8,6 +8,7 @@ from pathlib import Path
 
 from fastapi import HTTPException
 
+from config_models import AppConfig, ensure_app_config
 from utils import load_config, setup_assignment_logging
 
 logger = logging.getLogger(__name__)
@@ -32,13 +33,30 @@ def set_active_config_path(path: Path | None) -> None:
 
 
 def get_active_config() -> dict:
-    """Return the current assignment config. Raises 400 if no assignment is loaded."""
+    """Return the current assignment config as a dict (YAML/HTTP / merge-friendly).
+
+    Pipeline code should prefer ``get_active_app_config()`` to avoid dict round-trips.
+    """
     if _active_config_path is None:
         raise HTTPException(
             status_code=400,
             detail="No assignment loaded. Use Setup to load or create an assignment.",
         )
     return load_config(_active_config_path)
+
+
+def get_active_app_config() -> AppConfig:
+    """Return the active assignment as ``AppConfig`` (same validation as ``get_active_config``).
+
+    Uses ``ensure_app_config(get_active_config())`` so tests that patch ``get_active_config``
+    still drive the pipeline.
+    """
+    if _active_config_path is None:
+        raise HTTPException(
+            status_code=400,
+            detail="No assignment loaded. Use Setup to load or create an assignment.",
+        )
+    return ensure_app_config(get_active_config())
 
 
 def setup_file_logging() -> None:

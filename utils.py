@@ -45,6 +45,7 @@ __all__ = [
     "normalize_qid",
     "sanitize_assignment_name",
     "load_config",
+    "load_app_config",
     "save_config",
     "AssignmentOutputPaths",
     "get_assignment_output_paths",
@@ -138,18 +139,13 @@ def _resolve_config_paths(cfg: dict, config_root: Path) -> dict:
     return resolved
 
 
-def load_config(config_path: Path, *, require_exists: bool = True) -> dict:
-    """Load assignment config from an explicit path.
-
-    config_path must point to the assignment config file, typically at
-    output/{assignment_name}/config.yaml.  The project root is inferred as
-    config_path.parent.parent.parent; relative paths in the config (e.g.
-    solution_notebook) are resolved against it.
-    """
+def _load_assignment_app_config(
+    config_path: Path, *, require_exists: bool = True
+) -> AppConfig:
+    """Single load path: YAML → merged defaults → resolved paths → ``AppConfig``."""
     path = Path(config_path).resolve()
     cfg = _read_yaml_dict(path, require_exists=require_exists)
     cfg = merge_partial_config_dict(cfg)
-    # Project root: output/{name}/config.yaml → 3 levels up
     project_root = path.parent.parent.parent
     cfg = _resolve_config_paths(cfg, project_root)
     assignment_name = sanitize_assignment_name(cfg.get("assignment_name", "default"))
@@ -158,12 +154,22 @@ def load_config(config_path: Path, *, require_exists: bool = True) -> dict:
     cfg["submissions_dir"] = str(assignment_root / "submissions")
     cfg["parsed_dir"] = str(assignment_root / "parsed")
     cfg["assignment_name"] = assignment_name
-    return ensure_app_config(cfg).model_dump()
+    return ensure_app_config(cfg)
 
 
-def load_app_config(config_path: Path) -> "AppConfig":
-    """Load and validate configuration, returning an AppConfig object."""
-    return ensure_app_config(load_config(config_path))
+def load_config(config_path: Path, *, require_exists: bool = True) -> dict:
+    """Load assignment config for YAML/JSON APIs (plain dict).
+
+    For pipeline code prefer ``load_app_config`` and pass ``AppConfig`` through internals.
+    """
+    return _load_assignment_app_config(
+        config_path, require_exists=require_exists
+    ).model_dump(mode="python")
+
+
+def load_app_config(config_path: Path, *, require_exists: bool = True) -> AppConfig:
+    """Load and validate configuration as ``AppConfig`` (no dict round-trip)."""
+    return _load_assignment_app_config(config_path, require_exists=require_exists)
 
 
 def save_config(config: dict | AppConfig, config_path: Path) -> None:

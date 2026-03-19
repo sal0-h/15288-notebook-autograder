@@ -136,7 +136,13 @@ in `config_models` (same defaults as `AppConfig`).
 
 The merged dict is validated via `ensure_app_config(cfg)` (same coercion rules as
 everywhere else), then returned as a plain dict with `model_dump()` for
-backward-compatible consumption.
+YAML/HTTP and other dict-shaped consumers.
+
+**`load_app_config(config_path)`** runs the same load path but returns **`AppConfig`**
+directly (no dict round-trip). Prefer it inside the grading/pipeline stack. The web
+app exposes **`get_active_app_config()`** in `api.state` for routes that call
+`pipeline_runner` / `batch_grader` / export; **`get_active_config()`** remains a dict
+for merge-heavy endpoints (e.g. `PUT /config`). See [DEV_GUIDE.md](./DEV_GUIDE.md).
 
 ### `AppConfig` schema (`config_models.py`)
 
@@ -682,7 +688,8 @@ config = {
 pipeline. Raw dicts only appear at IO edges (YAML read/write, API request/response).
 
 ```
-load_config() → dict          # IO boundary: YAML → dict
+load_app_config(path) → AppConfig   # preferred for CLIs / pipeline entry
+load_config(path) → dict          # IO boundary: YAML → dict (API, tests, merges)
 ensure_app_config(dict) → AppConfig   # coerce once
 grade_student(cfg: AppConfig | dict)  # accepts both for flexibility
 ```

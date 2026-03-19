@@ -18,15 +18,15 @@ router = APIRouter()
 @router.post("/export")
 async def api_export():
     """Run export step. Returns summary and Excel download path."""
-    config = state.get_active_config()
-    return await asyncio.to_thread(run_export, config)
+    cfg = state.get_active_app_config()
+    return await asyncio.to_thread(run_export, cfg)
 
 
 @router.get("/export/excel")
 def api_download_excel():
     """Download Final_Grades.xlsx."""
-    config = state.get_active_config()
-    output_dir = Path(config.get("output_dir", "output"))
+    cfg = state.get_active_app_config()
+    output_dir = Path(cfg.output_dir)
     path = output_dir / "Final_Grades.xlsx"
     if not path.exists():
         raise HTTPException(
@@ -38,9 +38,9 @@ def api_download_excel():
 @router.get("/export/autograder-zip")
 def api_download_autograder_zip():
     """Create Gradescope autograder zip and return it for download."""
-    config = state.get_active_config()
-    run_export(config)
-    zip_path = run_export_autograder_zip(config)
+    cfg = state.get_active_app_config()
+    run_export(cfg)
+    zip_path = run_export_autograder_zip(cfg)
     return FileResponse(zip_path, filename="gradescope_autograder.zip")
 
 

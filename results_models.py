@@ -6,6 +6,9 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+# On-disk / API JSON key for token usage on graded rows (keep in sync with llm.usage_helpers).
+GRADED_RESULT_USAGE_KEY = "_usage"
+
 
 class GradedResult(BaseModel):
     """Shape of one entry in ``graded_results.json`` (matches ``grade._build_result_dict``)."""
@@ -17,7 +20,7 @@ class GradedResult(BaseModel):
     total_score: float = 0.0
     total_max: float = 0.0
     summary_feedback: str = ""
-    usage: dict[str, int] | None = Field(default=None, alias="_usage")
+    usage: dict[str, int] | None = Field(default=None, alias=GRADED_RESULT_USAGE_KEY)
 
 
 class ParsedNotebook(BaseModel):
@@ -31,5 +34,5 @@ class ParsedNotebook(BaseModel):
 
 
 def graded_result_to_disk_dict(r: GradedResult) -> dict[str, Any]:
-    """Serialize for ``graded_results.json`` (``_usage`` key when present)."""
+    """Serialize for ``graded_results.json`` (``GRADED_RESULT_USAGE_KEY`` when present)."""
     return r.model_dump(mode="python", by_alias=True, exclude_none=True)

@@ -5,7 +5,7 @@ import zipfile
 from pathlib import Path
 
 from parse_notebook import get_all_question_ids, parse_notebook
-from utils import AppConfig, load_config
+from utils import load_app_config
 
 # Unix executable bits used when creating Gradescope autograder zip entries
 _UNIX_EXEC_ATTR = 0o755 << 16
@@ -204,8 +204,9 @@ def export_linter_zip(config_path: Path | None = None) -> Path:
 
     Returns path to the created zip file.
     """
-    config = load_config(config_path)
-    cfg = AppConfig.model_validate(config)
+    if config_path is None:
+        raise ValueError("config_path is required")
+    cfg = load_app_config(config_path)
     output_dir = Path(cfg.output_dir)
     solution_path = Path(cfg.solution_notebook)
 
@@ -214,7 +215,7 @@ def export_linter_zip(config_path: Path | None = None) -> Path:
             f"Solution notebook not found: {solution_path}. Set solution_notebook in config."
         )
 
-    solution_parsed = parse_notebook(solution_path, config)
+    solution_parsed = parse_notebook(solution_path, cfg)
     required_ids = get_all_question_ids(solution_parsed)
     if not required_ids:
         raise ValueError("Solution has no questions; cannot build linter.")

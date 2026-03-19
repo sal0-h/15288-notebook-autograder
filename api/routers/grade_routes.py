@@ -16,6 +16,7 @@ from api import sse as sse_mod
 from api import state
 from grade import grade_student
 from llm.types import TokenUsage
+from llm.usage_helpers import detach_usage_from_graded_result
 from prompt_builder import validate_question_groups
 from results_store import find_student, load_results, save_results, update_student
 from utils import filter_groups_by_grade_only, get_assignment_output_paths
@@ -42,11 +43,11 @@ async def api_grade():
             status_code=409,
             detail="Grading already in progress. Wait for it to finish or refresh.",
         )
-    config = state.get_active_config()
+    cfg = state.get_active_app_config()
 
     def worker(emit: Callable[[dict], None]) -> None:
         try:
-            for evt in grade_all_students(config, results_lock=state.results_lock):
+            for evt in grade_all_students(cfg, results_lock=state.results_lock):
                 emit(evt)
         except Exception as e:
             emit({"student": "", "status": "error", "result": None, "error": str(e)})
@@ -73,14 +74,14 @@ async def api_grade_one(student_name: str):
     student_name = unquote(student_name)
     if "/" in student_name or "\\" in student_name or ".." in student_name:
         raise HTTPException(status_code=400, detail="Invalid student name")
-    config = state.get_active_config()
+    cfg = state.get_active_app_config()
     if not state.grading_lock.acquire(blocking=False):
         raise HTTPException(
             status_code=409,
             detail="Bulk grading in progress. Wait for it to finish before re-grading one student.",
         )
     try:
-        paths = get_assignment_output_paths(config)
+        paths = get_assignment_output_paths(cfg)
         parsed_dir = paths.parsed_dir
         solution_path = paths.solution_parsed
         student_path = parsed_dir / f"{student_name}.json"
@@ -95,14 +96,14 @@ async def api_grade_one(student_name: str):
         student_parsed = json.loads(student_path.read_text(encoding="utf-8"))
         student_parsed["student_name"] = student_name
 
-        grading_config = config.get("grading", {})
-        groups = grading_config.get("question_groups", [])
-        grade_only = grading_config.get("grade_only")
+        grading_config = cfg.grading
+        groups = list(grading_config.question_groups)
+        grade_only = grading_config.grade_only
         if grade_only:
             groups = filter_groups_by_grade_only(groups, grade_only)
         ungrouped = validate_question_groups(groups, solution_parsed)
 
-        grade_only_merge = bool(grading_config.get("grade_only_merge") and grade_only)
+        grade_only_merge = bool(grading_config.grade_only_merge and grade_only)
         merge_into = None
         out_path = paths.graded_results
         if grade_only_merge and out_path.exists():
@@ -120,23 +121,23 @@ async def api_grade_one(student_name: str):
             grade_student,
             student_parsed,
             solution_parsed,
-            config,
+            cfg,
             None,
             ungrouped,
             merge_into,
         )
-        usage = result.pop("_usage", None)
+        result_for_disk, usage = detach_usage_from_graded_result(result)
 
         with state.results_lock:
             try:
                 results = load_results(out_path)
-                update_student(results, student_name, result)
+                update_student(results, student_name, result_for_disk)
                 save_results(out_path, results)
             except ValueError as e:
                 raise HTTPException(status_code=500, detail=str(e))
-        response = {"ok": True, "result": result}
-        if usage:
-            response["usage"] = TokenUsage.from_json_dict(usage).to_json_dict()
+        response = {"ok": True, "result": result_for_disk}
+        if usage is not None and usage.has_tokens():
+            response["usage"] = usage.to_json_dict()
         return response
     finally:
         state.grading_lock.release()
