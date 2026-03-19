@@ -20,6 +20,7 @@ from prompt_builder import (
 from utils import (
     AppConfig,
     ensure_app_config,
+    get_assignment_output_paths,
     get_openai_client,
     load_config,
     temperature_for_model,
@@ -402,8 +403,9 @@ def generate_rubrics(
     """
     logger = get_job_logger(config, __name__)
     cfg = ensure_app_config(config)
-    output_dir = Path(cfg.output_dir)
-    solution_path = output_dir / "solution_parsed.json"
+    paths = get_assignment_output_paths(cfg)
+    output_dir = paths.output_dir
+    solution_path = paths.solution_parsed
 
     if not solution_path.exists():
         raise FileNotFoundError(

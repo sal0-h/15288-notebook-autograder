@@ -8,7 +8,7 @@ import pandas as pd
 
 from linter_export import build_linter_summary, fmt_qid_list
 from parse_notebook import get_all_question_ids, sort_key_qid
-from utils import AppConfig, ensure_app_config, load_config
+from utils import AppConfig, ensure_app_config, get_assignment_output_paths, load_config
 
 # Unix executable bits used when creating Gradescope autograder zip entries
 _UNIX_EXEC_ATTR = 0o755 << 16
@@ -133,10 +133,11 @@ def export_all(config: AppConfig | dict) -> dict[str, str | int]:
     Returns summary dict with paths and counts.
     """
     cfg = ensure_app_config(config)
-    output_dir = Path(cfg.output_dir)
-    parsed_dir = Path(cfg.parsed_dir)
-    graded_path = output_dir / "graded_results.json"
-    gradescope_dir = output_dir / "gradescope"
+    paths = get_assignment_output_paths(cfg)
+    output_dir = paths.output_dir
+    parsed_dir = paths.parsed_dir
+    graded_path = paths.graded_results
+    gradescope_dir = paths.gradescope_dir
 
     if not graded_path.exists():
         raise FileNotFoundError(f"Graded results not found: {graded_path}")
@@ -164,7 +165,7 @@ def export_all(config: AppConfig | dict) -> dict[str, str | int]:
         gs_q_cols = q_cols
 
     # Linter test uses full solution QIDs (not grade_only) when available
-    solution_path = output_dir / "solution_parsed.json"
+    solution_path = paths.solution_parsed
     if solution_path.exists():
         solution_parsed = json.loads(solution_path.read_text(encoding="utf-8"))
         required_qids_for_linter = get_all_question_ids(solution_parsed)
@@ -252,8 +253,9 @@ def export_autograder_zip(config: AppConfig | dict) -> Path:
     Returns path to the created zip file.
     """
     cfg = ensure_app_config(config)
-    output_dir = Path(cfg.output_dir)
-    gradescope_dir = output_dir / "gradescope"
+    paths = get_assignment_output_paths(cfg)
+    output_dir = paths.output_dir
+    gradescope_dir = paths.gradescope_dir
     zip_path = output_dir / "gradescope_autograder.zip"
 
     if not gradescope_dir.exists():

@@ -264,12 +264,13 @@ def parse_all_students(config: dict) -> tuple[dict | None, list[dict]]:
         solution_parsed is None if solution notebook not found.
         verification_report is a list of per-student dicts with status, questions_found, etc.
     """
-    from utils import get_job_logger
+    from utils import get_assignment_output_paths, get_job_logger
 
     logger = get_job_logger(config, __name__)
 
+    paths = get_assignment_output_paths(config)
     submissions_dir = Path(config.get("submissions_dir", "output/submissions"))
-    parsed_dir = Path(config.get("parsed_dir", "output/parsed"))
+    parsed_dir = paths.parsed_dir
     solution_notebook = Path(config.get("solution_notebook", ""))
 
     parsed_dir.mkdir(parents=True, exist_ok=True)
@@ -283,7 +284,7 @@ def parse_all_students(config: dict) -> tuple[dict | None, list[dict]]:
         solution_question_ids = get_all_question_ids(solution_parsed)
         solution_total_pts = get_total_points(solution_parsed)
 
-        out_path = Path(config.get("output_dir", "output")) / "solution_parsed.json"
+        out_path = paths.solution_parsed
         out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path.write_text(json.dumps(solution_parsed, indent=2), encoding="utf-8")
 

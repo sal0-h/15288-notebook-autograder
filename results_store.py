@@ -12,8 +12,11 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 
-def load_results_with_backup(path: Path) -> list[dict]:
+def load_results_with_backup(
+    path: Path, logger_obj: logging.Logger | None = None
+) -> list[dict]:
     """Load graded_results.json. On corruption, backup to *.broken and return []."""
+    log = logger_obj or logger
     if not path.exists():
         return []
     try:
@@ -22,14 +25,14 @@ def load_results_with_backup(path: Path) -> list[dict]:
         backup_path = path.parent / f"{path.name}.broken"
         try:
             shutil.copy2(path, backup_path)
-            logger.error(
+            log.error(
                 "graded_results.json is corrupted (invalid JSON). "
                 "Backed up to %s. Starting fresh.",
                 backup_path,
                 exc_info=True,
             )
         except OSError:
-            logger.exception("Failed to backup corrupted graded_results.json")
+            log.exception("Failed to backup corrupted graded_results.json")
         return []
     return raw if isinstance(raw, list) else []
 
@@ -55,20 +58,34 @@ def deduplicate_results(results: list[dict]) -> list[dict]:
     return list(seen.values())
 
 
-def save_results(path: Path, results: list[dict]) -> None:
+def save_results(
+    path: Path,
+    results: list[dict],
+    logger_obj: logging.Logger | None = None,
+) -> None:
     """Write results to graded_results.json. Deduplicates by student_name (keeps last)."""
+    log = logger_obj or logger
     path.parent.mkdir(parents=True, exist_ok=True)
     deduped = deduplicate_results(results)
     path.write_text(json.dumps(deduped, indent=2), encoding="utf-8")
+    log.info("Saved %d graded result entries to %s", len(deduped), path)
 
 
-def update_student(results: list[dict], student_name: str, result: dict) -> None:
+def update_student(
+    results: list[dict],
+    student_name: str,
+    result: dict,
+    logger_obj: logging.Logger | None = None,
+) -> None:
     """Update or append a student result in-place. Mutates results."""
+    log = logger_obj or logger
     for i, r in enumerate(results):
         if isinstance(r, dict) and r.get("student_name") == student_name:
             results[i] = result
+            log.info("Updated existing graded result for %s", student_name)
             return
     results.append(result)
+    log.info("Added new graded result for %s", student_name)
 
 
 def find_student(results: list[dict], student_name: str) -> dict | None:

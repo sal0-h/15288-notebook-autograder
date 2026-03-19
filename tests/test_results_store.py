@@ -1,6 +1,7 @@
 """Tests for results_store module."""
 
 import json
+import logging
 from pathlib import Path
 
 import pytest
@@ -96,3 +97,30 @@ def test_roundtrip(tmp_path):
     )
     save_results(path, loaded)
     assert load_results(path)[0]["questions"]["1.1"]["score"] == 4
+
+
+def test_save_results_logs_with_provided_logger(tmp_path, caplog):
+    path = tmp_path / "graded_results.json"
+    custom_logger = logging.getLogger("tests.results_store")
+
+    with caplog.at_level(logging.INFO, logger="tests.results_store"):
+        save_results(
+            path, [{"student_name": "Alice", "score": 5}], logger_obj=custom_logger
+        )
+
+    assert "Saved 1 graded result entries" in caplog.text
+
+
+def test_update_student_logs_with_provided_logger(caplog):
+    custom_logger = logging.getLogger("tests.results_store")
+    results = []
+
+    with caplog.at_level(logging.INFO, logger="tests.results_store"):
+        update_student(
+            results,
+            "Alice",
+            {"student_name": "Alice", "score": 5},
+            logger_obj=custom_logger,
+        )
+
+    assert "Added new graded result for Alice" in caplog.text

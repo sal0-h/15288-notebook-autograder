@@ -21,6 +21,7 @@ from utils import (
     is_grade_only_merge_enabled,
     needs_grade_only_merge,
     get_job_logger,
+    get_assignment_output_paths,
 )
 
 logger = logging.getLogger(__name__)
@@ -50,9 +51,10 @@ def grade_all_students(
             read_timeout_s=120.0,
         )
 
-    output_dir = Path(cfg.output_dir)
-    parsed_dir = Path(cfg.parsed_dir)
-    solution_path = output_dir / "solution_parsed.json"
+    paths = get_assignment_output_paths(cfg)
+    output_dir = paths.output_dir
+    parsed_dir = paths.parsed_dir
+    solution_path = paths.solution_parsed
 
     if not solution_path.exists():
         raise FileNotFoundError(
@@ -62,21 +64,21 @@ def grade_all_students(
     solution_parsed = json.loads(solution_path.read_text(encoding="utf-8"))
     student_files = sorted(parsed_dir.glob("*.json"))
     output_dir.mkdir(parents=True, exist_ok=True)
-    out_path = output_dir / "graded_results.json"
+    out_path = paths.graded_results
 
     def _store_result(student_name: str, result: dict) -> None:
         """Update results list/index and persist — call with lock held if parallel."""
-        update_student(results, student_name, result)
+        update_student(results, student_name, result, logger_obj=logger)
         if student_name not in results_by_name:
             results_by_name[student_name] = len(results) - 1
-        save_results(out_path, results)
+        save_results(out_path, results, logger_obj=logger)
 
     # Load any previously saved results for resume support
     if results_lock:
         with results_lock:
-            raw = load_results_with_backup(out_path)
+            raw = load_results_with_backup(out_path, logger_obj=logger)
     else:
-        raw = load_results_with_backup(out_path)
+        raw = load_results_with_backup(out_path, logger_obj=logger)
 
     grading_config = cfg.grading
 
@@ -274,6 +276,11 @@ def grade_all_students(
             for future in as_completed(futures):
                 i, student_name, status, result, error = future.result()
                 if status == "done":
+                    if result is None:
+                        logger.error(
+                            "Worker returned done without result for %s", student_name
+                        )
+                        continue
                     u = result.pop("_usage", None)
                     if u:
                         usage_total["prompt_tokens"] += u.get("prompt_tokens", 0)
