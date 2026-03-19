@@ -158,7 +158,7 @@ python main.py
 python main.py --zip gradescope_export.zip
 python main.py --steps parse generate-rubrics grade export
 python main.py --config-only
-python main.py --model gpt-5-mini
+python main.py --model gpt-4.1-mini
 python main.py --solution path/to/solution.ipynb
 python main.py --submissions-dir path/to/submissions
 python main.py --config output/My_Assignment/config.yaml
@@ -230,7 +230,7 @@ The UI is organized around the same staff workflow:
 Important fields in config.yaml:
 
 - assignment_name: the assignment identifier used to scope output.
-- model: grading model.
+- model: grading model. For reproducible scores across regrades, use **gpt-4.1** or **gpt-4.1-mini** (temperature=0). gpt-5 models use temperature=1 and can vary significantly between runs. See `docs/OPENAI_VISION_MODELS.md` for model comparison and stability data.
 - rubric_model: optional rubric-generation model; falls back to model when empty.
 - solution_notebook: path to the reference notebook.
 - workers: parallel grading worker count.

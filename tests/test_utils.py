@@ -95,7 +95,7 @@ class TestSaveConfig:
         config_path.write_text(
             """
 assignment_name: Test
-model: gpt-5-mini
+model: gpt-4.1-mini
 output_dir: output
 solution_notebook: sol.ipynb
 parsing:
@@ -157,7 +157,7 @@ output_dir: output
 
         cfg = {
             "assignment_name": "Lab #1",
-            "model": "gpt-5-mini",
+            "model": "gpt-4.1-mini",
             "rubric_model": "",
             "rubric_review": True,
             "include_reference_in_grading": False,
@@ -186,7 +186,7 @@ output_dir: output
 
         cfg = {
             "assignment_name": "LabTest_3_S26",
-            "model": "gpt-5-mini",
+            "model": "gpt-4.1-mini",
             "rubric_model": "",
             "rubric_review": True,
             "include_reference_in_grading": False,
@@ -206,7 +206,7 @@ output_dir: output
 
         save_config(cfg, assignment_config_path)
         assignment_cfg_text = assignment_config_path.read_text(encoding="utf-8")
-        assert "model: gpt-5-mini" in assignment_cfg_text
+        assert "model: gpt-4.1-mini" in assignment_cfg_text
         assert "solution_notebook:" in assignment_cfg_text
         assert "parsing:" in assignment_cfg_text
         assert "grading:" in assignment_cfg_text
@@ -219,7 +219,7 @@ output_dir: output
 
         cfg = {
             "assignment_name": "LabTest_3_S26",
-            "model": "gpt-5-mini",
+            "model": "gpt-4.1-mini",
             "rubric_model": "",
             "rubric_review": True,
             "include_reference_in_grading": True,

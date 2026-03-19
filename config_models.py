@@ -10,7 +10,7 @@ import re
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 # Default model for grading when not specified in config
-DEFAULT_MODEL = "gpt-5-mini"
+DEFAULT_MODEL = "gpt-4.1-mini"
 
 _QID_RE = re.compile(r"^\d+\.\d+$")
 
