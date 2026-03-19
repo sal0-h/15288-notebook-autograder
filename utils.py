@@ -6,6 +6,7 @@ import logging
 import os
 import re
 import threading
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -42,6 +43,8 @@ __all__ = [
     "sanitize_assignment_name",
     "load_config",
     "save_config",
+    "AssignmentOutputPaths",
+    "get_assignment_output_paths",
     "get_openai_client",
     "temperature_for_model",
     "setup_assignment_logging",
@@ -63,13 +66,9 @@ def sanitize_assignment_name(name: str) -> str:
 def _config_get(config: dict | AppConfig, key: str, default: Any = None) -> Any:
     if hasattr(config, "model_dump"):  # Pydantic model (AppConfig, GradingConfig, etc.)
         return getattr(config, key, default)
-    return config.get(key, default)
-
-
-def _as_dict(config: dict | AppConfig | None) -> dict:
-    if hasattr(config, "model_dump"):
-        return config.model_dump()
-    return dict(config or {})
+    if isinstance(config, dict):
+        return config.get(key, default)
+    return default
 
 
 _configured_loggers: dict[str, Path] = {}
@@ -110,7 +109,7 @@ def setup_assignment_logging(assignment_name: str, output_dir: str | Path) -> Pa
     return log_path
 
 
-def get_job_logger(config: dict | "BaseModel", module_name: str) -> logging.Logger:
+def get_job_logger(config: dict | BaseModel, module_name: str) -> logging.Logger:
     """Get a logger scoped to the current assignment to prevent interleaved logs."""
     assignment_name = _config_get(config, "assignment_name", "DEFAULT")
     return logging.getLogger(f"autograder.{assignment_name}.{module_name}")
@@ -202,7 +201,7 @@ def load_app_config(config_path: Path) -> "AppConfig":
     return ensure_app_config(load_config(config_path))
 
 
-def save_config(config: dict | "AppConfig", config_path: Path) -> None:
+def save_config(config: dict | AppConfig, config_path: Path) -> None:
     """Save config to config_path (the assignment config at output/{name}/config.yaml).
 
     Writes all fields. Relativizes solution_notebook against the project root
@@ -231,6 +230,33 @@ def save_config(config: dict | "AppConfig", config_path: Path) -> None:
     config_path.parent.mkdir(parents=True, exist_ok=True)
     with open(config_path, "w", encoding="utf-8") as f:
         yaml.dump(out_cfg, f, default_flow_style=False, allow_unicode=True)
+
+
+@dataclass(frozen=True)
+class AssignmentOutputPaths:
+    """Canonical assignment-scoped runtime paths."""
+
+    output_dir: Path
+    parsed_dir: Path
+    solution_parsed: Path
+    graded_results: Path
+    gradescope_dir: Path
+
+
+def get_assignment_output_paths(config: dict | AppConfig) -> AssignmentOutputPaths:
+    """Return canonical assignment-scoped output paths.
+
+    Centralizing these paths avoids subtle mismatches across pipeline modules.
+    """
+    cfg = ensure_app_config(config)
+    output_dir = Path(cfg.output_dir)
+    return AssignmentOutputPaths(
+        output_dir=output_dir,
+        parsed_dir=Path(cfg.parsed_dir),
+        solution_parsed=output_dir / "solution_parsed.json",
+        graded_results=output_dir / "graded_results.json",
+        gradescope_dir=output_dir / "gradescope",
+    )
 
 
 # ---------------------------------------------------------------------------

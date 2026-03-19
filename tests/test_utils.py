@@ -8,9 +8,11 @@ import pytest
 import utils
 
 from utils import (
+    AssignmentOutputPaths,
     AppConfig,
     app_config_to_yaml_data,
     ensure_app_config,
+    get_assignment_output_paths,
     load_app_config,
     load_config,
     save_config,
@@ -321,6 +323,46 @@ class TestOpenAIClientConfig:
         assert captured["openai_kwargs"]["api_key"] == "test-key"
         assert captured["openai_kwargs"]["max_retries"] == 7
         assert captured["openai_kwargs"]["http_client"] == "http-client"
+
+
+class TestAssignmentOutputPaths:
+    def test_returns_typed_paths(self, tmp_path):
+        cfg = AppConfig(
+            assignment_name="HW1",
+            output_dir=str(tmp_path),
+            parsed_dir=str(tmp_path / "parsed"),
+        )
+
+        paths = get_assignment_output_paths(cfg)
+
+        assert isinstance(paths, AssignmentOutputPaths)
+        assert paths.output_dir == tmp_path
+        assert paths.parsed_dir == tmp_path / "parsed"
+        assert paths.solution_parsed == tmp_path / "solution_parsed.json"
+        assert paths.graded_results == tmp_path / "graded_results.json"
+        assert paths.gradescope_dir == tmp_path / "gradescope"
+
+    def test_accepts_dict_config(self, tmp_path):
+        cfg = {
+            "assignment_name": "HW1",
+            "model": "gpt-4.1-mini",
+            "solution_notebook": "",
+            "output_dir": str(tmp_path),
+            "parsed_dir": str(tmp_path / "parsed"),
+            "submissions_dir": str(tmp_path / "submissions"),
+            "parsing": {
+                "section_regex": r"\\d+",
+                "question_regex": r"Q\\d+",
+                "keep_images": True,
+            },
+            "grading": {"question_groups": [["1.1"]], "grade_only": None},
+            "rubrics": {},
+        }
+
+        paths = get_assignment_output_paths(cfg)
+
+        assert isinstance(paths, AssignmentOutputPaths)
+        assert paths.output_dir == tmp_path
 
 
 class TestGradingQidNormalization:

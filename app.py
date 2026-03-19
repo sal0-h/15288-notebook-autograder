@@ -44,6 +44,7 @@ from config_models import default_config
 from utils import (
     AppConfig,
     filter_groups_by_grade_only,
+    get_assignment_output_paths,
     load_config,
     sanitize_assignment_name,
     save_config,
@@ -658,9 +659,9 @@ async def api_grade_one(student_name: str):
             detail="Bulk grading in progress. Wait for it to finish before re-grading one student.",
         )
     try:
-        output_dir = Path(config.get("output_dir", "output"))
-        parsed_dir = Path(config.get("parsed_dir", "output/parsed"))
-        solution_path = output_dir / "solution_parsed.json"
+        paths = get_assignment_output_paths(config)
+        parsed_dir = paths.parsed_dir
+        solution_path = paths.solution_parsed
         student_path = parsed_dir / f"{student_name}.json"
         if not solution_path.exists():
             raise HTTPException(status_code=404, detail="Run parse step first")
@@ -682,7 +683,7 @@ async def api_grade_one(student_name: str):
 
         grade_only_merge = bool(grading_config.get("grade_only_merge") and grade_only)
         merge_into = None
-        out_path = output_dir / "graded_results.json"
+        out_path = paths.graded_results
         if grade_only_merge and out_path.exists():
             with _results_lock:
                 try:
@@ -729,8 +730,7 @@ async def api_grade_one(student_name: str):
 def api_get_results():
     """Return full graded_results.json."""
     config = _get_active_config()
-    output_dir = Path(config.get("output_dir", "output"))
-    path = output_dir / "graded_results.json"
+    path = get_assignment_output_paths(config).graded_results
     with _results_lock:
         try:
             return load_results(path)
@@ -751,7 +751,7 @@ def api_put_results(student_name: str, result: dict = Body(...)):
             detail=f"Missing required keys: {[k for k in required if k not in result]}",
         )
     config = _get_active_config()
-    path = Path(config.get("output_dir", "output")) / "graded_results.json"
+    path = get_assignment_output_paths(config).graded_results
 
     if not path.exists():
         raise HTTPException(status_code=404, detail="No graded results yet")
