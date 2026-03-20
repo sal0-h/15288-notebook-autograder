@@ -474,7 +474,9 @@ class TestGradeOnly:
         ) as mock_get:
             events = list(grade_all_students(config, client=None))
 
-        assert events == []
+        assert len(events) == 1
+        assert events[0]["status"] == "queue_info"
+        assert events[0]["pending"] == 0
         mock_get.assert_called_once_with(
             max_connections=3,
             max_keepalive_connections=3,

@@ -28,12 +28,20 @@
     <div id="panel-setup" class="panel active" role="tabpanel" aria-labelledby="tab-setup">
         <h2>Assignment Setup</h2>
         <p class="mb-2">Configure assignment name, solution notebook, and question groups. Run this before Gather for a new assignment.</p>
+        <p class="mb-2 text-muted-sm">Enter a name and use <strong>Load / Create</strong> to load an existing <code>output/{name}/</code> config or create one. Model, solution upload, workers, and question groups appear below once an assignment is active.</p>
         <!-- Always-visible: assignment name entry and load/create trigger -->
-        <div class="mb-2 flex-row">
+        <div class="mb-2 flex-row setup-assignment-row">
             <label for="setupAssignmentName"><strong>Assignment name</strong></label>
             <input type="text" id="setupAssignmentName" class="input-assignment-name" placeholder="e.g. LabTest_3_S26" autocomplete="off">
-            <button type="button" class="btn" id="setupLoadBtn">Load / Create</button>
+            <button type="button" class="btn" id="setupLoadBtn" title="If output/{name}/config.yaml exists, loads it; otherwise creates the folder and a default config.">Load / Create</button>
             <span class="status-ok text-muted-xs" id="setupOutputDirHint"></span>
+        </div>
+        <div class="mb-2 flex-row-gap10 flex-wrap setup-assignment-switcher">
+            <label for="setupAssignmentSelect" class="text-muted-sm mb-0">Existing assignments</label>
+            <select id="setupAssignmentSelect" class="input-select" aria-label="Open an existing output folder" style="min-width:14rem">
+                <option value="">— select —</option>
+            </select>
+            <span class="text-muted-xs mb-0">Folders under <code>output/</code> with <code>config.yaml</code>. Last opened is restored on reload.</span>
         </div>
         <div id="setupLoadStatus" class="mb-2" role="status" aria-live="polite"></div>
 
@@ -75,12 +83,12 @@
                     <input type="file" id="setupSolutionFile" accept=".ipynb">
                     <span id="setupSolutionLabel">Upload .ipynb or use existing</span>
                 </div>
-                <span id="setupSolutionPath" class="status-ok text-muted-sm" style="margin-left:8px"></span>
+                <span id="setupSolutionPath" class="status-ok text-muted-sm setup-solution-path"></span>
             </div>
             <div class="mb-2">
                 <label for="setupWorkers"><strong>Workers</strong></label>
                 <input type="range" id="setupWorkers" class="range-inline" min="1" max="32" value="1" aria-valuemin="1" aria-valuemax="32">
-                <input type="number" id="setupWorkersInput" min="1" step="1" value="1" style="width:64px;margin-left:6px;padding:6px 8px;border:1px solid #cbd5e1;border-radius:4px;font-size:0.9rem" title="Type any value (e.g. 100 for tier 5)" aria-label="Workers (numeric)">
+                <input type="number" id="setupWorkersInput" class="setup-workers-input" min="1" step="1" value="1" title="Type any value (e.g. 100 for tier 5)" aria-label="Workers (numeric)">
             </div>
             <div class="mb-2">
                 <label class="flex-label">
@@ -129,7 +137,7 @@
         <h2>Gather Submissions</h2>
         <p class="mb-2">Upload a Gradescope export ZIP. Notebooks will be renamed by student and copied to the submissions folder.</p>
         <details class="gather-ok-help mb-2">
-            <summary>What does "ok" mean?</summary>
+            <summary>What does row status &quot;ok&quot; mean after Gather?</summary>
             <p><strong>ok</strong> = notebook was extracted and copied successfully. Specifically: metadata had a student name, submission folder existed, exactly one .ipynb file was found, no duplicate student name, and the file was copied to the submissions folder.</p>
             <p><strong>ok does NOT verify:</strong> that the notebook is valid/parseable, contains answers, or is for the correct assignment. Run Parse next to validate.</p>
         </details>
@@ -137,7 +145,7 @@
             <input type="file" id="gatherFile" accept=".zip">
             <strong>Drop ZIP here or click to select</strong>
         </div>
-        <button type="button" class="btn" id="gatherBtn" disabled>Gather</button>
+        <button type="button" class="btn btn-align-start" id="gatherBtn" disabled>Gather</button>
         <div id="gatherResults" class="mb-2 progress-mt-lg" role="status" aria-live="polite"></div>
     </div>
 
@@ -145,11 +153,13 @@
     <div id="panel-parse" class="panel" role="tabpanel" aria-labelledby="tab-parse">
         <h2>Parse Notebooks</h2>
         <p class="mb-2">Parse solution and student notebooks into structured JSON. Verify that all questions were extracted.</p>
-        <button type="button" class="btn mb-2" id="parseBtn">Run Parse</button>
+        <p class="mb-2 text-muted-sm">After running, a per-student results table appears here, and a JSON preview of the first student may show below.</p>
+        <button type="button" class="btn mb-2 btn-align-start" id="parseBtn">Run Parse</button>
         <div id="parseResults" role="status" aria-live="polite"></div>
         <div id="parsePreview" class="mb-2 hidden">
             <h3>Preview (first student)</h3>
             <pre class="preview-block" id="parsePreviewContent"></pre>
+            <p id="parsePreviewTruncNote" class="text-muted-sm hidden mb-0" role="status"></p>
         </div>
     </div>
 
@@ -160,7 +170,7 @@
         <div class="mb-2">
             <div class="mb-1 font-medium">Generate for:</div>
             <div id="rubricGroupCheckboxes" class="rubric-checkboxes"></div>
-            <p class="text-muted-sm" style="margin:0">Leave all unchecked to generate for every group. Check specific groups to generate only those (merges into existing, does not overwrite others).</p>
+            <p class="text-muted-sm mb-0">Leave all unchecked to generate for every group. Check specific groups to generate only those (merges into existing, does not overwrite others).</p>
         </div>
         <div class="mb-2 flex-row-gap10">
             <button type="button" class="btn" id="rubricGenerateBtn">Generate Rubrics</button>
@@ -177,9 +187,13 @@
     <div id="panel-grade" class="panel" role="tabpanel" aria-labelledby="tab-grade">
         <h2>Grade with LLM</h2>
         <p class="mb-2">Run the grading engine. Progress will stream below in real time.</p>
-        <div class="mb-2 flex-row-gap10">
-            <button type="button" class="btn" id="gradeBtn">Start Grading</button>
-            <span id="gradeEstimate" class="status-ok text-muted-sm"></span>
+        <p class="mb-2 text-muted-sm">Students who already have grades in <code>graded_results.json</code> are skipped automatically; the run continues with the next pending student. Each row below updates as grading proceeds.</p>
+        <div class="mb-2 flex-row-gap10 flex-wrap grade-estimate-row">
+            <button type="button" class="btn btn-align-start" id="gradeBtn">Start Grading</button>
+            <div class="grade-estimate-block">
+                <span id="gradeEstimate" class="status-ok text-muted-sm"></span>
+                <p id="gradeQueueHint" class="text-muted-sm mb-0 hidden" role="status"></p>
+            </div>
         </div>
         <div id="gradeProgress" class="progress-list progress-mt-lg" role="status" aria-live="polite"></div>
     </div>
@@ -189,10 +203,17 @@
         <div class="review-chrome">
             <h2 class="review-title">Review</h2>
             <div class="review-chrome-actions">
-                <button type="button" class="btn btn-sm" id="reviewLoadBtn">Load results</button>
+                <button type="button" class="btn btn-secondary btn-sm" id="reviewLoadBtn">Load results</button>
                 <button type="button" class="btn btn-secondary btn-sm" id="reviewCalibrateBtn">Calibrate</button>
                 <label class="review-flagged-inline"><input type="checkbox" id="reviewFlaggedFirst"> Flagged first</label>
             </div>
+        </div>
+        <div class="review-filters mb-2 flex-row-gap10 flex-wrap" id="reviewFiltersRow">
+            <input type="search" id="reviewStudentFilter" class="input-text" placeholder="Filter by name…" aria-label="Filter students by name" style="max-width:12rem">
+            <span class="text-muted-sm mb-0">Show only:</span>
+            <label class="review-flagged-inline mb-0"><input type="checkbox" id="reviewFilterOutlier"> Outlier</label>
+            <label class="review-flagged-inline mb-0"><input type="checkbox" id="reviewFilterLowConf"> Low confidence</label>
+            <label class="review-flagged-inline mb-0"><input type="checkbox" id="reviewFilterNeedsReview"> Needs review</label>
         </div>
         <div id="reviewCalibrationResults" class="review-cal-strip" role="status" aria-live="polite"></div>
         <div id="reviewError" class="review-error-strip"></div>
@@ -242,7 +263,10 @@
                 </div>
                 <div class="review-v2-bottombar">
                     <span id="reviewSaveFeedback" class="review-save-feedback"></span>
-                    <span class="review-v2-hints" id="reviewHints">J/K student · [ ] question · S save (not in text box) · R re-grade</span>
+                    <div class="review-v2-bottombar-hints">
+                        <span class="review-v2-hints" id="reviewHints">J/K student · [ ] question · S save (not in text box) · R re-grade</span>
+                        <span class="review-v2-hints review-v2-pill-legend" id="reviewPillLegend" aria-label="Question pill colors">Pills · <span class="review-legend-dot review-legend-dot-nr" aria-hidden="true"></span> needs review · <span class="review-legend-dot review-legend-dot-lc" aria-hidden="true"></span> low conf. · <span class="review-legend-dot review-legend-dot-out" aria-hidden="true"></span> outlier · <span class="review-legend-dot review-legend-dot-multi" aria-hidden="true"></span> multiple · gray none · blue selected (bar = flag)</span>
+                    </div>
                 </div>
             </div>
         </div>
@@ -252,14 +276,15 @@
     <div id="panel-export" class="panel" role="tabpanel" aria-labelledby="tab-export">
         <h2>Export</h2>
         <p class="mb-2">Generate Gradescope autograder JSONs and an Excel spreadsheet.</p>
-        <button type="button" class="btn mb-2" id="exportBtn">Run Export</button>
+        <button type="button" class="btn mb-2 btn-align-start" id="exportBtn">Run Export</button>
         <div id="exportResults" class="results-mt" role="status" aria-live="polite"></div>
         <div class="mt-2 flex-row-gap12">
             <a id="excelDownload" class="btn btn-secondary hidden" href="/export/excel" download="Final_Grades.xlsx">Download Excel</a>
             <a id="linterZipDownload" class="btn btn-secondary" href="/export/linter-zip" download="linter_autograder.zip">Download Linter Autograder ZIP</a>
             <a id="autograderZipDownload" class="btn btn-secondary" href="/export/autograder-zip" download="gradescope_autograder.zip">Download Gradescope Autograder ZIP</a>
         </div>
-        <p class="mt-2 text-muted" style="font-size:0.9em">Linter ZIP: pre-deadline format check (0 pts). Gradescope ZIP: post-deadline, uses pre-computed grades. Upload in Gradescope: Configure Autograder → Upload. Then run Manage Submissions → Rerun Autograders.</p>
+        <p class="mt-2 text-muted export-footnote">Linter ZIP: pre-deadline format check (0 pts). Gradescope ZIP: post-deadline, uses pre-computed grades.</p>
+        <p class="mt-2 text-muted export-footnote">Upload in Gradescope: Configure Autograder → Upload. Then run Manage Submissions → Rerun Autograders.</p>
     </div>
 </div>
 

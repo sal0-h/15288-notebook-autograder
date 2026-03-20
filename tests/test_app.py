@@ -140,6 +140,18 @@ class TestUploadLimit:
 
 
 class TestConfigEndpoints:
+    def test_list_assignments(self, client, tmp_path):
+        """GET /assignments lists output/*/config.yaml folders only."""
+        (tmp_path / "output" / "A1").mkdir(parents=True)
+        (tmp_path / "output" / "A1" / "config.yaml").write_text(
+            "x: 1\n", encoding="utf-8"
+        )
+        (tmp_path / "output" / "empty").mkdir(parents=True)
+        with patch.object(state, "PROJECT_ROOT", tmp_path):
+            r = client.get("/assignments")
+        assert r.status_code == 200
+        assert r.json() == {"assignments": ["A1"]}
+
     def test_load_or_create_creates_new_config(self, client, tmp_path):
         """Creates a new config file when the assignment folder does not exist."""
         with (

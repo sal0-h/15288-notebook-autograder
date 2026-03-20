@@ -8,6 +8,7 @@ from llm.cost import usage_cost_usd
 from llm.types import TokenUsage
 from prompt_builder import build_group_prompt, estimate_tokens, load_prompt
 from rubric import build_rubric_group_prompt
+from batch_grader import load_grade_queue
 from utils import (
     AppConfig,
     DEFAULT_MODEL,
@@ -101,7 +102,7 @@ def estimate_rubrics(config: AppConfig | dict) -> dict:
 
 
 def estimate_grade(config: AppConfig | dict, student_name: str | None = None) -> dict:
-    """Estimate tokens and cost for grading. If student_name is None, estimates for all students."""
+    """Estimate tokens and cost for grading. If student_name is None, estimates pending bulk grading only."""
     cfg = ensure_app_config(config)
     output_dir = Path(cfg.output_dir)
     parsed_dir = Path(cfg.parsed_dir)
@@ -115,12 +116,6 @@ def estimate_grade(config: AppConfig | dict, student_name: str | None = None) ->
     grading_config = cfg.grading
     groups = get_effective_question_groups(grading_config)
 
-    student_files = sorted(parsed_dir.glob("*.json"))
-    if student_name:
-        student_files = [p for p in student_files if p.stem == student_name]
-    if not student_files:
-        return _estimate_error("No students to grade")
-
     model = cfg.model or DEFAULT_MODEL
 
     assignment_name = cfg.assignment_name
@@ -128,6 +123,36 @@ def estimate_grade(config: AppConfig | dict, student_name: str | None = None) ->
 
     max_prompt_tokens = cfg.max_prompt_tokens
     rubrics = cfg.rubrics
+
+    if student_name:
+        student_files = sorted(parsed_dir.glob("*.json"))
+        student_files = [p for p in student_files if p.stem == student_name]
+        if not student_files:
+            return _estimate_error("No students to grade")
+    else:
+        try:
+            gq = load_grade_queue(cfg)
+        except FileNotFoundError as e:
+            return _estimate_error(str(e))
+        if not gq.student_files:
+            return _estimate_error("No parsed files. Run parse first.")
+        student_files = [p for _, p in gq.to_grade]
+        total_parsed = len(gq.student_files)
+        skipped_students = total_parsed - len(student_files)
+        if not student_files:
+            u = TokenUsage()
+            ng = sum(1 for g in groups if g)
+            return {
+                **u.to_json_dict(),
+                "cost_usd": 0.0,
+                "model": model,
+                "num_students": 0,
+                "pending_students": 0,
+                "total_parsed": total_parsed,
+                "skipped_students": skipped_students,
+                "num_groups": ng,
+                "note": "No students pending grading (everyone already graded).",
+            }
 
     # Sample up to 5 students and use max for conservative input estimate (variance in answer length/images)
     sample_count = min(5, len(student_files))
@@ -156,10 +181,15 @@ def estimate_grade(config: AppConfig | dict, student_name: str | None = None) ->
     completion_tokens = completion_tokens_one * n_students
 
     usage = TokenUsage(prompt_tokens=prompt_tokens, completion_tokens=completion_tokens)
-    return {
+    out: dict[str, Any] = {
         **usage.to_json_dict(),
         "cost_usd": round(_cost(usage, model), 4),
         "model": model,
         "num_students": n_students,
         "num_groups": sum(1 for g in groups if g),
     }
+    if not student_name:
+        out["pending_students"] = n_students
+        out["total_parsed"] = total_parsed
+        out["skipped_students"] = skipped_students
+    return out
