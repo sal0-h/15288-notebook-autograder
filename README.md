@@ -327,6 +327,14 @@ Static UI:
 - GET /
 - GET /ui/{path}
 
+## Diagnostics
+
+From the repo root, check config, `solution_parsed.json`, parsed vs graded counts, and the grade queue (non-destructive):
+
+```bash
+python doctor.py --config output/<assignment_name>/config.yaml
+```
+
 ## Testing
 
 Run the full test suite with:
