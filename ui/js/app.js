@@ -55,6 +55,21 @@ document.querySelectorAll(".panel").forEach(p => {
 });
 
 // ==================== SETUP ====================
+const DEFAULT_DOC_TITLE = "AI Autograder";
+
+function syncDocumentTitle(assignmentName) {
+    const name = (assignmentName || "").trim();
+    document.title = name ? `${DEFAULT_DOC_TITLE} — ${name}` : DEFAULT_DOC_TITLE;
+}
+
+/** Last path segment for compact UI; full path shown in title. */
+function notebookPathBasename(p) {
+    if (!p) return "";
+    const norm = String(p).replace(/\\/g, "/");
+    const parts = norm.split("/").filter(Boolean);
+    return parts[parts.length - 1] || "";
+}
+
 let setupQuestionGroups = [];
 let setupConfig = {};
 
@@ -72,7 +87,16 @@ function _populateSetupFields(cfg) {
     const input = document.getElementById("setupWorkersInput");
     slider.value = Math.min(32, w);
     input.value = w;
-    document.getElementById("setupSolutionPath").textContent = setupConfig.solution_notebook ? "✓ " + setupConfig.solution_notebook : "";
+    const pathEl = document.getElementById("setupSolutionPath");
+    const sn = setupConfig.solution_notebook;
+    if (sn) {
+        const base = notebookPathBasename(sn);
+        pathEl.textContent = base ? `✓ …/${base}` : "✓ " + sn;
+        pathEl.title = sn;
+    } else {
+        pathEl.textContent = "";
+        pathEl.removeAttribute("title");
+    }
     const modelSelect = document.getElementById("setupModel");
     const model = setupConfig.model || DEFAULT_MODEL;
     const hasOpt = Array.from(modelSelect.options).some(o => o.value === model);
@@ -109,9 +133,46 @@ function _populateSetupFields(cfg) {
     document.getElementById("setupGradeOnlyMergeWrap").classList.toggle("hidden", !gradeOnly || gradeOnly.length === 0);
     renderSetupGroups();
     updateOutputDirHint();
+    syncDocumentTitle(setupConfig.assignment_name);
 }
 
-document.getElementById("setupLoadBtn").onclick = async () => {
+const LS_LAST_ASSIGNMENT = "ai_autograder_last_assignment";
+
+function syncAssignmentSelectToName(name) {
+    const sel = document.getElementById("setupAssignmentSelect");
+    if (!sel) return;
+    const v = (name || "").trim();
+    if (!v) {
+        sel.value = "";
+        return;
+    }
+    if (Array.from(sel.options).some(o => o.value === v)) sel.value = v;
+}
+
+async function refreshAssignmentsDropdown() {
+    const sel = document.getElementById("setupAssignmentSelect");
+    if (!sel) return;
+    const keep = sel.value;
+    try {
+        const r = await fetchWithRetry(API + "/assignments");
+        const data = await r.json();
+        const names = Array.isArray(data.assignments) ? data.assignments : [];
+        sel.innerHTML = "";
+        const opt0 = document.createElement("option");
+        opt0.value = "";
+        opt0.textContent = "— select —";
+        sel.appendChild(opt0);
+        for (const n of names) {
+            const o = document.createElement("option");
+            o.value = n;
+            o.textContent = n;
+            sel.appendChild(o);
+        }
+        if (keep && names.includes(keep)) sel.value = keep;
+    } catch (_) {}
+}
+
+async function doLoadAssignment() {
     const name = document.getElementById("setupAssignmentName").value.trim();
     const statusEl = document.getElementById("setupLoadStatus");
     if (!name) {
@@ -134,12 +195,19 @@ document.getElementById("setupLoadBtn").onclick = async () => {
         const icon = data.created ? "✨" : "✓";
         const verb = data.created ? "Created new config" : "Loaded existing config";
         statusEl.innerHTML = `<span class="status-ok">${icon} ${escHtml(verb)} for <strong>${escHtml(data.assignment_name)}</strong></span>`;
+        try {
+            localStorage.setItem(LS_LAST_ASSIGNMENT, data.assignment_name);
+        } catch (_) {}
+        await refreshAssignmentsDropdown();
+        syncAssignmentSelectToName(data.assignment_name);
     } catch (e) {
         statusEl.innerHTML = `<span class="status-error">Error: ${escHtml(e.message)}</span>`;
     } finally {
         setLoading(btn, false, "Load / Create");
     }
-};
+}
+
+document.getElementById("setupLoadBtn").onclick = () => doLoadAssignment();
 
 function updateOutputDirHint() {
     const name = document.getElementById("setupAssignmentName").value.trim() || "default";
@@ -399,6 +467,11 @@ document.getElementById("parseBtn").onclick = async () => {
     setLoading(btn, true, "Parsing…");
     document.getElementById("parseResults").innerHTML = "";
     document.getElementById("parsePreview").classList.add("hidden");
+    const truncNote = document.getElementById("parsePreviewTruncNote");
+    if (truncNote) {
+        truncNote.textContent = "";
+        truncNote.classList.add("hidden");
+    }
     try {
         const r = await fetchWithRetry(API + "/parse", { method: "POST" });
         const data = await r.json();
@@ -426,7 +499,17 @@ document.getElementById("parseBtn").onclick = async () => {
         if (data.preview) {
             document.getElementById("parsePreview").classList.remove("hidden");
             const j = JSON.stringify(data.preview, null, 2);
-            document.getElementById("parsePreviewContent").textContent = j.length > 6000 ? j.slice(0, 6000) + "\n…" : j;
+            const truncated = j.length > 6000;
+            document.getElementById("parsePreviewContent").textContent = truncated ? j.slice(0, 6000) + "\n…" : j;
+            if (truncNote) {
+                if (truncated) {
+                    truncNote.textContent = "Preview truncated for display; full parsed JSON is on disk under the parsed output folder.";
+                    truncNote.classList.remove("hidden");
+                } else {
+                    truncNote.textContent = "";
+                    truncNote.classList.add("hidden");
+                }
+            }
         }
     } catch (e) {
         document.getElementById("parseResults").innerHTML = `<p class="status-error">Error: ${escHtml(e.message)}</p>`;
@@ -443,6 +526,14 @@ async function loadRubricGroups() {
     try {
         const r = await fetchWithRetry(API + "/config");
         const config = await r.json();
+        const name = (config.assignment_name || "").trim();
+        if (!name) {
+            syncDocumentTitle("");
+        }
+        if (name) {
+            _populateSetupFields(config);
+            document.getElementById("setupConfigFields").classList.remove("hidden");
+        }
         let groups = (config.grading || {}).question_groups || [];
         const gradeOnly = (config.grading || {}).grade_only;
         groups = filterGroupsForUi(groups, gradeOnly);
@@ -452,6 +543,7 @@ async function loadRubricGroups() {
     } catch (_) {
         rubricQuestionGroups = [];
         renderRubricGroupCheckboxes([]);
+        syncDocumentTitle("");
         return [];
     }
 }
@@ -550,7 +642,7 @@ function renderRubricForm(rubrics) {
         const items = r.items || [];
         const rows = items.length ? items.map(i => renderRubricItemRow(i.description, i.deduction)).join("") : renderRubricItemRow("", "");
         return `<div class="q-block rubric-q-block" style="margin-bottom:16px" data-rubric-q="${escHtml(qid)}" data-rubric-pts="${pts}">
-            <div class="q-block-header" style="cursor:default">
+            <div class="q-block-header" role="button" tabindex="0" aria-expanded="true">
                 <h4>Q${escHtml(qid)} (${pts} pts) — Deductions: <span class="rubric-ded-sum">0 / ${pts}</span></h4>
             </div>
             <div class="q-block-body open">
@@ -605,6 +697,30 @@ function renderRubricForm(rubrics) {
                 updateRubricDeductionSum(block);
             };
         });
+    });
+    attachRubricCollapseHandlers(form);
+}
+
+function attachRubricCollapseHandlers(formRoot) {
+    formRoot.querySelectorAll(".rubric-q-block").forEach(block => {
+        const header = block.querySelector(".q-block-header");
+        const body = block.querySelector(".q-block-body");
+        if (!header || !body) return;
+        const syncAria = () => {
+            header.setAttribute("aria-expanded", body.classList.contains("open") ? "true" : "false");
+        };
+        header.onclick = (e) => {
+            e.preventDefault();
+            body.classList.toggle("open");
+            syncAria();
+        };
+        header.onkeydown = (e) => {
+            if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                body.classList.toggle("open");
+                syncAria();
+            }
+        };
     });
 }
 
@@ -793,6 +909,23 @@ document.getElementById("gradeBtn").onclick = async () => {
         ev.addEventListener("progress", e => {
             const data = JSON.parse(e.data || "{}");
             const student = data.student || "";
+            if (data.status === "queue_info") {
+                const pending = data.pending ?? 0;
+                const div = document.createElement("div");
+                if (pending === 0) {
+                    div.className = "progress-item error";
+                    div.innerHTML = `<span>${escHtml(data.message || "Nothing to grade.")}</span>`;
+                } else {
+                    div.className = "progress-item done";
+                    const next = data.next_student ? escHtml(data.next_student) : "—";
+                    const skip = data.skipped != null ? data.skipped : 0;
+                    const tp = data.total_parsed != null ? data.total_parsed : "?";
+                    div.innerHTML = `<span>Continue from <strong>${next}</strong> — ${pending} pending, ${skip} skipped (${tp} parsed)</span>`;
+                }
+                list.appendChild(div);
+                list.scrollTop = list.scrollHeight;
+                return;
+            }
             if (data.status === "usage") {
                 const div = document.createElement("div");
                 const u = data.usage || {};
@@ -894,22 +1027,34 @@ function getGradedQidsForStudent(s) {
 }
 
 function goNextStudent() {
-    if (reviewData.length === 0) return;
+    const order = getVisibleStudentOrder();
+    if (order.length === 0) return;
     if (reviewDirty && !confirm("Discard unsaved changes?")) return;
     reviewDirty = false;
-    currentReviewIdx = Math.min(currentReviewIdx + 1, reviewData.length - 1);
-    showReviewDetail(currentReviewIdx);
-    renderStudentList();
+    const pos = order.indexOf(currentReviewIdx);
+    if (pos < 0) {
+        showReviewDetail(order[0]);
+        scrollStudentIntoView();
+        return;
+    }
+    if (pos >= order.length - 1) return;
+    showReviewDetail(order[pos + 1]);
     scrollStudentIntoView();
 }
 
 function goPrevStudent() {
-    if (reviewData.length === 0) return;
+    const order = getVisibleStudentOrder();
+    if (order.length === 0) return;
     if (reviewDirty && !confirm("Discard unsaved changes?")) return;
     reviewDirty = false;
-    currentReviewIdx = Math.max(currentReviewIdx - 1, 0);
-    showReviewDetail(currentReviewIdx);
-    renderStudentList();
+    const pos = order.indexOf(currentReviewIdx);
+    if (pos < 0) {
+        showReviewDetail(order[0]);
+        scrollStudentIntoView();
+        return;
+    }
+    if (pos <= 0) return;
+    showReviewDetail(order[pos - 1]);
     scrollStudentIntoView();
 }
 
@@ -987,13 +1132,82 @@ function formatFlagReasons(reasons) {
     return parts.join(", ");
 }
 
+/** Per-question flags for the current student (same rules as getStudentFlagReasons, filtered by qid). */
+function getQuestionFlagReasonsForQid(s, qid) {
+    return getStudentFlagReasons(s).filter(r => r.qid === qid);
+}
+
+/** Short description for pill title / aria-label. */
+function formatQuestionFlagsTitle(qid, s) {
+    const rs = getQuestionFlagReasonsForQid(s, qid);
+    if (rs.length === 0) return "";
+    const parts = [];
+    const seen = new Set();
+    for (const r of rs) {
+        if (r.type === "needs_review" && !seen.has("nr")) {
+            parts.push("needs review");
+            seen.add("nr");
+        } else if (r.type === "low_confidence" && !seen.has("lc")) {
+            parts.push("low confidence");
+            seen.add("lc");
+        } else if (r.type === "outlier" && !seen.has("out")) {
+            parts.push(r.flag_reason === "low" ? "outlier (below mean)" : "outlier (above mean)");
+            seen.add("out");
+        }
+    }
+    return parts.join(", ");
+}
+
+/** CSS class for question pill when this question has flags (distinct colors; multi = combined). */
+function getQuestionPillFlagClass(qid, s) {
+    const rs = getQuestionFlagReasonsForQid(s, qid);
+    if (rs.length === 0) return "";
+    const nr = rs.some(r => r.type === "needs_review");
+    const out = rs.some(r => r.type === "outlier");
+    const lc = rs.some(r => r.type === "low_confidence");
+    const nTypes = (nr ? 1 : 0) + (out ? 1 : 0) + (lc ? 1 : 0);
+    if (nTypes > 1) return " review-v2-qpill--f-multi";
+    if (nr) return " review-v2-qpill--f-nr";
+    if (out) return " review-v2-qpill--f-out";
+    if (lc) return " review-v2-qpill--f-lc";
+    return "";
+}
+
+function passesReviewFilters(s) {
+    const q = (document.getElementById("reviewStudentFilter")?.value || "").trim().toLowerCase();
+    if (q && !String(s.student_name || "").toLowerCase().includes(q)) return false;
+    const reasons = getStudentFlagReasons(s);
+    const types = new Set(reasons.map(r => r.type));
+    const needOutlier = document.getElementById("reviewFilterOutlier")?.checked;
+    const needLC = document.getElementById("reviewFilterLowConf")?.checked;
+    const needNR = document.getElementById("reviewFilterNeedsReview")?.checked;
+    if (!needOutlier && !needLC && !needNR) return true;
+    return Boolean(
+        (needOutlier && types.has("outlier"))
+        || (needLC && types.has("low_confidence"))
+        || (needNR && types.has("needs_review"))
+    );
+}
+
+function getVisibleStudentOrder() {
+    const flaggedFirst = document.getElementById("reviewFlaggedFirst")?.checked || false;
+    let order = reviewData.map((_, i) => i).filter(i => passesReviewFilters(reviewData[i]));
+    if (flaggedFirst) {
+        order.sort((a, b) => (isStudentFlagged(reviewData[b]) ? 1 : 0) - (isStudentFlagged(reviewData[a]) ? 1 : 0));
+    }
+    return order;
+}
+
 function renderStudentList() {
     const list = document.getElementById("studentList");
     if (!list) return;
-    const flaggedFirst = document.getElementById("reviewFlaggedFirst")?.checked || false;
-    let order = reviewData.map((_, i) => i);
-    if (flaggedFirst) {
-        order.sort((a, b) => (isStudentFlagged(reviewData[b]) ? 1 : 0) - (isStudentFlagged(reviewData[a]) ? 1 : 0));
+    const order = getVisibleStudentOrder();
+    if (currentReviewIdx >= 0 && order.length > 0 && !order.includes(currentReviewIdx)) {
+        showReviewDetail(order[0]);
+        return;
+    }
+    if (currentReviewIdx >= 0 && order.length === 0) {
+        currentReviewIdx = -1;
     }
     list.innerHTML = order.map(i => {
         const s = reviewData[i];
@@ -1002,7 +1216,8 @@ function renderStudentList() {
         const reasonText = formatFlagReasons(reasons);
         const isDirty = i === currentReviewIdx && reviewDirty;
         const dirtyDot = isDirty ? '<span class="review-v2-dirty" title="Unsaved changes">●</span> ' : "";
-        return `<div class="student-item ${flagged ? "flagged" : ""} ${i === currentReviewIdx ? "selected" : ""}" data-idx="${i}" title="${escHtml(reasonText) || ""}" tabindex="0" role="button"><span class="sname">${dirtyDot}${flagged ? "⚠ " : ""}${escHtml(s.student_name)}</span><span class="sscore">${s.total_score} / ${s.total_max}</span>${flagged ? `<span class="sscore" style="font-size:0.75rem;color:#d97706;">${escHtml(reasonText)}</span>` : ""}</div>`;
+        const titleTip = reasonText ? `${escHtml(s.student_name)} — ${escHtml(reasonText)}` : escHtml(s.student_name);
+        return `<div class="student-item ${flagged ? "flagged" : ""} ${i === currentReviewIdx ? "selected" : ""}" data-idx="${i}" title="${titleTip}" tabindex="0" role="button"><span class="sname">${dirtyDot}${flagged ? "⚠ " : ""}${escHtml(s.student_name)}</span><span class="sscore">${s.total_score} / ${s.total_max}</span>${flagged ? `<span class="sscore" style="font-size:0.75rem;color:#d97706;">${escHtml(reasonText)}</span>` : ""}</div>`;
     }).join("");
     list.querySelectorAll(".student-item").forEach(el => {
         const go = () => {
@@ -1206,9 +1421,14 @@ function renderQPills() {
         return;
     }
     const s = reviewData[currentReviewIdx];
-    container.innerHTML = currentQids.map((qid, i) =>
-        `<button type="button" class="review-v2-qpill ${i === currentQidIdx ? "active" : ""}" data-qidx="${i}" aria-label="Question ${escHtml(qid)}" aria-pressed="${i === currentQidIdx ? "true" : "false"}">${escHtml(qid)}</button>`
-    ).join("");
+    container.innerHTML = currentQids.map((qid, i) => {
+        const flagCls = getQuestionPillFlagClass(qid, s);
+        const flagTitle = formatQuestionFlagsTitle(qid, s);
+        const labelExtra = flagTitle ? ` — ${flagTitle}` : "";
+        const aria = `Question ${qid}${labelExtra}`;
+        const titleAttr = flagTitle ? ` title="${escHtml(`${qid}: ${flagTitle}`)}"` : "";
+        return `<button type="button" class="review-v2-qpill${i === currentQidIdx ? " active" : ""}${flagCls}" data-qidx="${i}" aria-label="${escHtml(aria)}" aria-pressed="${i === currentQidIdx ? "true" : "false"}"${titleAttr}>${escHtml(qid)}</button>`;
+    }).join("");
     container.querySelectorAll(".review-v2-qpill").forEach(btn => {
         btn.onclick = () => {
             currentQidIdx = parseInt(btn.dataset.qidx);
@@ -1216,7 +1436,9 @@ function renderQPills() {
             renderQPills();
         };
     });
-    if (stuInfo) stuInfo.textContent = `${currentReviewIdx + 1} / ${reviewData.length}`;
+    const vis = getVisibleStudentOrder();
+    const vpos = vis.indexOf(currentReviewIdx);
+    if (stuInfo) stuInfo.textContent = vis.length ? `${vpos >= 0 ? vpos + 1 : 1} / ${vis.length}` : "0 / 0";
     const stuNameEl = document.getElementById("reviewStuName");
     if (stuNameEl) {
         const nm = s?.student_name || "";
@@ -1335,7 +1557,8 @@ document.getElementById("reviewLoadBtn").onclick = async () => {
         parsedCache = {};
         document.getElementById("reviewLayout").classList.remove("hidden");
         renderStudentList();
-        if (reviewData.length) showReviewDetail(0);
+        const vis = getVisibleStudentOrder();
+        if (vis.length) showReviewDetail(vis[0]);
         if (calibrationData.length) {
             msgDiv.innerHTML = `<span class="status-warning review-cal-msg">${calibrationData.length} outlier(s) loaded — run <strong>Calibrate</strong> to refresh.</span>`;
         }
@@ -1372,6 +1595,12 @@ document.getElementById("reviewCalibrateBtn").onclick = async () => {
 };
 
 document.getElementById("reviewFlaggedFirst").onchange = () => renderStudentList();
+
+["reviewStudentFilter", "reviewFilterOutlier", "reviewFilterLowConf", "reviewFilterNeedsReview"].forEach(id => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.addEventListener(id === "reviewStudentFilter" ? "input" : "change", () => renderStudentList());
+});
 
 document.getElementById("reviewPrevQ").onclick = goPrevQuestion;
 document.getElementById("reviewNextQ").onclick = goNextQuestion;
@@ -1417,3 +1646,32 @@ document.getElementById("exportBtn").onclick = async () => {
 
 // Init
 loadRubricGroups();
+
+async function initAssignmentSwitcher() {
+    await refreshAssignmentsDropdown();
+    let last = null;
+    try {
+        last = localStorage.getItem(LS_LAST_ASSIGNMENT);
+    } catch (_) {}
+    const input = document.getElementById("setupAssignmentName");
+    const sel = document.getElementById("setupAssignmentSelect");
+    if (sel) {
+        sel.addEventListener("change", () => {
+            const v = sel.value;
+            if (!v) return;
+            input.value = v;
+            updateOutputDirHint();
+            doLoadAssignment();
+        });
+    }
+    if (last && input && sel) {
+        const names = Array.from(sel.options).map(o => o.value).filter(Boolean);
+        if (names.includes(last)) {
+            input.value = last;
+            sel.value = last;
+            updateOutputDirHint();
+            await doLoadAssignment();
+        }
+    }
+}
+initAssignmentSwitcher();

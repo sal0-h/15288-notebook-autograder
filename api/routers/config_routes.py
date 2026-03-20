@@ -23,6 +23,18 @@ from utils import load_config, sanitize_assignment_name, save_config
 router = APIRouter()
 
 
+@router.get("/assignments")
+def api_list_assignments():
+    """List assignment folders under output/ that have a config.yaml."""
+    out = state.PROJECT_ROOT / "output"
+    names: list[str] = []
+    if out.is_dir():
+        for p in sorted(out.iterdir()):
+            if p.is_dir() and (p / "config.yaml").is_file():
+                names.append(p.name)
+    return {"assignments": names}
+
+
 @router.get("/config")
 def api_get_config():
     """Return config for active assignment, or {} if none loaded."""

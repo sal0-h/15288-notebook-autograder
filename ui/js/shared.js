@@ -67,7 +67,13 @@ function formatEstimate(data) {
     const rawCost = data.cost_usd != null ? data.cost_usd : 0;
     const cost = isNaN(rawCost) ? 0 : rawCost;
     const total = pt + ct;
-    return `~$${cost.toFixed(2)}, ~${total.toLocaleString()} tokens`;
+    let line = `~$${cost.toFixed(2)}, ~${total.toLocaleString()} tokens`;
+    if (data.pending_students != null && data.total_parsed != null) {
+        const sk = data.skipped_students != null ? `, ${data.skipped_students} already graded` : "";
+        line += ` — ${data.pending_students} to grade / ${data.total_parsed} parsed${sk}`;
+    }
+    if (data.note) line += ` — ${data.note}`;
+    return line;
 }
 
 /**
@@ -98,13 +104,38 @@ async function loadRubricEstimate() {
 
 async function loadGradeEstimate() {
     const el = document.getElementById("gradeEstimate");
+    const hint = document.getElementById("gradeQueueHint");
     if (!el) return;
     try {
         const r = await fetchWithRetry(API + "/estimate/grade");
         const data = await r.json();
         const txt = formatEstimate(data);
         el.textContent = txt ? `(${txt})` : "";
-    } catch (_) { el.textContent = ""; }
+        if (hint) {
+            if (data.error) {
+                hint.textContent = "";
+                hint.classList.add("hidden");
+            } else if (data.pending_students != null && data.total_parsed != null) {
+                const pend = data.pending_students;
+                const tot = data.total_parsed;
+                const sk = data.skipped_students != null ? data.skipped_students : Math.max(0, tot - pend);
+                hint.textContent =
+                    pend === 0
+                        ? `No one left to grade (${tot} parsed; ${sk} already graded). Remove graded_results.json to re-grade all, or use grade-only merge for partial regrades.`
+                        : `Resume: ${pend} student(s) still need grading (${sk} skipped — already graded). Next in queue after you start.`;
+                hint.classList.remove("hidden");
+            } else {
+                hint.textContent = "";
+                hint.classList.add("hidden");
+            }
+        }
+    } catch (_) {
+        el.textContent = "";
+        if (hint) {
+            hint.textContent = "";
+            hint.classList.add("hidden");
+        }
+    }
 }
 
 async function loadRegradeEstimate(studentName) {

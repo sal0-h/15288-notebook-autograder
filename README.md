@@ -283,6 +283,8 @@ Configuration:
 
 Setup helpers:
 
+- GET /assignments — list `output/{name}/` folders that contain `config.yaml`
+- POST /load-or-create
 - POST /parse-solution-upload
 - POST /parse-solution
 
