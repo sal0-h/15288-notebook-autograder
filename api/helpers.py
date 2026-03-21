@@ -1,4 +1,10 @@
-"""HTTP helpers shared by API routers."""
+"""HTTP helpers shared by API routers.
+
+**Errors:** FastAPI routes should signal failures with ``HTTPException`` and
+appropriate status codes. Estimate routes map precondition failures from
+``estimate.py`` to **HTTP 400** with a string ``detail`` (the UI also understands
+legacy ``error`` in JSON for direct ``estimate_*`` Python callers).
+"""
 
 from __future__ import annotations
 

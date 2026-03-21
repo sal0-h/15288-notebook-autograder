@@ -7,13 +7,12 @@ import json
 import logging
 from collections.abc import Callable
 from pathlib import Path
-from urllib.parse import unquote
-
 from fastapi import APIRouter, HTTPException
 
 from batch_grader import grade_all_students
 from api import sse as sse_mod
 from api import state
+from api.validation import parse_student_name_path_param
 from grade import grade_student
 from llm.types import TokenUsage
 from llm.usage_helpers import detach_usage_from_graded_result
@@ -71,9 +70,7 @@ async def api_grade():
 @router.post("/grade/{student_name:path}")
 async def api_grade_one(student_name: str):
     """Re-grade a single student. Updates graded_results.json."""
-    student_name = unquote(student_name)
-    if "/" in student_name or "\\" in student_name or ".." in student_name:
-        raise HTTPException(status_code=400, detail="Invalid student name")
+    student_name = parse_student_name_path_param(student_name)
     cfg = state.get_active_app_config()
     if not state.grading_lock.acquire(blocking=False):
         raise HTTPException(

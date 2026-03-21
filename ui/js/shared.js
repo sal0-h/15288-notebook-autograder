@@ -60,8 +60,33 @@ function sanitizeQuestionHtml(s) {
     });
 }
 
-function formatEstimate(data) {
-    if (!data || data.error) return null;
+/** FastAPI HTTP error `detail` may be a string or validation array. */
+function estimateErrorMessage(data, response) {
+    if (!data) return null;
+    if (data.error) return data.error;
+    if (response && !response.ok) {
+        const d = data.detail;
+        if (typeof d === "string") return d;
+        if (Array.isArray(d))
+            return d
+                .map((x) =>
+                    x && typeof x === "object" && x.msg != null ? String(x.msg) : JSON.stringify(x)
+                )
+                .join("; ");
+        return response.statusText || "Request failed";
+    }
+    return null;
+}
+
+/**
+ * @param {object} data Parsed JSON body
+ * @param {Response|null} response Optional fetch response (for HTTP errors)
+ * @returns {{ kind: "ok" | "error", text: string } | null}
+ */
+function formatEstimate(data, response) {
+    const err = estimateErrorMessage(data, response);
+    if (err) return { kind: "error", text: err };
+    if (!data) return null;
     const pt = data.prompt_tokens || 0;
     const ct = data.completion_tokens || 0;
     const rawCost = data.cost_usd != null ? data.cost_usd : 0;
@@ -73,7 +98,7 @@ function formatEstimate(data) {
         line += ` — ${data.pending_students} to grade / ${data.total_parsed} parsed${sk}`;
     }
     if (data.note) line += ` — ${data.note}`;
-    return line;
+    return { kind: "ok", text: line };
 }
 
 /**
@@ -97,9 +122,18 @@ async function loadRubricEstimate() {
     try {
         const r = await fetchWithRetry(API + "/estimate/rubrics");
         const data = await r.json();
-        const txt = formatEstimate(data);
-        el.textContent = txt ? `(${txt})` : "";
-    } catch (_) { el.textContent = ""; }
+        const fmt = formatEstimate(data, r);
+        if (!fmt) {
+            el.textContent = "";
+            el.classList.remove("status-error");
+            return;
+        }
+        el.textContent = `(${fmt.text})`;
+        el.classList.toggle("status-error", fmt.kind === "error");
+    } catch (_) {
+        el.textContent = "";
+        el.classList.remove("status-error");
+    }
 }
 
 async function loadGradeEstimate() {
@@ -109,10 +143,17 @@ async function loadGradeEstimate() {
     try {
         const r = await fetchWithRetry(API + "/estimate/grade");
         const data = await r.json();
-        const txt = formatEstimate(data);
-        el.textContent = txt ? `(${txt})` : "";
+        const fmt = formatEstimate(data, r);
+        if (!fmt) {
+            el.textContent = "";
+            el.classList.remove("status-error");
+        } else {
+            el.textContent = `(${fmt.text})`;
+            el.classList.toggle("status-error", fmt.kind === "error");
+        }
         if (hint) {
-            if (data.error) {
+            const err = fmt && fmt.kind === "error";
+            if (err) {
                 hint.textContent = "";
                 hint.classList.add("hidden");
             } else if (data.pending_students != null && data.total_parsed != null) {
@@ -131,6 +172,7 @@ async function loadGradeEstimate() {
         }
     } catch (_) {
         el.textContent = "";
+        el.classList.remove("status-error");
         if (hint) {
             hint.textContent = "";
             hint.classList.add("hidden");
@@ -144,7 +186,16 @@ async function loadRegradeEstimate(studentName) {
     try {
         const r = await fetchWithRetry(API + "/estimate/grade/" + encodeURIComponent(studentName));
         const data = await r.json();
-        const txt = formatEstimate(data);
-        el.textContent = txt ? `(${txt})` : "";
-    } catch (_) { el.textContent = ""; }
+        const fmt = formatEstimate(data, r);
+        if (!fmt) {
+            el.textContent = "";
+            el.classList.remove("status-error");
+            return;
+        }
+        el.textContent = `(${fmt.text})`;
+        el.classList.toggle("status-error", fmt.kind === "error");
+    } catch (_) {
+        el.textContent = "";
+        el.classList.remove("status-error");
+    }
 }

@@ -179,21 +179,21 @@ def grade_all_students(
 
     if grade_only_merge:
         skipped = len(student_files) - len(to_grade)
-        print(
-            f"grade_only_merge: grading {len(to_grade)} students (skipping {skipped} already graded for grade_only)"
+        logger.info(
+            "grade_only_merge: grading %d students (skipping %d already graded for grade_only)",
+            len(to_grade),
+            skipped,
         )
 
     if grade_only:
-        print(f"Grade only: {grade_only} — skipping {len(ungrouped)} other questions")
         logger.info(
-            "grade_only=%s, skipping %d questions, grading %d students",
+            "Grade only: %s — skipping %d other questions; grading %d students",
             grade_only,
             len(ungrouped),
             len(to_grade),
         )
     else:
         if ungrouped:
-            print(f"Warning: Questions not in any group (will score 0): {ungrouped}")
             logger.warning("Questions not in any group (will score 0): %s", ungrouped)
         logger.info("Grading %d students", len(to_grade))
 

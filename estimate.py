@@ -1,7 +1,6 @@
 """Estimate token usage and cost for LLM operations."""
 
 import json
-from pathlib import Path
 from typing import Any
 
 from llm.cost import usage_cost_usd
@@ -13,6 +12,7 @@ from utils import (
     AppConfig,
     DEFAULT_MODEL,
     ensure_app_config,
+    get_assignment_output_paths,
     get_effective_question_groups,
 )
 
@@ -55,8 +55,8 @@ def _tokens_from_messages(messages: list, model: str) -> int:
 def estimate_rubrics(config: AppConfig | dict) -> dict:
     """Estimate tokens and cost for rubric generation."""
     cfg = ensure_app_config(config)
-    output_dir = Path(cfg.output_dir)
-    solution_path = output_dir / "solution_parsed.json"
+    paths = get_assignment_output_paths(cfg)
+    solution_path = paths.solution_parsed
     if not solution_path.exists():
         return _estimate_error("Run parse first")
 
@@ -104,9 +104,9 @@ def estimate_rubrics(config: AppConfig | dict) -> dict:
 def estimate_grade(config: AppConfig | dict, student_name: str | None = None) -> dict:
     """Estimate tokens and cost for grading. If student_name is None, estimates pending bulk grading only."""
     cfg = ensure_app_config(config)
-    output_dir = Path(cfg.output_dir)
-    parsed_dir = Path(cfg.parsed_dir)
-    solution_path = output_dir / "solution_parsed.json"
+    paths = get_assignment_output_paths(cfg)
+    solution_path = paths.solution_parsed
+    parsed_dir = paths.parsed_dir
     if not solution_path.exists():
         return _estimate_error("Run parse first")
     if not parsed_dir.exists():

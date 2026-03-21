@@ -15,6 +15,12 @@ This project uses **Black** for Python formatting. If you use Black in your edit
 
 Internal pipeline functions generally accept **`AppConfig | dict`** and normalize with `ensure_app_config` where callers still pass dicts (e.g. tests, merged payloads).
 
+## Environment
+
+Set **`OPENAI_API_KEY`** in a `.env` file at the repository root (see `utils.get_openai_client`). The legacy **`key`** variable is **deprecated** and will be removed later; prefer `OPENAI_API_KEY` only.
+
+Product-level assumptions (single-machine TA use, priorities) are in [`DECISIONS.md`](./DECISIONS.md).
+
 ## Token usage on graded results
 
 - On disk, optional usage lives under **`_usage`**. The canonical name is **`results_models.GRADED_RESULT_USAGE_KEY`** (also re-exported from **`llm`** / `llm.usage_helpers`).

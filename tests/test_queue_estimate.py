@@ -13,6 +13,7 @@ import pytest
 from batch_grader import load_grade_queue
 from config_models import default_config
 from estimate import estimate_grade
+from utils import get_assignment_output_paths
 
 
 def _make_solution(qids: list[str]) -> dict:
@@ -110,6 +111,26 @@ class TestLoadGradeQueue:
         assert gq.to_grade[0][1].stem == "Bob"
 
 
+class TestEstimatePathsInSyncWithBatchGrader:
+    """estimate_grade uses get_assignment_output_paths — same layout as load_grade_queue."""
+
+    def test_paths_match_helper_and_bulk_estimate_succeeds(self, tmp_path):
+        cfg, out, parsed = _fixture_dirs(tmp_path)
+        paths = get_assignment_output_paths(cfg)
+        assert paths.solution_parsed == out / "solution_parsed.json"
+        assert paths.parsed_dir == parsed
+        sol = _make_solution(["1.1"])
+        paths.solution_parsed.write_text(json.dumps(sol), encoding="utf-8")
+        (parsed / "Alice.json").write_text(
+            json.dumps(_make_student("Alice", ["1.1"])), encoding="utf-8"
+        )
+        gq = load_grade_queue(cfg)
+        assert paths.solution_parsed.exists()
+        r = estimate_grade(cfg)
+        assert "error" not in r
+        assert r["pending_students"] == len(gq.to_grade)
+
+
 class TestEstimateGradeBulk:
     def test_error_when_no_solution(self, tmp_path):
         cfg, out, parsed = _fixture_dirs(tmp_path)
@@ -205,7 +226,12 @@ grading:
         )
         repo_root = Path(__file__).resolve().parent.parent
         proc = subprocess.run(
-            [sys.executable, str(repo_root / "doctor.py"), "--config", str(cfg_path.resolve())],
+            [
+                sys.executable,
+                str(repo_root / "doctor.py"),
+                "--config",
+                str(cfg_path.resolve()),
+            ],
             cwd=str(repo_root),
             capture_output=True,
             text=True,
@@ -233,7 +259,12 @@ grading:
         )
         repo_root = Path(__file__).resolve().parent.parent
         proc = subprocess.run(
-            [sys.executable, str(repo_root / "doctor.py"), "--config", str(cfg_path.resolve())],
+            [
+                sys.executable,
+                str(repo_root / "doctor.py"),
+                "--config",
+                str(cfg_path.resolve()),
+            ],
             cwd=str(repo_root),
             capture_output=True,
             text=True,

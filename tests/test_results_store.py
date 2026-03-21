@@ -17,8 +17,8 @@ def test_load_results_missing_returns_empty(tmp_path):
 def test_load_results_empty_file_returns_empty(tmp_path):
     path = tmp_path / "graded_results.json"
     path.write_text("", encoding="utf-8")
-    with pytest.raises(ValueError, match="corrupted"):
-        load_results(path)
+    assert load_results(path) == []
+    assert (tmp_path / "graded_results.json.broken").exists()
 
 
 def test_load_results_valid(tmp_path):
@@ -28,11 +28,11 @@ def test_load_results_valid(tmp_path):
     assert load_results(path) == data
 
 
-def test_load_results_invalid_json_raises(tmp_path):
+def test_load_results_invalid_json_recover(tmp_path):
     path = tmp_path / "graded_results.json"
     path.write_text("{ invalid }", encoding="utf-8")
-    with pytest.raises(ValueError, match="corrupted"):
-        load_results(path)
+    assert load_results(path) == []
+    assert (tmp_path / "graded_results.json.broken").exists()
 
 
 def test_save_results_deduplicates_by_student_name(tmp_path):

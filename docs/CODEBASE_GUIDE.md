@@ -96,6 +96,17 @@ ai_autograder/
 | `estimate.py` | Cost projection | `prompt_builder`, `utils` |
 | `linter_export.py` | Format linter zip | `parse_notebook`, `utils` |
 
+### Stable entrypoints
+
+Recorded product choices (audience, priorities, what to simplify) live in [`DECISIONS.md`](./DECISIONS.md).
+
+Prefer these surfaces when adding features so CLI and web app stay aligned:
+
+- **CLI:** [`main.py`](../main.py) — uses [`pipeline_runner.py`](../pipeline_runner.py) for gather, parse, calibrate, and export (same calls as HTTP routes).
+- **HTTP:** [`app.py`](../app.py) and [`api/routers/`](../api/routers/) — load config via [`api/state.py`](../api/state.py) (`get_active_app_config()` for pipeline work); call `pipeline_runner`, `batch_grader`, `grade`, `export`, etc.
+- **Shared step wrappers:** [`pipeline_runner.py`](../pipeline_runner.py) (`run_gather`, `run_parse`, `run_export`, …).
+- **Config I/O:** [`utils.load_config`](../utils.py) / `load_app_config` for assignment YAML; [`ensure_app_config`](../config_models.py) at dict/`AppConfig` boundaries.
+
 ---
 
 ## 2. Configuration system
