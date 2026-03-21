@@ -45,7 +45,7 @@ When tradeoffs conflict, use this order:
 2. **Unify graded-results loading** — **Done:** `load_results()` delegates to `load_results_with_backup()` (corrupt JSON → `*.broken` + log + `[]`).
 3. **Unify estimate errors for the UI** — **Done:** estimate routes raise **HTTP 400** with string `detail`; `ui/js/shared.js` shows `detail` or legacy `error`.
 4. **Deprecate `.env` key `key`** — **Done:** prefer `OPENAI_API_KEY`; `key` still works with `DeprecationWarning`.
-5. **Document single-process assumption** — **Done:** this file + `DEV_GUIDE.md`; see **Concurrent CLI + server** above.
+5. **Document single-process assumption** — **Done:** this file + [docs/README.md](README.md); see **Concurrent CLI + server** above.
 
 ## Non-goals (for now)
 

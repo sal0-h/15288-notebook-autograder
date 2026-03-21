@@ -12,7 +12,7 @@ This repository is built for course staff who need a practical workflow to:
 
 The codebase currently targets Python notebook assignments and is organized around assignment-scoped outputs so each run is reproducible, resumable, and easy to inspect.
 
-**Contributing / changing code:** see [docs/DEV_GUIDE.md](docs/DEV_GUIDE.md) for config types, usage helpers, and where to edit.
+**Contributing / changing code:** start with **[docs/README.md](docs/README.md)** (documentation index + developer quick reference), then **[docs/CODEBASE_GUIDE.md](docs/CODEBASE_GUIDE.md)** for depth. **Cursor:** [`.cursor/rules/`](.cursor/rules/) — keep docs aligned with code (see `documentation-discipline.mdc`).
 
 ## Why this exists
 
@@ -98,7 +98,7 @@ Supporting directories:
 
 - tests/: unit and integration tests.
 - ui/: browser-based setup, grading, and export interface.
-- docs/: supporting documentation — see `docs/CODEBASE_GUIDE.md` (pipeline reference), `docs/OPENAI_VISION_MODELS.md` (models, pricing, HW1 variance study), `docs/AUTOGRADER_DESIGN_REVIEW.md` (design review + refactoring playbook), `docs/BUG_REPORT.md` (engineering tracker).
+- docs/: **[docs/README.md](docs/README.md)** lists all docs; **`docs/CODEBASE_GUIDE.md`** is the main technical reference; **`docs/DECISIONS.md`** records product assumptions; optional design discussion in **`docs/AUTOGRADER_DESIGN_REVIEW.md`**; model notes in **`docs/OPENAI_VISION_MODELS.md`**.
 - output/: assignment-scoped runtime artifacts.
 
 ## Output model
