@@ -3,7 +3,7 @@
 A deeper technical reference than the README. Start here if you want to understand
 how the pieces fit together, trace data through the pipeline, or make non-trivial changes.
 
-For a combined **design review** (accuracy, roadmap, KPIs) and **refactoring playbook** (tests, seams, invariants), see [`AUTOGRADER_DESIGN_REVIEW.md`](./AUTOGRADER_DESIGN_REVIEW.md).
+**Documentation order:** see [`docs/README.md`](./README.md). For **product / accuracy / roadmap** (not module-by-module reference), see [`AUTOGRADER_DESIGN_REVIEW.md`](./AUTOGRADER_DESIGN_REVIEW.md) Sections A–F. **Refactoring practices, tests, and invariants** are in this guide (§9–11), not duplicated elsewhere.
 
 ---
 
@@ -98,7 +98,7 @@ ai_autograder/
 
 ### Stable entrypoints
 
-Recorded product choices (audience, priorities, what to simplify) live in [`DECISIONS.md`](./DECISIONS.md).
+**Documentation index:** [`docs/README.md`](./README.md). Recorded product choices live in [`DECISIONS.md`](./DECISIONS.md).
 
 Prefer these surfaces when adding features so CLI and web app stay aligned:
 
@@ -153,7 +153,7 @@ YAML/HTTP and other dict-shaped consumers.
 directly (no dict round-trip). Prefer it inside the grading/pipeline stack. The web
 app exposes **`get_active_app_config()`** in `api.state` for routes that call
 `pipeline_runner` / `batch_grader` / export; **`get_active_config()`** remains a dict
-for merge-heavy endpoints (e.g. `PUT /config`). See [DEV_GUIDE.md](./DEV_GUIDE.md).
+for merge-heavy endpoints (e.g. `PUT /config`). See [docs/README.md](README.md).
 
 ### `AppConfig` schema (`config_models.py`)
 
@@ -593,16 +593,16 @@ emitting (graded_results `_usage`, SSE `usage`, estimate API payloads) and
 
 ### Concurrency controls
 
-Three threading locks:
+Three threading locks on `api.state`:
 ```python
-_grading_lock   # prevents two concurrent grading runs (Write: graded_results.json)
-_results_lock   # protects results reads/writes (grading loop + manual review saves)
-_rubric_lock    # protects rubric config writes during generation
+grading_lock   # prevents two concurrent grading runs (writes graded_results.json)
+results_lock   # protects results reads/writes (grading loop + manual review saves)
+rubric_lock    # rubric generation / SSE exclusivity
 ```
 
-Grading and rubric generation run in background threads, streaming progress via
-Server-Sent Events (SSE) through `_threaded_sse_response`. The async route suspends
-on a queue that the background thread feeds via `loop.call_soon_threadsafe`.
+`GET /grade` and `GET /generate-rubrics` stream progress via Server-Sent Events (SSE)
+through `api.sse.threaded_sse_response`. The async route waits on a queue fed by
+`loop.call_soon_threadsafe` from a background thread.
 
 **Blocking work in routes:** CPU- or disk-heavy steps (e.g. `run_parse`) run inside
 `asyncio.to_thread(...)` so the event loop stays responsive; lightweight handlers may stay synchronous.
@@ -633,9 +633,9 @@ Creation/loading of `output/{assignment_name}/config.yaml` is handled by
 
 ### SSE streaming routes
 
-`GET /grade`, `GET /generate-rubrics`, `POST /grade/{student_name}` all return
-`EventSourceResponse` objects. The UI subscribes and renders progress events as
-they arrive without polling.
+`GET /grade` and `GET /generate-rubrics` return `EventSourceResponse` (SSE). Other
+long routes (e.g. `POST /parse`, `POST /grade/{student_name}`) use `asyncio.to_thread`
+for blocking work and return ordinary JSON responses.
 
 ---
 
@@ -644,10 +644,10 @@ they arrive without polling.
 | Threat | Mitigation |
 |---|---|
 | Prompt injection via student notebook | `_sanitize_student_text` replaces `<<<` / `>>>` with `«` / `»` before any student content enters a prompt |
-| Path traversal in API routes | `_safe_path(base, user_input)` resolves and checks that the result is under `base`; raises HTTP 400 otherwise |
+| Path traversal in API routes | `safe_path` in `api/helpers.py` resolves and checks the path stays under `base`; raises HTTP 400 otherwise |
 | Untrusted YAML (student names) | Student names come only from Gradescope metadata, not from notebook content |
-| Concurrent writes to `graded_results.json` | `_results_lock` wraps all reads and writes; `results_store` used by both `batch_grader` and `app.py` |
-| API key exposure | Loaded via `dotenv` (`.env` file with `key=...`) or `OPENAI_API_KEY`; never logged or returned in API responses |
+| Concurrent writes to `graded_results.json` | `results_lock` wraps reads and writes; `results_store` used by both `batch_grader` and API routes |
+| API key exposure | Loaded via `dotenv` — use **`OPENAI_API_KEY`** in `.env` (legacy `key` is deprecated); never logged or returned in API responses |
 | Malformed LLM JSON | `parse_llm_json` extracts the first balanced `{...}` block; `GradingResponse.from_raw` replaces unparseables with safe defaults |
 
 ---
@@ -670,6 +670,9 @@ Tests live in `tests/` and are run with `pytest tests/ -q`.
 | `test_linter_export.py` | Linter ZIP creation |
 | `test_results_store.py` | `load_results`, `save_results`, `load_results_with_backup`, update_student |
 | `test_integration.py` | End-to-end parse → grade → export with mocked LLM |
+| `test_queue_estimate.py` | `load_grade_queue` vs `estimate_grade` alignment |
+| `test_usage_helpers.py` | Token usage merge helpers on graded results |
+| `test_results_models.py` | `GradedResult` / disk round-trip |
 
 LLM calls are always mocked in tests via `unittest.mock.patch`. Tests never hit
 the OpenAI API.

@@ -1,11 +1,13 @@
-# AI Autograder: Design Review & Refactoring Playbook
+# AI Autograder: Design Review
 
-This document serves two purposes:
+**Design review only** (Sections A–F and *Final Recommendation*):
 
-1. **Design review (Sections A–F)** — Evaluates the autograder as an AI-assisted assessment system: effectiveness, accuracy bottlenecks, roadmap, KPIs, and risks. It is not a code bug audit. Use it when changing prompts, rubrics, review policy, or arguing for product direction.
-2. **Refactoring playbook** — Practical steps for understanding and changing code without breaking grading behavior. Use it before structural edits.
+- Evaluates the autograder as an AI-assisted assessment system: effectiveness, accuracy bottlenecks, roadmap, KPIs, and risks — not a code bug audit.
+- Use when changing prompts, rubrics, review policy, or arguing for product direction.
 
-Implementation details, module map, and data formats live in [`CODEBASE_GUIDE.md`](./CODEBASE_GUIDE.md). Start with `README.md` and that guide when onboarding to the codebase.
+**How to onboard to the code and refactor safely:** [`docs/README.md`](./README.md) and [`CODEBASE_GUIDE.md`](./CODEBASE_GUIDE.md) (§9–11). The old “refactoring playbook” that duplicated those sections was removed to avoid drift.
+
+Implementation details, module map, and data formats live in [`CODEBASE_GUIDE.md`](./CODEBASE_GUIDE.md).
 
 **Scope of the system under discussion**
 
@@ -33,7 +35,6 @@ Implementation details, module map, and data formats live in [`CODEBASE_GUIDE.md
 - [Section E: Evaluation plan and KPIs](#section-e-evaluation-plan-and-kpis)
 - [Section F: Risks, tradeoffs, open questions](#section-f-risks-tradeoffs-and-open-questions)
 - [Final recommendation](#final-recommendation)
-- [Refactoring playbook](#refactoring-playbook)
 
 ---
 
@@ -514,191 +515,13 @@ That sequence directly targets the most likely sources of grading error while pr
 
 ---
 
-## Refactoring playbook
+## Appendix: Refactor guidance (moved)
 
-Practical guide: what to read, what to run, and how to refactor without breaking grading behavior.
+The long **refactoring playbook** that used to follow *Final Recommendation* duplicated **[CODEBASE_GUIDE.md](CODEBASE_GUIDE.md)**. Single sources of truth:
 
-### 1. Start with a system map
+| Topic | Where |
+|-------|--------|
+| Which doc to read first | [docs/README.md](README.md) |
+| Tests, invariants, how to extend | [CODEBASE_GUIDE §9 Testing](CODEBASE_GUIDE.md#9-testing-strategy), [§10 Design principles](CODEBASE_GUIDE.md#10-design-principles-and-conventions), [§11 Extension scenarios](CODEBASE_GUIDE.md#11-common-extension-scenarios) |
 
-Read files in this order:
-
-1. `README.md`
-2. `docs/CODEBASE_GUIDE.md`
-3. **This document**, Sections A–B, when your change touches parsing, rubrics, grouping, or grading policy (effectiveness context); skip if you are doing a narrow mechanical refactor.
-4. `main.py` (CLI entry, step dispatch)
-5. `app.py` (API, locks, SSE)
-6. `pipeline_runner.py` (thin stage wrappers for the web app)
-7. `parse_notebook.py`
-8. `rubric/` (`impl.py`)
-9. `grade.py`
-10. `batch_grader.py`
-11. `export.py`
-12. `gather.py` — if you touch submission ingest
-13. `results_store.py` — if you touch persistence or resume
-14. `prompt_builder.py` — if you touch prompts, sanitization, or token budgeting
-15. `grading_models.py` — if you touch LLM response schema or feedback sentinels
-16. `utils.py`, `grading_helpers.py`, `config_models.py`
-
-As you read, write a short architecture note for yourself with:
-
-- Main entry points: `app.py` (API), `main.py` (CLI)
-- Pipeline flow: gather → parse → rubric → grade → (calibrate) → export
-- Shared utility boundaries
-- Where persistent files are read/written
-
-### 2. Know the invariants before refactoring
-
-Do not start edits until these are clear. They are easy to break accidentally:
-
-1. Runtime config source of truth is `output/{assignment_name}/config.yaml`.
-2. At `AppConfig | dict` boundaries use `ensure_app_config`; do not call `AppConfig.model_validate()` directly in pipeline code (see `CODEBASE_GUIDE.md`).
-3. Prompts load from the filesystem (`prompts/{assignment}/` or `prompts/DEFAULT/`) and are not persisted inside config payloads.
-4. Runtime artifacts are assignment-scoped under `output/{assignment_name}/`.
-5. Question IDs are canonical numeric strings (`"1.1"`); normalize at LLM/UI boundaries — see `grading_helpers` / `GradingResponse.from_raw` / `normalize_qid`.
-6. Totals and exports respect feedback sentinels (`SKIP_FEEDBACKS`, `NO_SUBMISSION`, etc. in `grading_models.py`).
-7. `graded_results.json` is incrementally saved and supports resume behavior.
-8. `grade_only` and `grade_only_merge` semantics must remain intact.
-9. API payload shapes consumed by `ui/js/*.js` and tests must remain backward-compatible.
-10. Tests must mock the OpenAI client — never hit the live API in `tests/` (see `CODEBASE_GUIDE.md` §9).
-
-### 3. Build a baseline before you touch code
-
-Use a clean baseline so regressions are obvious.
-
-```bash
-.venv/bin/python -m pytest tests/ -q
-```
-
-Focused commands:
-
-```bash
-# API behavior
-.venv/bin/python -m pytest tests/test_app.py -q
-
-# Pipeline behavior
-.venv/bin/python -m pytest tests/test_parse.py tests/test_rubric.py tests/test_grade.py tests/test_export.py -q
-
-# Shared helpers / config / persistence
-.venv/bin/python -m pytest tests/test_utils.py tests/test_results_store.py -q
-```
-
-### 4. Pick one seam per refactor
-
-Do not refactor the entire project in one pass. Pick one seam and finish it end-to-end.
-
-Good seams in this repository:
-
-1. Path resolution and assignment-scoped artifact paths
-2. Config loading, merging, and validation boundaries
-3. Results persistence and recovery (`results_store.py`)
-4. Grade-only filtering logic (`grading_helpers.py`)
-5. Logging setup and assignment binding
-6. Prompt construction and sanitization (`prompt_builder.py`)
-7. API stage dispatch (`pipeline_runner.py`, `app.py`)
-
-A good seam is small enough to test thoroughly and review quickly.
-
-### 5. Trace dependencies before editing
-
-For each symbol you change, inspect call sites first:
-
-```bash
-rg -n "symbol_name" *.py tests -S
-```
-
-Before extracting helpers, answer:
-
-1. Who calls this now?
-2. Is behavior duplicated with subtle differences?
-3. Which tests currently cover this behavior?
-
-### 6. Refactor with tight feedback loops
-
-Use this loop for each seam:
-
-1. Add or update tests for intended behavior.
-2. Make one focused change.
-3. Run only relevant tests.
-4. If green, run a wider suite.
-5. Commit.
-
-If you skip step 1, you will likely preserve the wrong behavior.
-
-### 7. Prefer these refactor patterns
-
-1. Replace repeated ad hoc logic with a shared helper.
-2. Prefer typed models or dataclasses for core contracts over string-key dictionaries where it reduces ambiguity.
-3. Keep module responsibilities single-purpose:
-   - `parse_notebook.py`: parsing
-   - `rubric/`: rubric generation (`impl.py`)
-   - `grade.py`: per-student grading
-   - `batch_grader.py`: orchestration / resume
-   - `export.py`: export artifacts
-4. Keep backward-compatible API response shapes.
-
-### 8. Preserve safety and concurrency guarantees
-
-When touching `app.py` or the grading flow:
-
-1. Preserve lock usage:
-   - `_grading_lock`
-   - `_results_lock`
-   - `_rubric_lock`
-2. Keep lock ordering consistent to avoid deadlocks.
-3. Treat student notebook content as untrusted prompt input (delimiter sanitization, path safety).
-4. Preserve assignment-scoped logging (`output/{assignment_name}/autograder.log`).
-
-### 9. Manual review checklist for every change
-
-1. Does it change where config is read/written?
-2. Does it alter output file locations?
-3. Can it break resume behavior?
-4. Can it break UI payload shape?
-5. Can it break grade-only or merge semantics?
-6. Are errors still actionable for users?
-7. Are tests updated to reflect intended behavior?
-
-### 10. Suggested refactor order (low risk → higher risk)
-
-Start here:
-
-1. Shared path and config helper cleanup
-2. Logging consistency cleanup
-3. Duplicate helper consolidation in `grading_helpers.py`
-4. Results-store robustness and error paths
-
-Then move to higher-risk areas:
-
-1. `app.py` endpoint consolidation (shared validation / helpers)
-2. `batch_grader.py` orchestration simplification
-3. Surgical decomposition of `grade.py`
-
-### 11. Example session plan (~90 minutes)
-
-1. 10 min: choose seam and write an explicit goal
-2. 15 min: trace call sites and existing tests
-3. 20 min: write or adjust tests first
-4. 25 min: implement minimal code change
-5. 10 min: run focused tests
-6. 10 min: run broader tests and write a short change note
-
-Repeat this cycle. Consistency compounds over time.
-
-### 12. Common mistakes to avoid
-
-1. Refactoring style without understanding runtime invariants
-2. Mixing multiple seams in one PR
-3. Changing config payload shape without updating UI/tests
-4. Moving prompt text into config persistence
-5. Breaking assignment-scoped path or log behavior
-6. Calling `AppConfig.model_validate` on already-typed config in hot paths
-
-### 13. Done criteria for a refactor
-
-A refactor is done only when:
-
-1. Behavior is unchanged except for explicit intended improvements
-2. Focused tests pass
-3. Broader regression tests pass
-4. The code path is simpler to explain than before
-5. Future changes require fewer touch points
+**This file** stays focused on **product direction** and **accuracy tradeoffs** (Sections A–F).
