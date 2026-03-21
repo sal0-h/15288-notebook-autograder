@@ -1,0 +1,19 @@
+# Mirrors .github/workflows/lint.yml (black --check) and test.yml (pytest).
+# Install once: pip install pre-commit && pre-commit install
+# Manual run:   pre-commit run --all-files
+
+repos:
+  - repo: https://github.com/psf/black
+    rev: 25.1.0
+    hooks:
+      - id: black
+
+  - repo: local
+    hooks:
+      - id: pytest-ci
+        name: pytest (CI parity)
+        entry: python -m pytest
+        language: system
+        pass_filenames: false
+        always_run: true
+        args: [tests/, -q, --tb=short]

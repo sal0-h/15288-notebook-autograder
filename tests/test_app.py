@@ -652,7 +652,7 @@ class TestRubricsEndpoints:
         with (
             patch_active_assignment(mock_config),
             patch(
-                "rubric.generate_rubrics",
+                "api.routers.rubric_routes.generate_rubrics",
                 return_value={
                     "1.1": {
                         "points": 2,
