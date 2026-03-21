@@ -1,12 +1,16 @@
 """Single-group rubric LLM generation worker."""
 
-from llm import complete_json_chat
+from grade import MAX_VALIDATION_RETRIES
+from llm import complete_json_chat, retry_with_exponential_backoff
 from llm.types import TokenUsage
 from prompt_builder import get_question_data, parse_llm_json
 from rubric.jobs import GENERATION_FAILED, RubricGenJob
 from rubric.prompts import build_rubric_group_prompt
 from rubric.sanitize import sanitize_llm_text
 from utils import get_job_logger, get_openai_client
+
+# Match grade.grade_group: MAX_VALIDATION_RETRIES + 1 attempts (see grade.py)
+_MAX_RUBRIC_LLM_ATTEMPTS = MAX_VALIDATION_RETRIES + 1
 
 
 def generate_one_group(
@@ -31,28 +35,24 @@ def generate_one_group(
     if not group:
         return (idx, group, rubrics_for_group, usage, had_error)
 
-    try:
-        log.info(
-            "Rubric generation - group %d: %s (model=%s)",
-            idx + 1,
-            group,
-            model,
-        )
-        user_content = build_rubric_group_prompt(group, solution_parsed)
-        messages = [
-            {"role": "system", "content": rubric_prompt},
-            {"role": "user", "content": user_content},
-        ]
+    user_content = build_rubric_group_prompt(group, solution_parsed)
+    messages = [
+        {"role": "system", "content": rubric_prompt},
+        {"role": "user", "content": user_content},
+    ]
+
+    def _once() -> tuple[TokenUsage, dict[str, dict]]:
         completion = complete_json_chat(
             client,
             model=model,
             messages=messages,
             max_completion_tokens=max_completion_tokens,
         )
-        usage = completion.usage
+        u = completion.usage
         content = completion.text
         raw = parse_llm_json(content)
 
+        built: dict[str, dict] = {}
         for k, v in raw.items():
             normalized = k.strip().lstrip("Qq").strip()
             if not normalized:
@@ -91,7 +91,38 @@ def generate_one_group(
                     parsed_items[-1]["deduction"] = round(
                         parsed_items[-1]["deduction"] + diff, 2
                     )
-                rubrics_for_group[normalized] = {"points": pts, "items": parsed_items}
+                built[normalized] = {"points": pts, "items": parsed_items}
+        return u, built
+
+    def _on_before_retry(attempt: int, delay: float) -> None:
+        log.warning(
+            "Rubric generation retry %d for group %s after %ds",
+            attempt,
+            group,
+            int(delay),
+        )
+
+    log.info(
+        "Rubric generation - group %d: %s (model=%s)",
+        idx + 1,
+        group,
+        model,
+    )
+
+    success, last_error = retry_with_exponential_backoff(
+        _once,
+        max_attempts=_MAX_RUBRIC_LLM_ATTEMPTS,
+        on_before_retry=_on_before_retry,
+        on_attempt_failed=lambda attempt, err: log.warning(
+            "Rubric generation attempt %d failed for group %s: %s",
+            attempt,
+            group,
+            err,
+        ),
+    )
+
+    if success is not None:
+        usage, rubrics_for_group = success
         log.info(
             "Rubric generation - group %d complete: %d/%d questions parsed (tokens: %d in / %d out)",
             idx + 1,
@@ -100,9 +131,14 @@ def generate_one_group(
             usage.prompt_tokens,
             usage.completion_tokens,
         )
-    except Exception as e:
+    else:
         had_error = True
-        log.exception("Rubric generation failed for group %s: %s", group, e)
+        log.error(
+            "Rubric generation failed for group %s after %d attempts: %s",
+            group,
+            _MAX_RUBRIC_LLM_ATTEMPTS,
+            last_error,
+        )
         for qid in group:
             sol_q = get_question_data(solution_parsed, qid)
             pts = (sol_q or {}).get("points", 0)

@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from urllib.parse import unquote
 
 from fastapi import APIRouter, Body, HTTPException
 
 from api.helpers import safe_path
 from api import state
+from api.validation import parse_student_name_path_param
 from results_store import load_results, save_results, update_student
 from utils import get_assignment_output_paths
 
@@ -31,9 +31,7 @@ def api_get_results():
 @router.put("/results/{student_name:path}")
 def api_put_results(student_name: str, result: dict = Body(...)):
     """Update one student's scores in graded_results.json."""
-    student_name = unquote(student_name)
-    if "/" in student_name or "\\" in student_name or ".." in student_name:
-        raise HTTPException(status_code=400, detail="Invalid student name")
+    student_name = parse_student_name_path_param(student_name)
     required = ("student_name", "questions", "total_score", "total_max")
     if not all(k in result for k in required):
         raise HTTPException(
@@ -59,7 +57,7 @@ def api_put_results(student_name: str, result: dict = Body(...)):
 @router.get("/parsed/{student_name:path}")
 def api_get_parsed(student_name: str):
     """Return parsed JSON for a specific student."""
-    student_name = unquote(student_name)
+    student_name = parse_student_name_path_param(student_name)
     cfg = state.get_active_app_config()
     parsed_dir = Path(cfg.parsed_dir)
     path = safe_path(parsed_dir, f"{student_name}.json")

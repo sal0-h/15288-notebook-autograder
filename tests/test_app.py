@@ -88,7 +88,8 @@ class TestPathTraversal:
             r = client.get("/parsed/..%2F..%2F..%2Fetc%2Fpasswd")
             assert r.status_code in (400, 404)
             if r.status_code == 400:
-                assert "Path traversal" in r.json().get("detail", "")
+                detail = r.json().get("detail", "")
+                assert "Path traversal" in detail or "Invalid student name" in detail
 
     def test_ui_path_traversal_rejected(self, client):
         r = client.get("/ui/../.env")

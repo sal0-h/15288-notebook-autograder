@@ -4,7 +4,7 @@
 Usage:
   python doctor.py --config output/<assignment_name>/config.yaml
 
-Loads ``.env`` from the repository root (same as ``get_openai_client``) so ``OPENAI_API_KEY`` or ``key`` is visible.
+Loads ``.env`` from the repository root (same as ``get_openai_client``) so ``OPENAI_API_KEY`` is visible.
 """
 
 from __future__ import annotations
@@ -82,9 +82,12 @@ def run(config_path: Path) -> int:
     else:
         _ok("graded_results.json: (none yet)")
 
-    key = os.environ.get("OPENAI_API_KEY") or os.environ.get("key")
+    key = os.environ.get("OPENAI_API_KEY")
+    if not key and os.environ.get("key"):
+        _warn("Using deprecated 'key' in .env — set OPENAI_API_KEY instead.")
+        key = os.environ.get("key")
     if not key:
-        _warn("OPENAI_API_KEY (or key) not set — grading will fail until set.")
+        _warn("OPENAI_API_KEY not set — grading will fail until set.")
     else:
         _ok("OPENAI_API_KEY is set")
 
@@ -104,9 +107,13 @@ def run(config_path: Path) -> int:
     pending = len(gq.to_grade)
     total = len(gq.student_files)
     skipped = total - pending
-    _ok(f"Grade queue: {pending} pending, {skipped} skipped (already graded), {total} parsed total")
+    _ok(
+        f"Grade queue: {pending} pending, {skipped} skipped (already graded), {total} parsed total"
+    )
     if pending == 0 and total > 0:
-        _warn("Nothing left to grade — remove or edit graded_results.json to re-grade, or use grade-only merge.")
+        _warn(
+            "Nothing left to grade — remove or edit graded_results.json to re-grade, or use grade-only merge."
+        )
     elif total == 0:
         _warn("No parsed student JSONs — run Parse on submissions.")
 

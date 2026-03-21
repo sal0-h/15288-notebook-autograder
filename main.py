@@ -9,13 +9,17 @@ Override settings via CLI flags or by editing the CONFIG dict below.
 
 import argparse
 import copy
+import json
 import logging
 from pathlib import Path
 
 from pydantic import ValidationError
 
 from config_models import default_config
+from parse_notebook import get_all_question_ids, get_total_points
+from pipeline_runner import run_calibrate_step, run_export, run_gather, run_parse
 from utils import (
+    get_assignment_output_paths,
     load_app_config,
     save_config,
     setup_assignment_logging,
@@ -148,22 +152,20 @@ Examples:
         if not args.zip:
             print("Error: --gather requires --zip PATH")
             return 1
-        from gather import gather_submissions
-
-        out_dir = Path(cfg.submissions_dir)
-        results = gather_submissions(args.zip, out_dir, from_zip=True)
+        gathered = run_gather(cfg, args.zip)
+        results = gathered["results"]
+        out_dir = Path(gathered["output_dir"])
         ok = sum(1 for r in results if r["status"] == "ok")
         print(f"Gather: {ok}/{len(results)} notebooks copied to {out_dir}")
 
     if "parse" in steps:
-        from parse_notebook import (
-            parse_all_students,
-            get_all_question_ids,
-            get_total_points,
-        )
-
-        solution_parsed, report = parse_all_students(cfg)
-        if solution_parsed:
+        payload = run_parse(cfg)
+        report = payload["report"]
+        paths = get_assignment_output_paths(cfg)
+        if paths.solution_parsed.exists():
+            solution_parsed = json.loads(
+                paths.solution_parsed.read_text(encoding="utf-8")
+            )
             qids = get_all_question_ids(solution_parsed)
             pts = get_total_points(solution_parsed)
             print(f"Parse: solution has {len(qids)} questions, {pts} pts")
@@ -195,15 +197,11 @@ Examples:
         print("Grade: done")
 
     if "calibrate" in steps:
-        from calibrate import run_calibration
-
-        flagged = run_calibration(cfg)
+        flagged = run_calibrate_step(cfg)
         print(f"Calibrate: {len(flagged)} outlier(s) flagged")
 
     if "export" in steps:
-        from export import export_all
-
-        summary = export_all(cfg)
+        summary = run_export(cfg)
         print(f"Export: {summary['students']} students → {summary['excel_path']}")
 
     return 0

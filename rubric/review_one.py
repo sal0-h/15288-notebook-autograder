@@ -2,11 +2,14 @@
 
 import json
 
-from llm import complete_json_chat
+from grade import MAX_VALIDATION_RETRIES
+from llm import complete_json_chat, retry_with_exponential_backoff
 from prompt_builder import get_question_data, parse_llm_json
 from rubric.jobs import RubricReviewJob
 from rubric.sanitize import sanitize_llm_text
 from utils import get_job_logger, get_openai_client
+
+_MAX_RUBRIC_LLM_ATTEMPTS = MAX_VALIDATION_RETRIES + 1
 
 
 def review_one_group(job: RubricReviewJob) -> dict[str, dict]:
@@ -39,12 +42,12 @@ def review_one_group(job: RubricReviewJob) -> dict[str, dict]:
     if not parts:
         return {}
 
-    try:
-        log.info("Rubric review - group: %s (model=%s)", group, model)
-        messages = [
-            {"role": "system", "content": review_prompt},
-            {"role": "user", "content": "\n".join(parts)},
-        ]
+    messages = [
+        {"role": "system", "content": review_prompt},
+        {"role": "user", "content": "\n".join(parts)},
+    ]
+
+    def _once() -> dict[str, dict]:
         completion = complete_json_chat(
             client,
             model=model,
@@ -97,6 +100,33 @@ def review_one_group(job: RubricReviewJob) -> dict[str, dict]:
             usage.completion_tokens,
         )
         return revised
-    except Exception as e:
-        log.warning("Rubric review failed for group %s: %s", group, e)
-        return {}
+
+    log.info("Rubric review - group: %s (model=%s)", group, model)
+
+    success, last_error = retry_with_exponential_backoff(
+        _once,
+        max_attempts=_MAX_RUBRIC_LLM_ATTEMPTS,
+        on_before_retry=lambda attempt, delay: log.warning(
+            "Rubric review retry %d for group %s after %ds",
+            attempt,
+            group,
+            int(delay),
+        ),
+        on_attempt_failed=lambda attempt, err: log.warning(
+            "Rubric review attempt %d failed for group %s: %s",
+            attempt,
+            group,
+            err,
+        ),
+    )
+
+    if success is not None:
+        return success
+
+    log.warning(
+        "Rubric review failed for group %s after %d attempts: %s",
+        group,
+        _MAX_RUBRIC_LLM_ATTEMPTS,
+        last_error,
+    )
+    return {}

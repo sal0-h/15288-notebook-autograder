@@ -6,6 +6,7 @@ import logging
 import os
 import re
 import threading
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -254,11 +255,21 @@ def get_openai_client(
     pool_timeout_s: float = 30.0,
 ) -> OpenAI:
     """Initialize OpenAI client with .env key, with SDK-level retries.
-    Checks 'key' first (from .env), then OPENAI_API_KEY as fallback."""
+
+    Prefer ``OPENAI_API_KEY``. The legacy ``key`` env var is deprecated and will be
+    removed in a future release.
+    """
     load_dotenv()
-    api_key = os.environ.get("OPENAI_API_KEY") or os.environ.get("key")
+    api_key = os.environ.get("OPENAI_API_KEY")
+    if not api_key and os.environ.get("key"):
+        warnings.warn(
+            "Using 'key' in .env is deprecated; set OPENAI_API_KEY instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        api_key = os.environ.get("key")
     if not api_key:
-        raise ValueError("API key not found. Set OPENAI_API_KEY or 'key' in .env.")
+        raise ValueError("API key not found. Set OPENAI_API_KEY in .env.")
     limits = httpx.Limits(
         max_connections=max(1, int(max_connections)),
         max_keepalive_connections=max(1, int(max_keepalive_connections)),

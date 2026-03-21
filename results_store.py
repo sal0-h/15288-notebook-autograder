@@ -40,14 +40,12 @@ def load_results_with_backup(
 
 
 def load_results(path: Path) -> list[dict]:
-    """Load graded_results.json. Returns [] if missing or empty."""
-    if not path.exists():
-        return []
-    try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError:
-        raise ValueError(f"graded_results.json is corrupted at {path}")
-    return raw if isinstance(raw, list) else []
+    """Load graded_results.json.
+
+    Returns ``[]`` if missing. On invalid JSON, backs up the file (same as
+    :func:`load_results_with_backup`), logs, and returns ``[]`` so the UI can recover.
+    """
+    return load_results_with_backup(path)
 
 
 def deduplicate_results(results: list[dict]) -> list[dict]:
