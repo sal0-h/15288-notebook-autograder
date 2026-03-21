@@ -3,7 +3,7 @@
 A deeper technical reference than the README. Start here if you want to understand
 how the pieces fit together, trace data through the pipeline, or make non-trivial changes.
 
-**Documentation order:** see [`docs/README.md`](./README.md). For **product / accuracy / roadmap** (not module-by-module reference), see [`AUTOGRADER_DESIGN_REVIEW.md`](./AUTOGRADER_DESIGN_REVIEW.md) Sections A–F. **Refactoring practices, tests, and invariants** are in this guide (§9–11), not duplicated elsewhere.
+**Documentation order:** see `[docs/README.md](./README.md)`. For **product / accuracy / roadmap** (not module-by-module reference), see `[AUTOGRADER_DESIGN_REVIEW.md](./AUTOGRADER_DESIGN_REVIEW.md)` Sections A–F. **Refactoring practices, tests, and invariants** are in this guide (§9–11), not duplicated elsewhere.
 
 ---
 
@@ -13,12 +13,12 @@ how the pieces fit together, trace data through the pipeline, or make non-trivia
 2. [Configuration system](#2-configuration-system)
 3. [Data model — what flows between stages](#3-data-model--what-flows-between-stages)
 4. [Pipeline stage reference](#4-pipeline-stage-reference)
-   - [gather](#41-gather)
-   - [parse](#42-parse)
-   - [generate-rubrics](#43-generate-rubrics)
-   - [grade](#44-grade)
-   - [calibrate](#45-calibrate)
-   - [export](#46-export)
+  - [gather](#41-gather)
+  - [parse](#42-parse)
+  - [generate-rubrics](#43-generate-rubrics)
+  - [grade](#44-grade)
+  - [calibrate](#45-calibrate)
+  - [export](#46-export)
 5. [Prompt system](#5-prompt-system)
 6. [Grading engine internals](#6-grading-engine-internals)
 7. [Web app and API layer](#7-web-app-and-api-layer)
@@ -75,37 +75,39 @@ ai_autograder/
 
 ### Module roles at a glance
 
-| Module | Responsibility | Calls into |
-|---|---|---|
-| `main.py` | CLI, config write, pipeline orchestration | All pipeline modules |
-| `app.py` | FastAPI routes and SSE events | pipeline_runner, batch_grader, grade, results_store, etc. |
-| `config_models.py` | AppConfig, ParsingConfig, GradingConfig, default_config | nothing (leaf) |
-| `grading_helpers.py` | grade_only filtering, effective_groups, needs_merge | grading_models |
-| `pipeline_runner.py` | Thin wrappers for gather, parse, calibrate, export, estimate | gather, parse_notebook, parse_outputs, calibrate, export, estimate |
-| `results_store.py` | load_results, save_results, update_student, load_results_with_backup | nothing (leaf) |
-| `utils.py` | Config load/save, logging, OpenAI client | config_models |
-| `grading_models.py` | LLM response Pydantic schemas, constants | nothing (leaf) |
-| `prompt_builder.py` | Prompt loading, token counting, sanitization, JSON parsing | `utils` |
-| `parse_notebook.py` | Notebook → parsed JSON | `utils` |
-| `grade.py` | `grade_group`, `grade_student`, post-processing | `prompt_builder`, `grading_models`, `utils` |
-| `batch_grader.py` | Sequential/parallel grading, resume logic | `grade`, `results_store`, `utils` |
-| `rubric/` | Rubric generation + review (`generate`, `review`, `prompts`, …) | `prompt_builder`, `utils`, `llm` |
-| `gather.py` | Submission extraction | `utils` |
-| `export.py` | Excel + Gradescope export | `utils` |
-| `calibrate.py` | Outlier detection | `utils` |
-| `estimate.py` | Cost projection | `prompt_builder`, `utils` |
-| `linter_export.py` | Format linter zip | `parse_notebook`, `utils` |
+
+| Module               | Responsibility                                                       | Calls into                                                         |
+| -------------------- | -------------------------------------------------------------------- | ------------------------------------------------------------------ |
+| `main.py`            | CLI, config write, pipeline orchestration                            | All pipeline modules                                               |
+| `app.py`             | FastAPI app factory; includes routers from `api/routers/`          | `api.state`, router modules                                        |
+| `config_models.py`   | AppConfig, ParsingConfig, GradingConfig, default_config              | nothing (leaf)                                                     |
+| `grading_helpers.py` | grade_only filtering, effective_groups, needs_merge                  | grading_models                                                     |
+| `pipeline_runner.py` | Thin wrappers for gather, parse, calibrate, export, estimate         | gather, parse_notebook, parse_outputs, calibrate, export, estimate |
+| `results_store.py`   | load_results, save_results, update_student, load_results_with_backup | nothing (leaf)                                                     |
+| `utils.py`           | Config load/save, logging, OpenAI client                             | config_models                                                      |
+| `grading_models.py`  | LLM response Pydantic schemas, constants                             | nothing (leaf)                                                     |
+| `prompt_builder.py`  | Prompt loading, token counting, sanitization, JSON parsing           | `utils`                                                            |
+| `parse_notebook.py`  | Notebook → parsed JSON                                               | `utils`                                                            |
+| `grade.py`           | `grade_group`, `grade_student`, post-processing                      | `prompt_builder`, `grading_models`, `utils`                        |
+| `batch_grader.py`    | Sequential/parallel grading, resume logic                            | `grade`, `results_store`, `utils`                                  |
+| `rubric/`            | Rubric generation + review (`generate`, `review`, `prompts`, …)      | `prompt_builder`, `utils`, `llm`                                   |
+| `gather.py`          | Submission extraction                                                | `utils`                                                            |
+| `export.py`          | Excel + Gradescope export                                            | `utils`                                                            |
+| `calibrate.py`       | Outlier detection                                                    | `utils`                                                            |
+| `estimate.py`        | Cost projection                                                      | `prompt_builder`, `utils`                                          |
+| `linter_export.py`   | Format linter zip                                                    | `parse_notebook`, `utils`                                          |
+
 
 ### Stable entrypoints
 
-**Documentation index:** [`docs/README.md`](./README.md). Recorded product choices live in [`DECISIONS.md`](./DECISIONS.md).
+**Documentation index:** `[docs/README.md](./README.md)`. Recorded product choices live in `[DECISIONS.md](./DECISIONS.md)`.
 
 Prefer these surfaces when adding features so CLI and web app stay aligned:
 
-- **CLI:** [`main.py`](../main.py) — uses [`pipeline_runner.py`](../pipeline_runner.py) for gather, parse, calibrate, and export (same calls as HTTP routes).
-- **HTTP:** [`app.py`](../app.py) and [`api/routers/`](../api/routers/) — load config via [`api/state.py`](../api/state.py) (`get_active_app_config()` for pipeline work); call `pipeline_runner`, `batch_grader`, `grade`, `export`, etc.
-- **Shared step wrappers:** [`pipeline_runner.py`](../pipeline_runner.py) (`run_gather`, `run_parse`, `run_export`, …).
-- **Config I/O:** [`utils.load_config`](../utils.py) / `load_app_config` for assignment YAML; [`ensure_app_config`](../config_models.py) at dict/`AppConfig` boundaries.
+- **CLI:** `[main.py](../main.py)` — uses `[pipeline_runner.py](../pipeline_runner.py)` for gather, parse, calibrate, and export (same calls as HTTP routes).
+- **HTTP:** `[app.py](../app.py)` and `[api/routers/](../api/routers/)` — load config via `[api/state.py](../api/state.py)` (`get_active_app_config()` for pipeline work); call `pipeline_runner`, `batch_grader`, `grade`, `export`, etc.
+- **Shared step wrappers:** `[pipeline_runner.py](../pipeline_runner.py)` (`run_gather`, `run_parse`, `run_export`, …).
+- **Config I/O:** `[utils.load_config](../utils.py)` / `load_app_config` for assignment YAML; `[ensure_app_config](../config_models.py)` at dict/`AppConfig` boundaries.
 
 ---
 
@@ -117,10 +119,12 @@ The project now uses an explicit per-assignment config as the only runtime sourc
 of truth.
 
 **Root `config.yaml`** (project root, optional example only):
+
 ```yaml
 assignment_name: LabTest_3_S26
 output_dir: output
 ```
+
 This file is only a convenient template/example for humans. The CLI and web app do
 not use it as an active pointer.
 
@@ -149,10 +153,10 @@ The merged dict is validated via `ensure_app_config(cfg)` (same coercion rules a
 everywhere else), then returned as a plain dict with `model_dump()` for
 YAML/HTTP and other dict-shaped consumers.
 
-**`load_app_config(config_path)`** runs the same load path but returns **`AppConfig`**
+`**load_app_config(config_path)**` runs the same load path but returns `**AppConfig**`
 directly (no dict round-trip). Prefer it inside the grading/pipeline stack. The web
-app exposes **`get_active_app_config()`** in `api.state` for routes that call
-`pipeline_runner` / `batch_grader` / export; **`get_active_config()`** remains a dict
+app exposes `**get_active_app_config()**` in `api.state` for routes that call
+`pipeline_runner` / `batch_grader` / export; `**get_active_config()**` remains a dict
 for merge-heavy endpoints (e.g. `PUT /config`). See [docs/README.md](README.md).
 
 ### `AppConfig` schema (`config_models.py`)
@@ -332,6 +336,7 @@ resolves student names, and copies each student's notebook into `submissions/` w
 the student name as the filename stem (e.g. `Alice Smith.ipynb`).
 
 Handles:
+
 - ZIP input (extracts first, then processes)
 - `assignment_*_export` subdirectory layout from Gradescope
 - Missing and duplicate submissions (returned in result dicts with appropriate status)
@@ -346,10 +351,11 @@ Does **not** modify `config.yaml`.
 **Key functions:** `parse_notebook(nb_path, config)`, `parse_all_students(config)`
 
 `parse_notebook` walks cells in order:
+
 1. A markdown cell matching `section_regex` opens a new section.
 2. A markdown cell matching `question_regex` opens a new question within the current section.
 3. Subsequent code cells are accumulated as answer cells; their output text and
-   images are collected.
+  images are collected.
 4. Markdown cells after a question header are accumulated as markdown answers.
 
 `parse_all_students` parses the solution notebook (writes `solution_parsed.json`),
@@ -368,15 +374,16 @@ message parts, which increases token usage but enables grading of plots.
 **Key function:** `generate_rubrics(config, client, progress_callback, group_indices)`
 
 Flow:
+
 1. Load `solution_parsed.json` from `output_dir`.
 2. For each question group (or the subset specified by `group_indices`), call the LLM
-   with the solution content and `rubric_system` prompt.
+  with the solution content and `rubric_system` prompt.
 3. Parse the returned JSON into a `{qid: {points, items: [{description, deduction}]}}` dict.
 4. If `rubric_review` is enabled, run a second LLM pass (`review_system` prompt) per group
-   that softens rubric criteria that hardcode reference-solution-specific values
+  that softens rubric criteria that hardcode reference-solution-specific values
    not required by the question text.
 5. If `group_indices` is set (partial regeneration), merge new rubrics into the
-   existing rubric dict rather than replacing everything.
+  existing rubric dict rather than replacing everything.
 
 **Rubric review** is a safety pass. It does *not* change point values or deduction
 amounts — only description text. The review pass reverts any group where deductions
@@ -400,7 +407,7 @@ One LLM call per question group. Flow:
 3. Parse the response with `parse_llm_json` (tolerates markdown fences).
 4. Validate with `GradingResponse.from_raw` which normalizes `Q1.1` and `1.1` key forms.
 5. If any QID has a placeholder feedback (`[not returned by LLM]` or
-   `[parse error in LLM response]`), treat the response as a validation failure.
+  `[parse error in LLM response]`), treat the response as a validation failure.
 6. Retry up to `MAX_VALIDATION_RETRIES = 2` times with exponential backoff (`2^attempt` seconds).
 7. On exhaustion, return zero scores with `[grading failed after retries]` feedback.
 
@@ -412,12 +419,12 @@ burning completion budget on single-question groups.
 Iterates over all groups from `get_effective_question_groups(grading_config)` (in `grading_helpers`, re-exported by `utils`):
 
 - Groups where all questions are absent from the student's parsed output are skipped
-  with `[no submission]` scores (no LLM call).
+with `[no submission]` scores (no LLM call).
 - Questions in `grade_only` that are not in the current group are assigned
-  `[skipped - not in grade_only]` and excluded from totals.
+`[skipped - not in grade_only]` and excluded from totals.
 - If `merge_into` is provided (from `grade_only_merge` mode), the result dict is
-  seeded from existing results before the grading loop, so ungraded questions
-  retain their previous scores.
+seeded from existing results before the grading loop, so ungraded questions
+retain their previous scores.
 
 The result dict includes `_usage` with token counts; the batch grader pops this
 before writing to `graded_results.json`.
@@ -425,6 +432,7 @@ before writing to `graded_results.json`.
 #### Batch orchestration (`batch_grader.grade_all_students`)
 
 Yields progress event dicts for SSE streaming to the UI:
+
 - `{"status": "done", "student": name, "result": {...}}` per student
 - `{"status": "error", "student": name, "error": "..."}` on failure
 - `{"status": "usage", "usage": {...}, "cost_usd": N}` at the end
@@ -438,12 +446,13 @@ across worker threads.
 #### `grade_only_merge` flow
 
 When `grade_only` + `grade_only_merge` are both set:
+
 1. `needs_grade_only_merge(existing, grade_only)` (in `grading_helpers`) checks whether the specified
-   QIDs in existing results have retryable feedback. Returns `True` if any QID
+  QIDs in existing results have retryable feedback. Returns `True` if any QID
    is missing or has `[skipped - not in grade_only]` / `[grading failed after retries]`.
 2. If merge is needed, `grade_student` is called with `merge_into=existing_result`.
 3. After grading, `compute_totals_from_questions` recomputes `total_score` and
-   `total_max` across the merged question set (excluding skip feedbacks).
+  `total_max` across the merged question set (excluding skip feedbacks).
 
 ---
 
@@ -453,6 +462,7 @@ When `grade_only` + `grade_only_merge` are both set:
 **Entry:** `run_calibration(config) -> list[dict]`
 
 Reads `graded_results.json` and for each question:
+
 1. Collects all student scores.
 2. Computes mean and sample standard deviation (n-1 denominator).
 3. Flags entries with `|z| > 2` as outliers.
@@ -468,23 +478,25 @@ of 2 scores per question is required before statistics are computed.
 **Key functions:** `export_all(config)`, `export_autograder_zip(config)`
 
 `export_all`:
+
 - Reads `graded_results.json`.
 - Writes `output/gradescope/{StudentName}.json` in Gradescope autograder format
-  (array of `{name, score, max_score, output, visibility}` test entries).
+(array of `{name, score, max_score, output, visibility}` test entries).
 - Applies `cfg.gradescope_title_mapping` to rename QID labels in Gradescope output.
 - If `grade_only` is set, only those QIDs appear in the Gradescope output.
 - Writes `Final_Grades.xlsx` with one row per student and one column per question.
 
 `export_autograder_zip`:
+
 - Bundles all per-student JSONs from `gradescope/` into a Gradescope autograder ZIP.
 - The embedded `run_autograder` script resolves the submission owner from
-  `submission_metadata.json` and copies a matching pre-computed result to
-  `/autograder/results/results.json`.
+`submission_metadata.json` and copies a matching pre-computed result to
+`/autograder/results/results.json`.
   - It performs exact normalized-name matching only.
   - If multiple exact-normalized matches are found, it emits an explicit ambiguous-match error
-    instead of using fuzzy fallback matching.
+  instead of using fuzzy fallback matching.
 - ZIP entries for `setup.sh` and `run_autograder` use `create_system=3` (Unix) and
-  `external_attr = 0o755 << 16` to set executable bits for Gradescope.
+`external_attr = 0o755 << 16` to set executable bits for Gradescope.
 
 ---
 
@@ -501,11 +513,13 @@ FileNotFoundError                     ← strict failure if neither exists
 
 Available prompt names used in the pipeline:
 
-| Name | Used by | Purpose |
-|---|---|---|
-| `grade_system` | `grade_group` | System prompt for the grading LLM |
-| `rubric_system` | `rubric._get_rubric_generation_prompt` | System prompt for rubric generation |
-| `review_system` | `rubric._get_rubric_review_prompt` | System prompt for rubric review pass |
+
+| Name            | Used by                                | Purpose                              |
+| --------------- | -------------------------------------- | ------------------------------------ |
+| `grade_system`  | `grade_group`                          | System prompt for the grading LLM    |
+| `rubric_system` | `rubric._get_rubric_generation_prompt` | System prompt for rubric generation  |
+| `review_system` | `rubric._get_rubric_review_prompt`     | System prompt for rubric review pass |
+
 
 To customize prompts for a specific assignment, create files in
 `prompts/{assignment_name}/`. Files not present there fall back to `prompts/DEFAULT/`.
@@ -513,14 +527,15 @@ To customize prompts for a specific assignment, create files in
 ### Grading prompt structure (`build_group_prompt`)
 
 For each group:
+
 1. One system message with the `grade_system` prompt text.
 2. One user message containing, in order:
-   - For each question in the group:
-     - Question header with points
-     - Solution content (question markdown, code, output, markdown answer, images)
-       — if `include_reference_in_grading` is False, only the question text and rubric are included
-     - Rubric (if present in `cfg.rubrics`)
-     - Student submission section wrapped in `<<<STUDENT_SUBMISSION>>>` / `<<<END_STUDENT_SUBMISSION>>>` delimiters.
+  - For each question in the group:
+    - Question header with points
+    - Solution content (question markdown, code, output, markdown answer, images)
+    — if `include_reference_in_grading` is False, only the question text and rubric are included
+    - Rubric (if present in `cfg.rubrics`)
+    - Student submission section wrapped in `<<<STUDENT_SUBMISSION>>>` / `<<<END_STUDENT_SUBMISSION>>>` delimiters.
 
 Long text fields (reference and student code, output, markdown) share one character cap
 derived from `max_prompt_tokens` (`prompt_builder._grading_body_char_cap` — roughly 4×
@@ -560,6 +575,7 @@ client.chat.completions.create(response_format={"type": "json_object"})
 ### Feedback sentinel constants
 
 `grading_models.py` defines:
+
 - `SKIP_FEEDBACKS = ("[skipped - not in grade_only]", "[not included in grading groups]")`
 - `NO_SUBMISSION = "[no submission]"`
 
@@ -582,6 +598,7 @@ emitting (graded_results `_usage`, SSE `usage`, estimate API payloads) and
 ### Temperature policy
 
 `temperature_for_model(model)` returns:
+
 - `1.0` for `gpt-5*` family (reasoning models that only support temperature=1)
 - `0.0` for all other models (deterministic output for reproducibility)
 
@@ -594,6 +611,7 @@ emitting (graded_results `_usage`, SSE `usage`, estimate API payloads) and
 ### Concurrency controls
 
 Three threading locks on `api.state`:
+
 ```python
 grading_lock   # prevents two concurrent grading runs (writes graded_results.json)
 results_lock   # protects results reads/writes (grading loop + manual review saves)
@@ -624,6 +642,7 @@ The UI sends only the fields the user changed; the merge preserves everything el
 ### Assignment switching
 
 When a `PUT /config` payload contains a different `assignment_name`, the app:
+
 1. Detects the change (`incoming_assignment != current_assignment`).
 2. Saves the updated payload to the active assignment config path.
 3. Re-initializes file logging to the new assignment's `autograder.log`.
@@ -641,14 +660,16 @@ for blocking work and return ordinary JSON responses.
 
 ## 8. Security guardrails
 
-| Threat | Mitigation |
-|---|---|
-| Prompt injection via student notebook | `_sanitize_student_text` replaces `<<<` / `>>>` with `«` / `»` before any student content enters a prompt |
-| Path traversal in API routes | `safe_path` in `api/helpers.py` resolves and checks the path stays under `base`; raises HTTP 400 otherwise |
-| Untrusted YAML (student names) | Student names come only from Gradescope metadata, not from notebook content |
-| Concurrent writes to `graded_results.json` | `results_lock` wraps reads and writes; `results_store` used by both `batch_grader` and API routes |
-| API key exposure | Loaded via `dotenv` — use **`OPENAI_API_KEY`** in `.env` (legacy `key` is deprecated); never logged or returned in API responses |
-| Malformed LLM JSON | `parse_llm_json` extracts the first balanced `{...}` block; `GradingResponse.from_raw` replaces unparseables with safe defaults |
+
+| Threat                                     | Mitigation                                                                                                                       |
+| ------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------- |
+| Prompt injection via student notebook      | `_sanitize_student_text` replaces `<<<` / `>>>` with `«` / `»` before any student content enters a prompt                        |
+| Path traversal in API routes               | `safe_path` in `api/helpers.py` resolves and checks the path stays under `base`; raises HTTP 400 otherwise                       |
+| Untrusted YAML (student names)             | Student names come only from Gradescope metadata, not from notebook content                                                      |
+| Concurrent writes to `graded_results.json` | `results_lock` wraps reads and writes; `results_store` used by both `batch_grader` and API routes                                |
+| API key exposure                           | Loaded via `dotenv` — use `**OPENAI_API_KEY`** in `.env` (legacy `key` is deprecated); never logged or returned in API responses |
+| Malformed LLM JSON                         | `parse_llm_json` extracts the first balanced `{...}` block; `GradingResponse.from_raw` replaces unparseables with safe defaults  |
+
 
 ---
 
@@ -656,23 +677,25 @@ for blocking work and return ordinary JSON responses.
 
 Tests live in `tests/` and are run with `pytest tests/ -q`.
 
-| File | What it covers |
-|---|---|
-| `test_utils.py` | Config load/save/defaults, `AppConfig` serialization helpers, `ensure_app_config`, path resolution |
-| `test_parse.py` | Notebook parsing with mock cell structures |
-| `test_grade.py` | `grade_student` and `grade_group` logic including `grade_only`, merge, skip, retry |
-| `test_rubric.py` | Rubric generation and review pass logic |
-| `test_export.py` | Excel and Gradescope JSON output, `gradescope_title_mapping` |
-| `test_gather.py` | Submission extraction from metadata |
-| `test_calibrate.py` | Z-score computation and outlier flagging |
-| `test_app.py` | FastAPI endpoints including config CRUD, grading SSE, export downloads |
-| `test_prompt_builder.py` | Prompt construction, sanitization, token budgeting |
-| `test_linter_export.py` | Linter ZIP creation |
-| `test_results_store.py` | `load_results`, `save_results`, `load_results_with_backup`, update_student |
-| `test_integration.py` | End-to-end parse → grade → export with mocked LLM |
-| `test_queue_estimate.py` | `load_grade_queue` vs `estimate_grade` alignment |
-| `test_usage_helpers.py` | Token usage merge helpers on graded results |
-| `test_results_models.py` | `GradedResult` / disk round-trip |
+
+| File                     | What it covers                                                                                     |
+| ------------------------ | -------------------------------------------------------------------------------------------------- |
+| `test_utils.py`          | Config load/save/defaults, `AppConfig` serialization helpers, `ensure_app_config`, path resolution |
+| `test_parse.py`          | Notebook parsing with mock cell structures                                                         |
+| `test_grade.py`          | `grade_student` and `grade_group` logic including `grade_only`, merge, skip, retry                 |
+| `test_rubric.py`         | Rubric generation and review pass logic                                                            |
+| `test_export.py`         | Excel and Gradescope JSON output, `gradescope_title_mapping`                                       |
+| `test_gather.py`         | Submission extraction from metadata                                                                |
+| `test_calibrate.py`      | Z-score computation and outlier flagging                                                           |
+| `test_app.py`            | FastAPI endpoints including config CRUD, grading SSE, export downloads                             |
+| `test_prompt_builder.py` | Prompt construction, sanitization, token budgeting                                                 |
+| `test_linter_export.py`  | Linter ZIP creation                                                                                |
+| `test_results_store.py`  | `load_results`, `save_results`, `load_results_with_backup`, update_student                         |
+| `test_integration.py`    | End-to-end parse → grade → export with mocked LLM                                                  |
+| `test_queue_estimate.py` | `load_grade_queue` vs `estimate_grade` alignment                                                   |
+| `test_usage_helpers.py`  | Token usage merge helpers on graded results                                                        |
+| `test_results_models.py` | `GradedResult` / disk round-trip                                                                   |
+
 
 LLM calls are always mocked in tests via `unittest.mock.patch`. Tests never hit
 the OpenAI API.
@@ -755,20 +778,25 @@ an assignment-specific override). Call `load_prompt("{name}", assignment_name=..
 ### Add a new config field
 
 1. Add it to the appropriate Pydantic model (`AppConfig`, `GradingConfig`, etc.)
-   with a default value.
+  with a default value.
 2. Add a default on `AppConfig` / nested models (and rely on `merge_partial_config_dict`) if it needs to be back-filled in old configs
-   for load-time safety.
+  for load-time safety.
 3. The assignment config is fully authoritative; no special root-override handling
-   is needed for new fields.
+  is needed for new fields.
 4. Update `default_config()` in `config_models.py` so the UI sends it on fresh setup (app uses `default_config("default")` when no assignment is loaded).
 
 ### Add a new pipeline stage
 
-1. Create a module with a `main()` entry point and a primary function with
-   signature `def run_{stage}(config: AppConfig | dict) -> ...`.
-2. Add the stage name to `main.py`'s step list and dispatch block.
-3. Add a route to `app.py` if it needs a UI trigger.
-4. Write tests in `tests/test_{stage}.py`.
+1. Implement the stage (primary callable taking `AppConfig | dict`, same as existing modules).
+2. Add the stage name to `main.py`'s `--steps` choices and the `if "…" in steps:` dispatch block.
+3. If it needs a UI trigger, add HTTP routes in `api/routers/` (see `pipeline_routes.py`,
+  `grade_routes.py`, …) and, if you add a new router module, register it in `app.py` with
+  `include_router`.
+4. **Shared entrypoints:** `gather`, `parse`, `calibrate`, and `export` use thin wrappers in
+  `pipeline_runner.py` so CLI (`main.py`) and HTTP call the same code. **`grade` and
+  `generate-rubrics` are not in `pipeline_runner`** — they are imported directly (`batch_grader`,
+  `rubric.generate_rubrics`). Follow whichever pattern fits the new step.
+5. Write tests in `tests/test_{stage}.py` (or extend an existing test file).
 
 ### Regrade a subset of questions
 
