@@ -6,10 +6,12 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from utils import DEFAULT_MODEL
+from config_models import DEFAULT_MODEL, ensure_app_config
+from grading_models import GradingLlmResponse, QuestionGrade
 from parse_notebook import get_all_question_ids, parse_all_students, parse_notebook
 from export import export_all
 from grade import grade_student
+from results_models import TokenUsage
 
 
 def _make_notebook(cells: list[dict]) -> dict:
@@ -68,9 +70,10 @@ class TestIntegrationPipeline:
             "grading": {"question_groups": [["1.1"]], "grade_only": None},
             "rubrics": {},
         }
+        cfg = ensure_app_config(config)
 
         # Step 1: Parse
-        solution_parsed, report = parse_all_students(config)
+        solution_parsed, report = parse_all_students(cfg)
         assert solution_parsed is not None
         assert "1.1" in get_all_question_ids(solution_parsed)
         assert (parsed_dir / "Alice.json").exists()
@@ -78,18 +81,15 @@ class TestIntegrationPipeline:
         # Step 2: Grade (mock LLM)
         student_parsed = json.loads((parsed_dir / "Alice.json").read_text())
         student_parsed["student_name"] = "Alice"
-        mock_response = MagicMock()
-        mock_response.choices = [MagicMock()]
-        mock_response.choices[0].message.content = (
-            '{"1.1": {"score": 2, "feedback": "ok"}}'
+        fake_parsed = GradingLlmResponse(
+            grades=[QuestionGrade(question_id="1.1", score=2.0, feedback="ok")]
         )
-        mock_response.usage = MagicMock(prompt_tokens=100, completion_tokens=50)
-        with patch("grade.get_openai_client") as mock_get_client:
-            mock_client = MagicMock()
-            mock_client.chat.completions.create.return_value = mock_response
-            mock_get_client.return_value = mock_client
+        with patch(
+            "llm.json_runner.complete_structured",
+            return_value=(fake_parsed, TokenUsage(100, 50)),
+        ):
             result = grade_student(
-                student_parsed, solution_parsed, config, client=mock_client
+                student_parsed, solution_parsed, cfg, client=MagicMock()
             )
         assert result["total_score"] == 2
         assert result["total_max"] == 2
@@ -98,7 +98,7 @@ class TestIntegrationPipeline:
         (output_dir / "graded_results.json").write_text(json.dumps([result], indent=2))
 
         # Step 3: Export
-        summary = export_all(config)
+        summary = export_all(cfg)
         assert summary["students"] == 1
         assert (output_dir / "gradescope" / "Alice.json").exists()
         assert (output_dir / "Final_Grades.xlsx").exists()
@@ -148,7 +148,7 @@ class TestIntegrationPipeline:
             "rubrics": {},
         }
 
-        _, report = parse_all_students(config)
+        _, report = parse_all_students(ensure_app_config(config))
         assert len(report) == 1
         row = report[0]
         assert row["status"] == "warning"
@@ -196,7 +196,7 @@ class TestIntegrationPipeline:
             "rubrics": {},
         }
 
-        _, report = parse_all_students(config)
+        _, report = parse_all_students(ensure_app_config(config))
         assert len(report) == 1
         row = report[0]
         assert row["status"] == "warning"

@@ -257,10 +257,16 @@ input[type="checkbox"]:focus-visible { outline: 2px solid var(--primary); outlin
     border-color: #f97316;
     color: #7c2d12;
 }
+.review-v2-qpill--f-genai:not(.active) {
+    background: #ffe4e6;
+    border-color: #f43f5e;
+    color: #9f1239;
+}
 .review-v2-qpill--f-nr.active { box-shadow: inset 0 -3px 0 0 #fb923c; }
 .review-v2-qpill--f-lc.active { box-shadow: inset 0 -3px 0 0 #eab308; }
 .review-v2-qpill--f-out.active { box-shadow: inset 0 -3px 0 0 #a78bfa; }
 .review-v2-qpill--f-multi.active { box-shadow: inset 0 -3px 0 0 #f97316; }
+.review-v2-qpill--f-genai.active { box-shadow: inset 0 -3px 0 0 #f43f5e; }
 .review-legend-dot {
     display: inline-block;
     width: 10px;
@@ -273,6 +279,7 @@ input[type="checkbox"]:focus-visible { outline: 2px solid var(--primary); outlin
 .review-legend-dot-lc { background: #fef9c3; border-color: #eab308; }
 .review-legend-dot-out { background: #ede9fe; border-color: #a78bfa; }
 .review-legend-dot-multi { background: #fff7ed; border-color: #f97316; }
+.review-legend-dot-genai { background: #ffe4e6; border-color: #f43f5e; }
 .review-v2-nav-btn { padding: 8px 12px; min-width: 36px; min-height: 32px; font-size: 0.8rem; }
 .review-v2-toolbar-mid { flex: 0 0 auto; text-align: center; }
 .review-v2-total-inline { font-weight: 800; font-size: 0.95rem; color: #0f172a; }
@@ -458,6 +465,25 @@ input[type="checkbox"]:focus-visible { outline: 2px solid var(--primary); outlin
     background: #f8fafc;
 }
 .review-v2-work .review-v2-code code.hljs { padding: 0; background: transparent; font-size: inherit; }
+.review-v2-work .review-v2-output-images {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin: 4px 0 10px;
+}
+.review-v2-work .review-v2-output-fig {
+    margin: 0;
+    padding: 8px;
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+    border-radius: 6px;
+}
+.review-v2-work .review-v2-output-img {
+    display: block;
+    max-width: 100%;
+    height: auto;
+    vertical-align: middle;
+}
 .review-v2-work .review-v2-output {
     background: #f1f5f9;
     padding: 10px 12px;
@@ -544,6 +570,12 @@ pre.preview-block { background: #1e293b; color: #e2e8f0; padding: 16px; border-r
 .badge-review { background: #fef3c7; color: #92400e; }
 .student-item.flagged .sname { color: #d97706; }
 .outlier-banner { background: #fef3c7; border: 1px solid #f59e0b; border-radius: 6px; padding: 8px 12px; margin: 8px 0; font-size: 0.85rem; color: #92400e; }
+.genai-banner { background: #fff1f2; border: 1px solid #f43f5e; border-radius: 6px; padding: 8px 12px; margin: 8px 0; font-size: 0.85rem; color: #9f1239; }
+.genai-banner-note { font-style: italic; opacity: 0.95; }
+.genai-status { border-radius: 6px; padding: 8px 10px; }
+.genai-status.info { background: #eff6ff; border: 1px solid #93c5fd; color: #1e3a8a; }
+.genai-status.success { background: #ecfdf5; border: 1px solid #86efac; color: #166534; }
+.genai-status.error { background: #fef2f2; border: 1px solid #fca5a5; color: #991b1b; }
 .setup-group-card { border: 1px solid #e2e8f0; border-radius: 8px; padding: 10px 12px; margin-bottom: 10px; background: #f8fafc; min-height: 44px; }
 .setup-group-card.drag-over { border-color: var(--primary); background: #eff6ff; }
 .setup-group-card.dragging { opacity: 0.5; }

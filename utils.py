@@ -9,63 +9,32 @@ import threading
 import warnings
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from pydantic import BaseModel
-
 import httpx
 import yaml
 from dotenv import load_dotenv
 
 from config_models import (
-    DEFAULT_MODEL,
     AppConfig,
-    app_config_to_yaml_data,
     ensure_app_config,
-    get_config_field,
-    merge_partial_config_dict,
-    normalize_qid,
-)
-from grading_helpers import (
-    filter_groups_by_grade_only,
-    get_active_grade_only,
-    get_effective_question_groups,
-    get_skipped_feedback,
-    is_grade_only_merge_enabled,
-    needs_grade_only_merge,
 )
 from openai import OpenAI
 
-__all__ = [
-    "DEFAULT_MODEL",
-    "AppConfig",
-    "ensure_app_config",
-    "app_config_to_yaml_data",
-    "get_config_field",
-    "normalize_qid",
-    "sanitize_assignment_name",
-    "load_config",
-    "load_app_config",
-    "save_config",
-    "AssignmentOutputPaths",
-    "get_assignment_output_paths",
-    "get_openai_client",
-    "temperature_for_model",
-    "setup_assignment_logging",
-    "get_job_logger",
-    "filter_groups_by_grade_only",
-    "get_active_grade_only",
-    "get_effective_question_groups",
-    "is_grade_only_merge_enabled",
-    "needs_grade_only_merge",
-    "get_skipped_feedback",
-]
+# Windows path reserved characters; stripped by ``sanitize_filename_component``.
+# Also embedded in ``export.RUN_AUTOGRADER`` (must stay in sync).
+FILENAME_FORBIDDEN_LITERAL = '/\\:*?"<>|'
 
 
-def sanitize_assignment_name(name: str) -> str:
-    """Normalize assignment names to a filesystem-safe token."""
-    return re.sub(r'[/\\:*?"<>|.]', "_", str(name or "default")).strip("_") or "default"
+def sanitize_filename_component(name: str, *, if_empty: str | None = None) -> str:
+    """
+    Remove characters that are invalid in cross-platform filenames.
+
+    When ``if_empty`` is set and the result would be empty (e.g. student name was
+    only forbidden characters), returns ``if_empty`` instead.
+    """
+    out = "".join(c for c in name if c not in FILENAME_FORBIDDEN_LITERAL)
+    if if_empty is not None and not out:
+        return if_empty
+    return out
 
 
 _configured_loggers: dict[str, Path] = {}
@@ -106,71 +75,10 @@ def setup_assignment_logging(assignment_name: str, output_dir: str | Path) -> Pa
     return log_path
 
 
-def get_job_logger(config: dict | BaseModel, module_name: str) -> logging.Logger:
+def get_job_logger(config: AppConfig, module_name: str) -> logging.Logger:
     """Get a logger scoped to the current assignment to prevent interleaved logs."""
-    assignment_name = get_config_field(config, "assignment_name", "DEFAULT")
+    assignment_name = config.assignment_name or "DEFAULT"
     return logging.getLogger(f"autograder.{assignment_name}.{module_name}")
-
-
-# ---------------------------------------------------------------------------
-# Config I/O
-# ---------------------------------------------------------------------------
-
-
-def _read_yaml_dict(path: Path, *, require_exists: bool = True) -> dict:
-    if not path.exists():
-        if require_exists:
-            raise FileNotFoundError(f"Config file not found: {path}")
-        return {}
-    with open(path, "r", encoding="utf-8") as f:
-        loaded = yaml.safe_load(f)
-    if loaded is None:
-        return {}
-    if not isinstance(loaded, dict):
-        raise ValueError(f"Invalid config format in {path}: expected a YAML mapping.")
-    return loaded
-
-
-def _resolve_config_paths(cfg: dict, config_root: Path) -> dict:
-    resolved = dict(cfg)
-    for key in ("solution_notebook", "submissions_dir", "parsed_dir", "output_dir"):
-        value = resolved.get(key)
-        if value and not Path(value).is_absolute():
-            resolved[key] = str((config_root / value).resolve())
-    return resolved
-
-
-def _load_assignment_app_config(
-    config_path: Path, *, require_exists: bool = True
-) -> AppConfig:
-    """Single load path: YAML → merged defaults → resolved paths → ``AppConfig``."""
-    path = Path(config_path).resolve()
-    cfg = _read_yaml_dict(path, require_exists=require_exists)
-    cfg = merge_partial_config_dict(cfg)
-    project_root = path.parent.parent.parent
-    cfg = _resolve_config_paths(cfg, project_root)
-    assignment_name = sanitize_assignment_name(cfg.get("assignment_name", "default"))
-    assignment_root = (project_root / "output" / assignment_name).resolve()
-    cfg["output_dir"] = str(assignment_root)
-    cfg["submissions_dir"] = str(assignment_root / "submissions")
-    cfg["parsed_dir"] = str(assignment_root / "parsed")
-    cfg["assignment_name"] = assignment_name
-    return ensure_app_config(cfg)
-
-
-def load_config(config_path: Path, *, require_exists: bool = True) -> dict:
-    """Load assignment config for YAML/JSON APIs (plain dict).
-
-    For pipeline code prefer ``load_app_config`` and pass ``AppConfig`` through internals.
-    """
-    return _load_assignment_app_config(
-        config_path, require_exists=require_exists
-    ).model_dump(mode="python")
-
-
-def load_app_config(config_path: Path, *, require_exists: bool = True) -> AppConfig:
-    """Load and validate configuration as ``AppConfig`` (no dict round-trip)."""
-    return _load_assignment_app_config(config_path, require_exists=require_exists)
 
 
 def save_config(config: dict | AppConfig, config_path: Path) -> None:
@@ -180,7 +88,7 @@ def save_config(config: dict | AppConfig, config_path: Path) -> None:
     (config_path.parent.parent.parent).
     """
     validated = ensure_app_config(config)
-    cfg = app_config_to_yaml_data(validated)
+    cfg = validated.model_dump(mode="python", exclude_none=True)
     cfg["output_dir"] = "output"
     cfg.pop("submissions_dir", None)
     cfg.pop("parsed_dir", None)
@@ -215,16 +123,15 @@ class AssignmentOutputPaths:
     gradescope_dir: Path
 
 
-def get_assignment_output_paths(config: dict | AppConfig) -> AssignmentOutputPaths:
+def get_assignment_output_paths(config: AppConfig) -> AssignmentOutputPaths:
     """Return canonical assignment-scoped output paths.
 
     Centralizing these paths avoids subtle mismatches across pipeline modules.
     """
-    cfg = ensure_app_config(config)
-    output_dir = Path(cfg.output_dir)
+    output_dir = Path(config.output_dir)
     return AssignmentOutputPaths(
         output_dir=output_dir,
-        parsed_dir=Path(cfg.parsed_dir),
+        parsed_dir=Path(config.parsed_dir),
         solution_parsed=output_dir / "solution_parsed.json",
         graded_results=output_dir / "graded_results.json",
         gradescope_dir=output_dir / "gradescope",

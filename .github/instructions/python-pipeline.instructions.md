@@ -1,7 +1,7 @@
 ---
-description: "Use when editing pipeline modules: parse_notebook.py, rubric/, grade.py, batch_grader.py, export.py. Covers single-purpose design, shared utilities, assignment-scoped output, incremental save and resume behavior."
+description: "Use when editing pipeline modules: parse_notebook.py, rubric_generate.py, rubric_review.py, grade.py, batch_grader.py, export.py. Covers single-purpose design, shared utilities, assignment-scoped output, incremental save and resume behavior."
 name: "Python Pipeline Guidelines"
-applyTo: "{**/parse_notebook.py,**/rubric/**/*.py,**/grade.py,**/batch_grader.py,**/export.py,**/prompt_builder.py,**/grading_models.py}"
+applyTo: "{**/parse_notebook.py,**/rubric_generate.py,**/rubric_review.py,**/grade.py,**/batch_grader.py,**/export.py,**/prompt_builder.py,**/grading_models.py}"
 ---
 
 # Python Pipeline Guidelines
@@ -10,7 +10,7 @@ applyTo: "{**/parse_notebook.py,**/rubric/**/*.py,**/grade.py,**/batch_grader.py
 
 Each pipeline module should have one clear responsibility:
 - **parse_notebook.py**: Parse solution and student notebooks into question-level JSON.
-- **rubric/**: Generate rubrics from reference solution (`impl.py`).
+- **rubric_generate / rubric_review**: Generate rubrics from reference solution; optional review pass.
 - **grade.py**: Grade a single student/group against a rubric.
 - **batch_grader.py**: Orchestrate sequential or parallel grading across students.
 - **export.py**: Write Gradescope JSON, Excel, and autograder artifacts.

@@ -13,12 +13,17 @@ from batch_grader import grade_all_students
 from api import sse as sse_mod
 from api import state
 from api.validation import parse_student_name_path_param
+from genai_detection import run_genai_detection
+from grading_helpers import get_effective_question_groups
 from grade import grade_student
-from llm.types import TokenUsage
-from llm.usage_helpers import detach_usage_from_graded_result
+from results_models import (
+    GradedResult,
+    TokenUsage,
+    detach_usage_from_graded_result,
+)
 from prompt_builder import validate_question_groups
 from results_store import find_student, load_results, save_results, update_student
-from utils import filter_groups_by_grade_only, get_assignment_output_paths
+from utils import get_assignment_output_paths
 
 logger = logging.getLogger(__name__)
 
@@ -94,20 +99,20 @@ async def api_grade_one(student_name: str):
         student_parsed["student_name"] = student_name
 
         grading_config = cfg.grading
-        groups = list(grading_config.question_groups)
-        grade_only = grading_config.grade_only
-        if grade_only:
-            groups = filter_groups_by_grade_only(groups, grade_only)
+        groups = get_effective_question_groups(grading_config)
         ungrouped = validate_question_groups(groups, solution_parsed)
 
-        grade_only_merge = bool(grading_config.grade_only_merge and grade_only)
+        grade_only_merge = grading_config.grade_only_merge
         merge_into = None
         out_path = paths.graded_results
         if grade_only_merge and out_path.exists():
             with state.results_lock:
                 try:
                     existing_results = load_results(out_path)
-                    merge_into = find_student(existing_results, student_name)
+                    found = find_student(existing_results, student_name)
+                    merge_into = (
+                        found.model_dump(mode="python") if found is not None else None
+                    )
                 except ValueError as e:
                     raise HTTPException(
                         status_code=500,
@@ -128,7 +133,11 @@ async def api_grade_one(student_name: str):
         with state.results_lock:
             try:
                 results = load_results(out_path)
-                update_student(results, student_name, result_for_disk)
+                update_student(
+                    results,
+                    student_name,
+                    GradedResult.model_validate(result_for_disk),
+                )
                 save_results(out_path, results)
             except ValueError as e:
                 raise HTTPException(status_code=500, detail=str(e))
@@ -136,5 +145,28 @@ async def api_grade_one(student_name: str):
         if usage is not None and usage.has_tokens():
             response["usage"] = usage.to_json_dict()
         return response
+    finally:
+        state.grading_lock.release()
+
+
+@router.post("/detect-genai")
+async def api_detect_genai():
+    """Optional second pass: merge GenAI suspicion flags into graded_results.json."""
+    if not state.grading_lock.acquire(blocking=False):
+        raise HTTPException(
+            status_code=409,
+            detail="Grading in progress. Wait before running GenAI detection.",
+        )
+    try:
+        cfg = state.get_active_app_config()
+
+        def _run():
+            return run_genai_detection(cfg)
+
+        with state.results_lock:
+            summary = await asyncio.to_thread(_run)
+        return summary
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
     finally:
         state.grading_lock.release()

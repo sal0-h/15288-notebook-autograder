@@ -10,6 +10,7 @@ from fastapi import APIRouter, Body, HTTPException
 from api.helpers import safe_path
 from api import state
 from api.validation import parse_student_name_path_param
+from results_models import GradedResult
 from results_store import load_results, save_results, update_student
 from utils import get_assignment_output_paths
 
@@ -38,6 +39,13 @@ def api_put_results(student_name: str, result: dict = Body(...)):
             status_code=422,
             detail=f"Missing required keys: {[k for k in required if k not in result]}",
         )
+
+    # Validate and convert dict to GradedResult
+    try:
+        validated = GradedResult.model_validate(result)
+    except Exception as e:
+        raise HTTPException(status_code=422, detail=f"Invalid result schema: {str(e)}")
+
     cfg = state.get_active_app_config()
     path = get_assignment_output_paths(cfg).graded_results
 
@@ -47,7 +55,7 @@ def api_put_results(student_name: str, result: dict = Body(...)):
     with state.results_lock:
         try:
             results = load_results(path)
-            update_student(results, student_name, result)
+            update_student(results, student_name, validated)
             save_results(path, results)
         except ValueError as e:
             raise HTTPException(status_code=500, detail=str(e))

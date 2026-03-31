@@ -95,7 +95,7 @@ def test_build_group_prompt_includes_rubric_from_rubric_entry_models():
     )
     user = messages[1]["content"]
     text_blob = "\n".join(
-        p["text"] for p in user if isinstance(p, dict) and p.get("type") == "text"
+        p["text"] for p in user if isinstance(p, dict) and p.get("type") == "input_text"
     )
     assert "RUBRIC (deduct from 10 pts):" in text_blob
     assert "Wrong approach: -5.0 pts" in text_blob
@@ -142,6 +142,14 @@ def test_build_group_prompt_includes_rubric_from_plain_dicts():
     )
     user = messages[1]["content"]
     text_blob = "\n".join(
-        p["text"] for p in user if isinstance(p, dict) and p.get("type") == "text"
+        p["text"] for p in user if isinstance(p, dict) and p.get("type") == "input_text"
     )
     assert "Off by one: -3.0 pts" in text_blob
+
+
+def test_build_genai_detection_user_message_none_when_empty():
+    student = {"sections": {"1": {"questions": {"1.1": {"question_markdown": ""}}}}}
+    assert (
+        prompt_builder.build_genai_detection_user_message(["1.1"], student, 8000)
+        is None
+    )

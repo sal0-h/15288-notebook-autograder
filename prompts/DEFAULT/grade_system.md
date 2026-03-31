@@ -24,6 +24,6 @@ FEEDBACK FORMAT:
 - Do NOT write long paragraphs. Do NOT list things the student could have added.
 
 RESPONSE FORMAT:
-Return valid JSON only, no prose outside JSON.
-One key per question ID mapping to {"score": N, "feedback": "...", "confidence": "high|medium|low", "requires_review": true|false}.
-Set requires_review to true ONLY when you genuinely cannot evaluate the answer.
+Return a JSON object with a "grades" array. Each element covers one question:
+{"question_id": "N.N", "score": N, "feedback": "...", "confidence": "high|medium|low", "requires_review": true|false}
+Include every question ID you were asked to grade. Set requires_review to true ONLY when you genuinely cannot evaluate the answer.

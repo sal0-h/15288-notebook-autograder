@@ -14,7 +14,7 @@ from api import state
 from pydantic import ValidationError
 
 from config_models import ensure_app_config
-from rubric import generate_rubrics
+from rubric_generate import generate_rubrics
 from utils import save_config
 
 logger = logging.getLogger(__name__)
@@ -58,10 +58,11 @@ async def api_generate_rubrics_stream(
                 progress_callback=progress_cb,
                 group_indices=group_indices,
             )
+            rubrics_dump = {qid: e.model_dump() for qid, e in rubrics.items()}
             data = cfg.model_dump(mode="python")
-            data["rubrics"] = rubrics
+            data["rubrics"] = rubrics_dump
             save_config(data, state.get_active_config_path())  # type: ignore[arg-type]
-            emit({"status": "done", "rubrics": rubrics})
+            emit({"status": "done", "rubrics": rubrics_dump})
         except Exception as e:
             emit(error_event(str(e)))
 
@@ -87,10 +88,11 @@ async def api_generate_rubrics_post(
         rubrics = await asyncio.to_thread(
             generate_rubrics, cfg, group_indices=group_indices
         )
+        rubrics_dump = {qid: e.model_dump() for qid, e in rubrics.items()}
         data = cfg.model_dump(mode="python")
-        data["rubrics"] = rubrics
+        data["rubrics"] = rubrics_dump
         save_config(data, state.get_active_config_path())  # type: ignore[arg-type]
-        return {"rubrics": rubrics}
+        return {"rubrics": rubrics_dump}
     finally:
         state.rubric_lock.release()
 
@@ -98,14 +100,14 @@ async def api_generate_rubrics_post(
 @router.get("/rubrics")
 def api_get_rubrics():
     """Read rubrics from config."""
-    config = state.get_active_config()
-    return config.get("rubrics", {})
+    cfg = state.get_active_app_config()
+    return cfg.model_dump(mode="python").get("rubrics", {})
 
 
 @router.put("/rubrics")
 def api_put_rubrics(rubrics: dict = Body(...)):
     """Save edited rubrics to config."""
-    merged = dict(state.get_active_config())
+    merged = state.get_active_app_config().model_dump(mode="python")
     merged["rubrics"] = rubrics
     try:
         ensure_app_config(merged)

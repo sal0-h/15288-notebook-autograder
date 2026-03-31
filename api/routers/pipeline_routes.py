@@ -11,10 +11,11 @@ from pathlib import Path
 from fastapi import APIRouter, File, HTTPException, UploadFile
 
 from api import state
-from api.constants import DEFAULT_UPLOAD_MB
 from pipeline_runner import run_gather, run_gather_from_folder, run_parse
 
 router = APIRouter()
+
+DEFAULT_UPLOAD_MB = 500
 
 
 @router.post("/gather")

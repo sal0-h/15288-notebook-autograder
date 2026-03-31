@@ -5,41 +5,40 @@ import logging
 from pathlib import Path
 
 from openai import OpenAI
+from pydantic import BaseModel
 
+from config_models import AppConfig, DEFAULT_MODEL, normalize_qid
+from grading_helpers import (
+    get_active_grade_only,
+    get_effective_question_groups,
+    get_skipped_feedback,
+)
 from grading_models import (
     GRADING_FAILED,
-    LLM_NOT_RETURNED,
-    LLM_PARSE_ERROR,
-    GradingResponse,
+    GradingLlmResponse,
     NO_SUBMISSION,
     QuestionGrade,
     SKIP_FEEDBACKS,
 )
-from llm import complete_json_chat, retry_with_exponential_backoff
-from llm.types import TokenUsage
+from llm.json_runner import (
+    MAX_JSON_LLM_ATTEMPTS,
+    execute_llm_task,
+)
+from results_models import TokenUsage
 from results_models import GradedResult, graded_result_to_disk_dict
 from prompt_builder import (
     build_group_prompt,
     get_question_data,
     load_prompt,
-    parse_llm_json,
     validate_question_groups,
 )
+from config_models import load_app_config
 from utils import (
-    AppConfig,
-    ensure_app_config,
-    DEFAULT_MODEL,
-    get_active_grade_only,
     get_openai_client,
-    get_effective_question_groups,
-    get_skipped_feedback,
-    load_app_config,
     get_job_logger,
 )
 
 logger = logging.getLogger(__name__)
-
-MAX_VALIDATION_RETRIES = 2  # application-level retries if Pydantic parse fails
 
 _NO_SUBMISSION_PATTERNS = (
     "[no submission]",
@@ -83,48 +82,38 @@ def compute_totals_from_questions(
     return total_score, total_max, feedback_parts
 
 
+def _postprocess_grade_group(
+    parsed: BaseModel,
+    *,
+    group: tuple[str, ...],
+) -> list[QuestionGrade]:
+    assert isinstance(parsed, GradingLlmResponse)
+    out: list[QuestionGrade] = []
+    seen: set[str] = set()
+    for item in parsed.grades:
+        try:
+            qid = normalize_qid(item.question_id)
+        except ValueError:
+            continue
+        if qid in seen:
+            continue
+        seen.add(qid)
+        out.append(
+            item.model_copy(
+                update={
+                    "question_id": qid,
+                }
+            )
+        )
+    missing = [q for q in group if q not in seen]
+    if missing:
+        raise ValueError(f"LLM response missing questions: {missing}")
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Core grading
 # ---------------------------------------------------------------------------
-
-
-def _grade_group_attempt(
-    group: list[str],
-    messages: list,
-    qid_to_max: dict[str, int],
-    config: AppConfig,
-    client: OpenAI,
-) -> tuple[GradingResponse, dict[str, int], TokenUsage]:
-    """Single grading attempt. Raises on validation failure."""
-    model = config.model or DEFAULT_MODEL
-    effective_max = min(config.max_completion_tokens, max(2048, len(group) * 1024))
-    completion = complete_json_chat(
-        client,
-        model=model,
-        messages=messages,
-        max_completion_tokens=effective_max,
-    )
-    content = completion.text
-    raw = parse_llm_json(content)
-    usage = completion.usage
-
-    grading_response = GradingResponse.from_raw(raw, group)
-    placeholder_feedback = (LLM_NOT_RETURNED, LLM_PARSE_ERROR)
-    missing = [
-        qid
-        for qid, g in grading_response.grades.items()
-        if g.feedback.strip() in placeholder_feedback
-    ]
-    total_max = sum(qid_to_max.get(q, 0) for q in group)
-    if total_max > 0 and missing:
-        reasons = {
-            qid: grading_response.grades[qid].feedback.strip() for qid in missing
-        }
-        raise ValueError(
-            f"LLM returned partial or malformed response — missing/invalid for: {missing} "
-            f"({reasons})"
-        )
-    return grading_response, qid_to_max, usage
 
 
 def grade_group(
@@ -134,7 +123,7 @@ def grade_group(
     config: AppConfig,
     client: OpenAI,
     student_name: str | None = None,
-) -> tuple[GradingResponse, dict[str, int], TokenUsage]:
+) -> tuple[list[QuestionGrade], dict[str, int], TokenUsage]:
     """
     Grade one question group. Retries up to MAX_VALIDATION_RETRIES times
     if the LLM response fails Pydantic validation.
@@ -153,72 +142,62 @@ def grade_group(
     )
 
     ctx = f" [{student_name}]" if student_name else ""
+    effective_max = min(config.max_completion_tokens, max(2048, len(group) * 1024))
+    g_tuple = tuple(group)
 
-    def _attempt():
-        return _grade_group_attempt(group, messages, qid_to_max, config, client)
-
-    def _on_before_retry(attempt: int, delay: float) -> None:
-        logger.warning(
-            "Retry %d for group %s%s after %ds", attempt, group, ctx, int(delay)
-        )
-
-    def _on_failed(attempt: int, err: BaseException) -> None:
-        logger.warning(
-            "Validation failed on attempt %d for group %s%s: %s",
-            attempt,
+    def _exhausted(last_err: BaseException | None) -> list[QuestionGrade]:
+        logger.error(
+            "Giving up on group %s%s after %d attempts: %s",
             group,
             ctx,
-            err,
+            MAX_JSON_LLM_ATTEMPTS,
+            last_err,
+            extra={"task": "grade_group", "model": model},
         )
+        return [
+            QuestionGrade(
+                question_id=qid,
+                score=0.0,
+                feedback=GRADING_FAILED,
+                confidence="low",
+                requires_review=True,
+            )
+            for qid in group
+        ]
 
-    success, last_error = retry_with_exponential_backoff(
-        _attempt,
-        max_attempts=MAX_VALIDATION_RETRIES + 1,
-        on_before_retry=_on_before_retry,
-        on_attempt_failed=_on_failed,
+    grade_items, usage = execute_llm_task(
+        client,
+        model=model,
+        messages=messages,
+        max_completion_tokens=effective_max,
+        response_model=GradingLlmResponse,
+        task_kind="grade_group",
+        logger=logger,
+        postprocess=lambda p: _postprocess_grade_group(p, group=g_tuple),
+        fallback_factory=_exhausted,
     )
-    if success is not None:
-        return success
-
-    logger.error(
-        "Giving up on group %s%s after %d attempts: %s",
-        group,
-        ctx,
-        MAX_VALIDATION_RETRIES + 1,
-        last_error,
-    )
-    return (
-        GradingResponse(
-            grades={
-                qid: QuestionGrade(
-                    score=0.0,
-                    feedback=GRADING_FAILED,
-                    confidence="low",
-                    requires_review=True,
-                )
-                for qid in group
-            }
-        ),
-        qid_to_max,
-        TokenUsage(),
-    )
+    return grade_items, qid_to_max, usage
 
 
 def _process_group_result(
     questions: dict[str, dict],
     feedback_parts: list[str],
     group: list[str],
-    grading_response: GradingResponse,
+    grade_items: list[QuestionGrade],
     qid_to_max: dict[str, int],
 ) -> tuple[float, float]:
     """Process one group's grading response into questions dict. Returns (score, max) for this group."""
+    grade_map = {g.question_id: g for g in grade_items}
     total_score = 0.0
     total_max = 0.0
     for qid in group:
         max_pts = qid_to_max.get(qid, 0)
         total_max += max_pts
-        q_grade = grading_response.grades.get(
-            qid, QuestionGrade(score=0.0, feedback="[missing]")
+        q_grade = grade_map.get(
+            qid,
+            QuestionGrade(
+                question_id=qid, score=0.0, feedback="[missing]", confidence="low"
+            ),
         )
         score = max(0.0, min(float(max_pts), q_grade.score))
         feedback = _normalize_no_submission_feedback(q_grade.feedback.strip())
@@ -275,13 +254,14 @@ def _build_result_dict(
         ),
         usage=usage_total.to_json_dict() if usage_total.has_tokens() else None,
     )
-    return graded_result_to_disk_dict(gr)
+    # Serialize to disk dict format (with _usage alias)
+    return gr.model_dump(mode="python", by_alias=True, exclude_none=True)
 
 
 def grade_student(
     student_parsed: dict,
     solution_parsed: dict,
-    config: AppConfig | dict,
+    cfg: AppConfig,
     client: OpenAI | None = None,
     ungrouped: list[str] | None = None,
     merge_into: dict | None = None,
@@ -291,8 +271,7 @@ def grade_student(
     When merge_into is provided with grade_only, only grades grade_only questions
     and merges new grades into existing result (keeps other questions unchanged).
     """
-    logger = get_job_logger(config, __name__)
-    cfg = ensure_app_config(config)
+    logger = get_job_logger(cfg, __name__)
     if client is None:
         client = get_openai_client()
 
@@ -337,13 +316,13 @@ def grade_student(
             for qid in group:
                 sol_q = get_question_data(solution_parsed, qid)
                 qid_to_max[qid] = (sol_q or {}).get("points", 0)
-            grades = {
-                qid: QuestionGrade(score=0.0, feedback=NO_SUBMISSION) for qid in group
-            }
-            grading_response = GradingResponse(grades=grades)
+            grade_items = [
+                QuestionGrade(question_id=qid, score=0.0, feedback=NO_SUBMISSION)
+                for qid in group
+            ]
             usage = TokenUsage()
         else:
-            grading_response, qid_to_max, usage = grade_group(
+            grade_items, qid_to_max, usage = grade_group(
                 group,
                 solution_parsed,
                 student_parsed,
@@ -353,7 +332,7 @@ def grade_student(
             )
         usage_total = usage_total.merged(usage)
         score_delta, max_delta = _process_group_result(
-            questions, feedback_parts, group, grading_response, qid_to_max
+            questions, feedback_parts, group, grade_items, qid_to_max
         )
         total_score += score_delta
         total_max += max_delta

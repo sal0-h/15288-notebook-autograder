@@ -18,7 +18,8 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from batch_grader import load_grade_queue
-from utils import ensure_app_config, get_assignment_output_paths, load_config
+from config_models import load_app_config
+from utils import get_assignment_output_paths
 
 
 def _ok(msg: str) -> None:
@@ -47,8 +48,7 @@ def run(config_path: Path) -> int:
         return 1
 
     try:
-        raw = load_config(config_path)
-        cfg = ensure_app_config(raw)
+        cfg = load_app_config(config_path)
     except Exception as e:
         _err(f"Invalid config: {e}")
         return 1
