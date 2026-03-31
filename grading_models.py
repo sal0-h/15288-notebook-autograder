@@ -1,10 +1,9 @@
 """Pydantic models and constants for the grading engine."""
 
-import logging
+from typing import Literal
 
-from pydantic import BaseModel, ValidationError, field_validator
-
-logger = logging.getLogger(__name__)
+from config_models import DEFAULT_MODEL
+from pydantic import BaseModel, field_validator
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -33,24 +32,35 @@ MODEL_PRICING = {
     "gpt-4-turbo": (10.00, 30.00),
 }
 
+
+def usage_cost_usd(usage, model: str) -> float:
+    """Approximate USD cost for recorded usage at the given model's rates."""
+    prompt = getattr(usage, "prompt_tokens", 0)
+    completion = getattr(usage, "completion_tokens", 0)
+    pt = int(prompt or 0)
+    ct = int(completion or 0)
+    inp, out = MODEL_PRICING.get(model, MODEL_PRICING[DEFAULT_MODEL])
+    return (pt / 1e6 * inp) + (ct / 1e6 * out)
+
+
 # ---------------------------------------------------------------------------
-# Pydantic models for LLM response validation
+# Pydantic models (LLM wire + pipeline; structured outputs via Responses API)
 # ---------------------------------------------------------------------------
 
 
 class QuestionGrade(BaseModel):
+    """One graded question: used as structured-output row and in-memory."""
+
+    question_id: str
     score: float
     feedback: str = ""
-    confidence: str = "medium"
+    confidence: Literal["high", "medium", "low"] = "medium"
     requires_review: bool = False
 
     @field_validator("score", mode="before")
     @classmethod
     def coerce_score(cls, v) -> float:
-        try:
-            return float(v)
-        except (TypeError, ValueError):
-            return 0.0
+        return float(v)
 
     @field_validator("feedback", mode="before")
     @classmethod
@@ -59,7 +69,7 @@ class QuestionGrade(BaseModel):
 
     @field_validator("confidence", mode="before")
     @classmethod
-    def coerce_confidence(cls, v) -> str:
+    def coerce_confidence(cls, v):
         if v is None:
             return "medium"
         s = str(v).strip().lower()
@@ -77,39 +87,35 @@ class QuestionGrade(BaseModel):
         return str(v).strip().lower() in ("true", "1", "yes")
 
 
-class GradingResponse(BaseModel):
-    grades: dict[str, QuestionGrade]
+class GenaiQuestionResult(BaseModel):
+    """Per-question GenAI suspicion row: structured output + pipeline."""
 
+    question_id: str
+    suspicious_genai: bool = False
+    note: str = ""
+
+    @field_validator("suspicious_genai", mode="before")
     @classmethod
-    def from_raw(cls, raw: dict, expected_qids: list[str]) -> "GradingResponse":
-        """Parse and normalize LLM output dict. Handles Q4.1 and 4.1 key formats."""
-        grades: dict[str, QuestionGrade] = {}
-        for k, v in raw.items():
-            normalized = k.strip().lstrip("Qq").strip()
-            if isinstance(v, dict):
-                try:
-                    grades[normalized] = QuestionGrade.model_validate(v)
-                except ValidationError as e:
-                    logger.warning(
-                        "QuestionGrade validation failed for key %r: %s",
-                        normalized,
-                        e,
-                    )
-                    grades[normalized] = QuestionGrade(
-                        score=0.0,
-                        feedback=LLM_PARSE_ERROR,
-                        confidence="low",
-                        requires_review=True,
-                    )
-            elif isinstance(v, (int, float)):
-                grades[normalized] = QuestionGrade(score=float(v))
+    def coerce_suspicious(cls, v) -> bool:
+        if v is None:
+            return False
+        if isinstance(v, bool):
+            return v
+        return str(v).strip().lower() in ("true", "1", "yes")
 
-        for qid in expected_qids:
-            if qid not in grades:
-                grades[qid] = QuestionGrade(
-                    score=0.0,
-                    feedback=LLM_NOT_RETURNED,
-                    confidence="low",
-                    requires_review=True,
-                )
-        return cls(grades=grades)
+    @field_validator("note", mode="before")
+    @classmethod
+    def coerce_note(cls, v) -> str:
+        return str(v) if v is not None else ""
+
+
+class GradingLlmResponse(BaseModel):
+    """Grading completion payload — one object per call to ``grade_group``."""
+
+    grades: list[QuestionGrade]
+
+
+class GenaiLlmResponse(BaseModel):
+    """GenAI-detection completion payload — one object per student."""
+
+    results: list[GenaiQuestionResult]

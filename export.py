@@ -6,79 +6,97 @@ from pathlib import Path
 
 import pandas as pd
 
-from linter_export import build_linter_summary, fmt_qid_list
-from parse_notebook import get_all_question_ids, sort_key_qid
-from results_models import GradedResult
+from config_models import AppConfig, sort_key_qid, load_app_config
+from gradescope_submitters import (
+    MANIFEST_SCHEMA_VERSION,
+    submitter_key_to_results_filename,
+)
+from linter_export import build_linter_summary
+from parse_notebook import get_all_question_ids
+from results_models import GradedResult, Question
 from utils import (
-    AppConfig,
-    ensure_app_config,
     get_assignment_output_paths,
-    load_app_config,
+    sanitize_filename_component,
 )
 
 # Unix executable bits used when creating Gradescope autograder zip entries
 _UNIX_EXEC_ATTR = 0o755 << 16
+_UNIX_READ_ATTR = 0o644 << 16
 _ZIP_UNIX_CREATE_SYSTEM = 3  # Unix
+
+_REPO_ROOT = Path(__file__).resolve().parent
+_GRADESCOPE_PY_MODULES = ("gradescope_submitters.py", "gradescope_runtime.py")
+
+RUN_AUTOGRADER = """#!/usr/bin/env python3
+import sys
+sys.path.insert(0, "/autograder/source")
+from gradescope_runtime import main
+
+if __name__ == "__main__":
+    main()
+"""
+
+
+def _q_vals(q: Question | dict) -> tuple[float, float, str]:
+    if isinstance(q, dict):
+        return (
+            float(q.get("score", 0)),
+            float(q.get("max", 0)),
+            str(q.get("feedback", "")),
+        )
+    return (float(q.score), float(q.max), str(q.feedback or ""))
+
+
+def _stem_to_submitter_key_map(stem_map: dict[str, str]) -> dict[str, str]:
+    """Invert submitter_key → notebook stem (stem is graded ``student_name`` / file stem)."""
+    out: dict[str, str] = {}
+    for key, stem in stem_map.items():
+        prev = out.get(stem)
+        if prev is not None and prev != key:
+            raise ValueError(
+                f"submitter_stem_map maps multiple keys to the same stem {stem!r}: "
+                f"{prev!r} vs {key!r}"
+            )
+        out[stem] = key
+    return out
+
+
+def build_precomputed_manifest(
+    submitter_stem_map: dict[str, str],
+    gradescope_json_stems: list[str],
+    *,
+    assignment_id: int | None,
+    course_id: int | None,
+) -> dict | None:
+    """
+    Build ``precomputed_manifest.json`` payload for the autograder ZIP.
+
+    Returns None when there is no id-level map or no matching graded stems.
+    """
+    if not submitter_stem_map:
+        return None
+    stem_to_key = _stem_to_submitter_key_map(submitter_stem_map)
+    entries: dict[str, dict[str, str]] = {}
+    for stem in gradescope_json_stems:
+        key = stem_to_key.get(stem)
+        if not key:
+            continue
+        fname = f"{submitter_key_to_results_filename(key)}.json"
+        entries[key] = {"file": f"results/{fname}", "display_name": stem}
+    if not entries:
+        return None
+    return {
+        "schema_version": MANIFEST_SCHEMA_VERSION,
+        "assignment_id": assignment_id,
+        "course_id": course_id,
+        "entries": entries,
+    }
+
 
 # Gradescope expects these at the root of the autograder zip
 SETUP_SH = """#!/bin/bash
 # No setup required - we only output pre-computed results
 """
-
-RUN_AUTOGRADER = r'''#!/usr/bin/env python3
-"""Output pre-computed AI autograder results for the current submission."""
-import json
-import shutil
-from pathlib import Path
-
-results_dir = Path("/autograder/results")
-source_dir = Path("/autograder/source")
-pre_computed = source_dir / "results"
-metadata_path = Path("/autograder/submission_metadata.json")
-
-results_dir.mkdir(parents=True, exist_ok=True)
-out_path = results_dir / "results.json"
-
-if not metadata_path.exists():
-    with open(out_path, "w") as f:
-        json.dump({"output": "Error: submission_metadata.json not found.", "tests": []}, f)
-    exit(0)
-
-with open(metadata_path) as f:
-    meta = json.load(f)
-users = meta.get("users", [])
-student_name = (users[0].get("name", "") or "").strip() if users else ""
-
-def _normalize(name: str) -> str:
-    # Mirror export filename sanitization and avoid fuzzy matching collisions.
-    return "".join(c for c in name.strip() if c not in '/\\:*?"<>|')
-
-match_path = None
-if student_name and pre_computed.exists():
-    normalized_student = _normalize(student_name)
-    matches = []
-    for f in sorted(pre_computed.glob("*.json")):
-        if _normalize(f.stem) == normalized_student:
-            matches.append(f)
-    if len(matches) == 1:
-        match_path = matches[0]
-    elif len(matches) > 1:
-        with open(out_path, "w") as f:
-            json.dump({
-                "output": f"Ambiguous pre-computed results for: {student_name}. Found {len(matches)} exact-normalized matches.",
-                "tests": []
-            }, f)
-        exit(0)
-
-if match_path:
-    shutil.copy(match_path, out_path)
-else:
-    with open(out_path, "w") as f:
-        json.dump({
-            "output": f"No pre-computed results for: {student_name}. Run AI autograder export first.",
-            "tests": []
-        }, f)
-'''
 
 
 def _build_linter_summary_test(
@@ -130,7 +148,7 @@ def _build_linter_summary_test(
     }
 
 
-def export_all(config: AppConfig | dict) -> dict[str, str | int]:
+def export_all(cfg: AppConfig) -> dict[str, str | int]:
     """
     Read graded_results.json and write:
     - output/gradescope/{StudentName}.json (Gradescope autograder format)
@@ -138,7 +156,6 @@ def export_all(config: AppConfig | dict) -> dict[str, str | int]:
 
     Returns summary dict with paths and counts.
     """
-    cfg = ensure_app_config(config)
     paths = get_assignment_output_paths(cfg)
     output_dir = paths.output_dir
     parsed_dir = paths.parsed_dir
@@ -150,7 +167,13 @@ def export_all(config: AppConfig | dict) -> dict[str, str | int]:
 
     raw_results = json.loads(graded_path.read_text(encoding="utf-8"))
     if not raw_results:
-        return {"students": 0, "gradescope_dir": str(gradescope_dir), "excel_path": ""}
+        return {
+            "students": 0,
+            "gradescope_dir": str(gradescope_dir),
+            "gradescope_files": 0,
+            "excel_path": "",
+            "autograder_zip": "",
+        }
 
     results: list[GradedResult] = [GradedResult.model_validate(r) for r in raw_results]
 
@@ -187,13 +210,16 @@ def export_all(config: AppConfig | dict) -> dict[str, str | int]:
 
         tests = []
         for qid in gs_q_cols:
-            q_data = questions.get(qid, {"score": 0, "max": 0, "feedback": ""})
+            q_data = questions.get(qid)
+            score, max_s, out = (
+                _q_vals(q_data) if q_data is not None else (0.0, 0.0, "")
+            )
             tests.append(
                 {
                     "name": gs_title_mapping.get(qid, qid),
-                    "score": q_data.get("score", 0),
-                    "max_score": q_data.get("max", 0),
-                    "output": q_data.get("feedback", ""),
+                    "score": score,
+                    "max_score": max_s,
+                    "output": out,
                     "output_format": "md",
                     "visibility": "visible",
                 }
@@ -207,9 +233,8 @@ def export_all(config: AppConfig | dict) -> dict[str, str | int]:
         )
 
         gs_data = {"tests": tests}
-        safe_name = (
-            "".join(c for c in student_name if c not in '/\\:*?"<>|')
-            or "unknown_student"
+        safe_name = sanitize_filename_component(
+            student_name, if_empty="unknown_student"
         )
         gs_path = gradescope_dir / f"{safe_name}.json"
         gs_path.write_text(json.dumps(gs_data, indent=2), encoding="utf-8")
@@ -222,8 +247,8 @@ def export_all(config: AppConfig | dict) -> dict[str, str | int]:
             "total_score": r.total_score,
         }
         for qid in q_cols:
-            q_data = r.questions.get(qid, {})
-            row[f"Q{qid}"] = q_data.get("score", "")
+            q_data = r.questions.get(qid)
+            row[f"Q{qid}"] = "" if q_data is None else _q_vals(q_data)[0]
         row["summary_feedback"] = r.summary_feedback
         rows.append(row)
 
@@ -242,7 +267,7 @@ def export_all(config: AppConfig | dict) -> dict[str, str | int]:
     df.to_excel(excel_path, index=False)
 
     # Always regenerate autograder zip so it stays in sync with grades
-    zip_path = export_autograder_zip(config)
+    zip_path = export_autograder_zip(cfg)
 
     return {
         "students": len(results),
@@ -253,15 +278,15 @@ def export_all(config: AppConfig | dict) -> dict[str, str | int]:
     }
 
 
-def export_autograder_zip(config: AppConfig | dict) -> Path:
+def export_autograder_zip(config: AppConfig) -> Path:
     """
     Create a Gradescope autograder zip that outputs pre-computed results.
     Run export_all first to ensure gradescope/*.json exist.
 
     Returns path to the created zip file.
     """
-    cfg = ensure_app_config(config)
-    paths = get_assignment_output_paths(cfg)
+
+    paths = get_assignment_output_paths(config)
     output_dir = paths.output_dir
     gradescope_dir = paths.gradescope_dir
     zip_path = output_dir / "gradescope_autograder.zip"
@@ -271,9 +296,27 @@ def export_autograder_zip(config: AppConfig | dict) -> Path:
             f"Gradescope results not found: {gradescope_dir}. Run export first."
         )
 
-    json_files = list(gradescope_dir.glob("*.json"))
+    json_files = sorted(gradescope_dir.glob("*.json"))
     if not json_files:
         raise FileNotFoundError(f"No JSON files in {gradescope_dir}. Run export first.")
+
+    stem_map_path = output_dir / "submitter_stem_map.json"
+    submitter_stem_map: dict[str, str] = {}
+    if stem_map_path.is_file():
+        loaded = json.loads(stem_map_path.read_text(encoding="utf-8"))
+        if isinstance(loaded, dict):
+            submitter_stem_map = {str(k): str(v) for k, v in loaded.items()}
+
+    stems = [p.stem for p in json_files]
+    manifest = build_precomputed_manifest(
+        submitter_stem_map,
+        stems,
+        assignment_id=config.gradescope_assignment_id,
+        course_id=config.gradescope_course_id,
+    )
+    stem_to_key = (
+        _stem_to_submitter_key_map(submitter_stem_map) if submitter_stem_map else {}
+    )
 
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
         zi = zipfile.ZipInfo("setup.sh")
@@ -284,9 +327,28 @@ def export_autograder_zip(config: AppConfig | dict) -> Path:
         zi.create_system = _ZIP_UNIX_CREATE_SYSTEM
         zi.external_attr = _UNIX_EXEC_ATTR
         zf.writestr(zi, RUN_AUTOGRADER)
+        for mod in _GRADESCOPE_PY_MODULES:
+            mod_path = _REPO_ROOT / mod
+            zi = zipfile.ZipInfo(mod)
+            zi.create_system = _ZIP_UNIX_CREATE_SYSTEM
+            zi.external_attr = _UNIX_READ_ATTR
+            zf.writestr(zi, mod_path.read_text(encoding="utf-8"))
+        if manifest:
+            zi = zipfile.ZipInfo("precomputed_manifest.json")
+            zi.create_system = _ZIP_UNIX_CREATE_SYSTEM
+            zi.external_attr = _UNIX_READ_ATTR
+            zf.writestr(zi, json.dumps(manifest, indent=2))
+        map_path = output_dir / "student_name_map.json"
+        if map_path.exists():
+            zf.write(map_path, arcname="student_name_map.json")
         for jf in json_files:
-            arcname = f"results/{jf.name}"
-            zf.write(jf, arcname=arcname)
+            human_arc = f"results/{jf.name}"
+            zf.write(jf, arcname=human_arc)
+            key = stem_to_key.get(jf.stem)
+            if key:
+                id_arc = f"results/{submitter_key_to_results_filename(key)}.json"
+                if id_arc != human_arc:
+                    zf.write(jf, arcname=id_arc)
 
     return zip_path
 

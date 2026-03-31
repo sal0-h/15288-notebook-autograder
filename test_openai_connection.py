@@ -1,16 +1,16 @@
 """Test script to verify OpenAI API connection and authentication."""
 
 import argparse
-from pathlib import Path
 
-from utils import AppConfig, get_openai_client, load_config, DEFAULT_MODEL
+from config_models import DEFAULT_MODEL
+from config_models import load_app_config
+from utils import get_openai_client
 
 
 def test_llm_connection() -> str:
     """Send a basic prompt and return the confirmation response."""
     client = get_openai_client()
-    config = load_config(Path("config.yaml"))
-    cfg = AppConfig.model_validate(config)
+    cfg = load_app_config("config.yaml")
     model = cfg.model or DEFAULT_MODEL
 
     response = client.chat.completions.create(

@@ -6,13 +6,17 @@ from pathlib import Path
 import pytest
 
 from calibrate import run_calibration
+from config_models import AppConfig, default_config, ensure_app_config
+
+
+def _cfg(tmp_path) -> AppConfig:
+    return ensure_app_config(default_config(output_dir=str(tmp_path)))
 
 
 class TestRunCalibration:
     def test_empty_results_returns_empty(self, tmp_path):
         (tmp_path / "graded_results.json").write_text("[]", encoding="utf-8")
-        config = {"output_dir": str(tmp_path)}
-        assert run_calibration(config) == []
+        assert run_calibration(_cfg(tmp_path)) == []
 
     def test_single_student_no_outliers_flagged(self, tmp_path):
         """With n < 2 per question, no std; nothing flagged."""
@@ -30,8 +34,7 @@ class TestRunCalibration:
         (tmp_path / "graded_results.json").write_text(
             json.dumps(data, indent=2), encoding="utf-8"
         )
-        config = {"output_dir": str(tmp_path)}
-        assert run_calibration(config) == []
+        assert run_calibration(_cfg(tmp_path)) == []
 
     def test_flags_low_outlier(self, tmp_path):
         """Student with score 2+ std below mean is flagged."""
@@ -76,8 +79,7 @@ class TestRunCalibration:
         (tmp_path / "graded_results.json").write_text(
             json.dumps(data, indent=2), encoding="utf-8"
         )
-        config = {"output_dir": str(tmp_path)}
-        flagged = run_calibration(config)
+        flagged = run_calibration(_cfg(tmp_path))
         assert len(flagged) == 1
         assert flagged[0]["student_name"] == "Dave"
         assert flagged[0]["qid"] == "1.1"
@@ -128,8 +130,7 @@ class TestRunCalibration:
         (tmp_path / "graded_results.json").write_text(
             json.dumps(data, indent=2), encoding="utf-8"
         )
-        config = {"output_dir": str(tmp_path)}
-        flagged = run_calibration(config)
+        flagged = run_calibration(_cfg(tmp_path))
         assert len(flagged) == 1
         assert flagged[0]["student_name"] == "Outlier"
         assert flagged[0]["flag_reason"] == "high"
@@ -178,8 +179,7 @@ class TestRunCalibration:
         (tmp_path / "graded_results.json").write_text(
             json.dumps(data, indent=2), encoding="utf-8"
         )
-        config = {"output_dir": str(tmp_path)}
-        run_calibration(config)
+        run_calibration(_cfg(tmp_path))
         report_path = tmp_path / "calibration_report.json"
         assert report_path.exists()
         report = json.loads(report_path.read_text(encoding="utf-8"))
@@ -188,6 +188,5 @@ class TestRunCalibration:
 
     def test_missing_file_raises(self, tmp_path):
         """FileNotFoundError when graded_results.json does not exist."""
-        config = {"output_dir": str(tmp_path)}
         with pytest.raises(FileNotFoundError, match="Graded results not found"):
-            run_calibration(config)
+            run_calibration(_cfg(tmp_path))

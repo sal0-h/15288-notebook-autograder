@@ -5,7 +5,7 @@ import zipfile
 from pathlib import Path
 
 from parse_notebook import get_all_question_ids, parse_notebook
-from utils import load_app_config
+from config_models import load_app_config
 
 # Unix executable bits used when creating Gradescope autograder zip entries
 _UNIX_EXEC_ATTR = 0o755 << 16

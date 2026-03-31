@@ -121,6 +121,17 @@ function _populateSetupFields(cfg) {
     } else {
         rubricModelSelect.value = "";
     }
+    const genaiModelSelect = document.getElementById("setupGenaiModel");
+    const genaiModel = (setupConfig.genai_detection_model || "").trim() || "gpt-4.1-mini";
+    const hasGenaiOpt = Array.from(genaiModelSelect.options).some(o => o.value === genaiModel);
+    if (hasGenaiOpt) genaiModelSelect.value = genaiModel;
+    else {
+        const opt = document.createElement("option");
+        opt.value = genaiModel;
+        opt.textContent = genaiModel;
+        genaiModelSelect.appendChild(opt);
+        genaiModelSelect.value = genaiModel;
+    }
     document.getElementById("setupRubricReviewCheck").checked = setupConfig.rubric_review !== false;
     document.getElementById("setupIncludeReferenceCheck").checked = setupConfig.include_reference_in_grading === true;
     setupQuestionGroups = (setupConfig.grading || {}).question_groups || [];
@@ -384,6 +395,7 @@ document.getElementById("setupSaveBtn").onclick = async () => {
     setupConfig.assignment_name = document.getElementById("setupAssignmentName").value.trim() || setupConfig.assignment_name || "default";
     setupConfig.model = document.getElementById("setupModel").value;
     setupConfig.rubric_model = document.getElementById("setupRubricModel").value || "";
+    setupConfig.genai_detection_model = document.getElementById("setupGenaiModel").value || "gpt-4.1-mini";
     setupConfig.rubric_review = document.getElementById("setupRubricReviewCheck").checked;
     setupConfig.include_reference_in_grading = document.getElementById("setupIncludeReferenceCheck").checked;
     setupConfig.workers = Math.max(1, parseInt(document.getElementById("setupWorkersInput").value, 10) || 1);
@@ -898,9 +910,12 @@ async function pollGradeProgress() {
 
 document.getElementById("gradeBtn").onclick = async () => {
     const list = document.getElementById("gradeProgress");
+    const genaiBtn = document.getElementById("genaiDetectBtn");
+    const autoGenai = document.getElementById("genaiAutoRun");
     list.innerHTML = "";
     const btn = document.getElementById("gradeBtn");
     setLoading(btn, true, "Grading…");
+    genaiBtn.disabled = true;
     gradeStreamActive = true;
     stopGradePolling();
     try {
@@ -963,6 +978,10 @@ document.getElementById("gradeBtn").onclick = async () => {
             gradeStreamActive = false;
             stopGradePolling();
             setLoading(btn, false, "Start Grading");
+            genaiBtn.disabled = false;
+            if (autoGenai && autoGenai.checked) {
+                runGenaiDetection("Auto-run after grading");
+            }
         });
         ev.onerror = () => {
             ev.close();
@@ -970,6 +989,7 @@ document.getElementById("gradeBtn").onclick = async () => {
             gradeStreamActive = false;
             stopGradePolling();
             setLoading(btn, false, "Start Grading");
+            genaiBtn.disabled = false;
             if (list.querySelectorAll(".progress-item").length === 0) {
                 list.innerHTML = "<p class='status-warning'>Connection failed. Grading may already be in progress in another tab.</p>";
             }
@@ -980,7 +1000,62 @@ document.getElementById("gradeBtn").onclick = async () => {
         stopGradePolling();
         list.innerHTML = `<p class="status-error">Error: ${escHtml(e.message)}</p>`;
         setLoading(btn, false, "Start Grading");
+        genaiBtn.disabled = false;
     }
+};
+
+function setGenaiStatus(message, kind = "info") {
+    const el = document.getElementById("genaiStatus");
+    if (!el) return;
+    if (!message) {
+        el.textContent = "";
+        el.className = "text-muted-sm mb-2";
+        return;
+    }
+    el.textContent = message;
+    el.className = `genai-status mb-2 ${kind}`;
+}
+
+async function runGenaiDetection(sourceLabel = "Manual run") {
+    const btn = document.getElementById("genaiDetectBtn");
+    setLoading(btn, true, "Detecting…");
+    setGenaiStatus(`${sourceLabel}: running GenAI detection…`, "info");
+    try {
+        const r = await fetchWithRetry(API + "/detect-genai", { method: "POST" });
+        if (!r.ok) {
+            const err = await r.json().catch(() => ({}));
+            const detail = err.detail;
+            const msg = typeof detail === "string" ? detail : (detail ? JSON.stringify(detail) : r.statusText);
+            throw new Error(msg);
+        }
+        const data = await r.json();
+        const warnings = (data.errors && data.errors.length) ? data.errors.length : 0;
+        const msg = `GenAI detection complete: ${data.students_processed || 0} students processed, ${data.questions_flagged || 0} flag(s), ${data.students_skipped || 0} skipped${warnings ? `, ${warnings} warning(s)` : ""}.`;
+        setGenaiStatus(msg, warnings ? "info" : "success");
+
+        // Keep review list/flags in sync if the user is actively reviewing.
+        if (Array.isArray(reviewData) && reviewData.length) {
+            try {
+                await loadReviewAndCalibration();
+                if (document.getElementById("panel-review")?.classList.contains("active")) {
+                    renderStudentList();
+                    if (currentReviewIdx >= 0 && currentReviewIdx < reviewData.length) {
+                        showReviewDetail(currentReviewIdx);
+                    }
+                }
+            } catch (_) {
+                // Non-fatal: detection succeeded even if review refresh fails.
+            }
+        }
+    } catch (e) {
+        setGenaiStatus(`GenAI detection failed: ${e.message || String(e)}`, "error");
+    } finally {
+        setLoading(btn, false, "Run GenAI detection");
+    }
+}
+
+document.getElementById("genaiDetectBtn").onclick = async () => {
+    await runGenaiDetection("Manual run");
 };
 
 document.addEventListener("visibilitychange", () => {
@@ -1107,6 +1182,7 @@ function getStudentFlagReasons(s) {
         const q = qs[qid];
         if (q.requires_review) reasons.push({ qid, type: "needs_review" });
         else if ((q.confidence || "").toLowerCase() === "low") reasons.push({ qid, type: "low_confidence" });
+        if (q.suspicious_genai) reasons.push({ qid, type: "genai_suspicion" });
     }
     const lookup = calibrationLookup();
     for (const qid of gradedQids) {
@@ -1126,6 +1202,10 @@ function formatFlagReasons(reasons) {
         else if (r.type === "outlier" && !seen.has("outlier_" + r.flag_reason)) {
             label = r.flag_reason === "low" ? "outlier (below mean)" : "outlier (above mean)";
             seen.add("outlier_" + (r.flag_reason || ""));
+        }
+        else if (r.type === "genai_suspicion" && !seen.has("genai_suspicion")) {
+            label = "GenAI flag";
+            seen.add("genai_suspicion");
         }
         if (label) parts.push(label);
     }
@@ -1153,6 +1233,9 @@ function formatQuestionFlagsTitle(qid, s) {
         } else if (r.type === "outlier" && !seen.has("out")) {
             parts.push(r.flag_reason === "low" ? "outlier (below mean)" : "outlier (above mean)");
             seen.add("out");
+        } else if (r.type === "genai_suspicion" && !seen.has("ga")) {
+            parts.push("GenAI flag");
+            seen.add("ga");
         }
     }
     return parts.join(", ");
@@ -1165,11 +1248,13 @@ function getQuestionPillFlagClass(qid, s) {
     const nr = rs.some(r => r.type === "needs_review");
     const out = rs.some(r => r.type === "outlier");
     const lc = rs.some(r => r.type === "low_confidence");
-    const nTypes = (nr ? 1 : 0) + (out ? 1 : 0) + (lc ? 1 : 0);
+    const ga = rs.some(r => r.type === "genai_suspicion");
+    const nTypes = (nr ? 1 : 0) + (out ? 1 : 0) + (lc ? 1 : 0) + (ga ? 1 : 0);
     if (nTypes > 1) return " review-v2-qpill--f-multi";
     if (nr) return " review-v2-qpill--f-nr";
     if (out) return " review-v2-qpill--f-out";
     if (lc) return " review-v2-qpill--f-lc";
+    if (ga) return " review-v2-qpill--f-genai";
     return "";
 }
 
@@ -1181,11 +1266,13 @@ function passesReviewFilters(s) {
     const needOutlier = document.getElementById("reviewFilterOutlier")?.checked;
     const needLC = document.getElementById("reviewFilterLowConf")?.checked;
     const needNR = document.getElementById("reviewFilterNeedsReview")?.checked;
-    if (!needOutlier && !needLC && !needNR) return true;
+    const needGenai = document.getElementById("reviewFilterGenai")?.checked;
+    if (!needOutlier && !needLC && !needNR && !needGenai) return true;
     return Boolean(
         (needOutlier && types.has("outlier"))
         || (needLC && types.has("low_confidence"))
         || (needNR && types.has("needs_review"))
+        || (needGenai && types.has("genai_suspicion"))
     );
 }
 
@@ -1256,8 +1343,40 @@ window.recalcTotal = function() {
     if (el) el.textContent = Math.round(total * 100) / 100;
 };
 
+/** Jupyter may store image payload base64 as a string or list of fragments. */
+function normalizeNotebookBase64(raw) {
+    if (raw == null || raw === "") return "";
+    if (Array.isArray(raw)) return raw.join("");
+    return String(raw);
+}
+
+/** HTML for plot images from parse_notebook `answer_cells[].images` (mime + base64). */
+function buildReviewAnswerImagesHtml(answerCells) {
+    if (!Array.isArray(answerCells) || answerCells.length === 0) return "";
+    const parts = [];
+    let n = 0;
+    for (const cell of answerCells) {
+        const imgs = cell && cell.images;
+        if (!Array.isArray(imgs)) continue;
+        for (const img of imgs) {
+            if (!img) continue;
+            const mime = img.mime === "image/jpeg" ? "image/jpeg" : "image/png";
+            const b64 = normalizeNotebookBase64(img.base64);
+            if (!b64) continue;
+            n += 1;
+            const src = `data:${mime};base64,${b64}`;
+            parts.push(
+                `<figure class="review-v2-output-fig"><img class="review-v2-output-img" src="${src}" alt="Notebook output figure ${n}" loading="lazy"></figure>`
+            );
+        }
+    }
+    if (!parts.length) return "";
+    return `<div class="review-v2-output-images">${parts.join("")}</div>`;
+}
+
 function renderQuestionContent(qid, q, parsed, studentName) {
     let qMarkdown = "", studentCode = "", studentOutput = "", studentMd = "";
+    let answerCells = [];
     if (parsed) {
         for (const secData of Object.values(parsed.sections || {})) {
             if (secData.questions && secData.questions[qid]) {
@@ -1266,21 +1385,27 @@ function renderQuestionContent(qid, q, parsed, studentName) {
                 studentCode = pq.answer_code_concat || "";
                 studentOutput = pq.answer_text_concat || "";
                 studentMd = pq.answer_markdown_concat || "";
+                answerCells = pq.answer_cells || [];
                 break;
             }
         }
     }
+    const outputImagesHtml = buildReviewAnswerImagesHtml(answerCells);
     let html = "";
     if (qMarkdown) html += `<div class="review-v2-section"><div class="review-v2-section-label">Question</div><div class="review-v2-qstatement">${renderMarkdown(qMarkdown)}</div></div>`;
     if (studentCode) {
         html += `<div class="review-v2-section"><div class="review-v2-section-label">Student Code</div><pre class="review-v2-code"><code class="language-python">${escHtml(studentCode)}</code></pre></div>`;
     }
-    if (studentOutput) {
-        const trunc = 600;
-        const isLong = studentOutput.length > trunc;
-        const show = isLong ? studentOutput.slice(0, trunc) + "\n…" : studentOutput;
-        html += `<div class="review-v2-section"><div class="review-v2-section-label">Output</div><pre class="review-v2-output" id="reviewOutput-${qid}">${escHtml(show)}</pre>`;
-        if (isLong) html += `<button type="button" class="btn btn-secondary" style="font-size:0.8rem;padding:4px 8px" data-toggle-output="${qid}">Show all</button>`;
+    if (studentOutput || outputImagesHtml) {
+        html += `<div class="review-v2-section"><div class="review-v2-section-label">Output</div>`;
+        if (outputImagesHtml) html += outputImagesHtml;
+        if (studentOutput) {
+            const trunc = 600;
+            const isLong = studentOutput.length > trunc;
+            const show = isLong ? studentOutput.slice(0, trunc) + "\n…" : studentOutput;
+            html += `<pre class="review-v2-output" id="reviewOutput-${qid}">${escHtml(show)}</pre>`;
+            if (isLong) html += `<button type="button" class="btn btn-secondary" style="font-size:0.8rem;padding:4px 8px" data-toggle-output="${qid}">Show all</button>`;
+        }
         html += `</div>`;
     }
     if (studentMd) html += `<div class="review-v2-section"><div class="review-v2-section-label">Written Answer</div><div class="review-v2-qstatement">${renderMarkdown(studentMd)}</div></div>`;
@@ -1324,7 +1449,11 @@ function renderReviewContent() {
     const outlierBanner = outlier
         ? `<div class="outlier-banner">Outlier (${outlier.flag_reason === "high" ? "above" : "below"} mean): ${outlier.score}/${outlier.max || max}, μ ${outlier.mean} ± ${outlier.std}</div>`
         : "";
-    if (work) work.innerHTML = outlierBanner + renderQuestionContent(qid, q, parsed, s.student_name);
+    const genaiNote = (q.suspicious_genai_note || "").trim();
+    const genaiBanner = q.suspicious_genai
+        ? `<div class="genai-banner">Possible GenAI-style answer (triage only; not a conduct verdict).${genaiNote ? ` <span class="genai-banner-note">${escHtml(genaiNote)}</span>` : ""}</div>`
+        : "";
+    if (work) work.innerHTML = outlierBanner + genaiBanner + renderQuestionContent(qid, q, parsed, s.student_name);
     if (maxLive) maxLive.textContent = String(max);
     if (scoreLive) scoreLive.textContent = String(score);
     if (dedRow) {
@@ -1596,7 +1725,7 @@ document.getElementById("reviewCalibrateBtn").onclick = async () => {
 
 document.getElementById("reviewFlaggedFirst").onchange = () => renderStudentList();
 
-["reviewStudentFilter", "reviewFilterOutlier", "reviewFilterLowConf", "reviewFilterNeedsReview"].forEach(id => {
+["reviewStudentFilter", "reviewFilterOutlier", "reviewFilterLowConf", "reviewFilterNeedsReview", "reviewFilterGenai"].forEach(id => {
     const el = document.getElementById(id);
     if (!el) return;
     el.addEventListener(id === "reviewStudentFilter" ? "input" : "change", () => renderStudentList());
@@ -1625,18 +1754,57 @@ document.addEventListener("keydown", (e) => {
 });
 
 // ==================== EXPORT ====================
+function exportApiPath(suffix) {
+    return (typeof API !== "undefined" ? API : "") + suffix;
+}
+
+function initExportPanelDownloadHrefs() {
+    const linter = document.getElementById("linterZipDownload");
+    const gs = document.getElementById("autograderZipDownload");
+    if (linter) linter.href = exportApiPath("/export/linter-zip");
+    if (gs) gs.href = exportApiPath("/export/autograder-zip");
+}
+
 document.getElementById("exportBtn").onclick = async () => {
     const btn = document.getElementById("exportBtn");
     setLoading(btn, true, "Exporting…");
     document.getElementById("exportResults").innerHTML = "";
     try {
         const r = await fetchWithRetry(API + "/export", { method: "POST" });
-        const data = await r.json();
-        if (data.detail) throw new Error(data.detail);
-        document.getElementById("exportResults").innerHTML = `<p class="status-ok">✓ Exported ${data.students} students.</p><p>Gradescope JSONs: <code>${data.gradescope_dir}</code></p><p>Excel: <code>${data.excel_path}</code></p>`;
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) {
+            throw new Error(estimateErrorMessage(data, r) || r.statusText || "Export failed");
+        }
+        const n = data.students | 0;
+        const parts = [];
+        parts.push(
+            `<p class="status-ok">✓ Exported ${n} student${n === 1 ? "" : "s"}.</p>`
+        );
+        if (n > 0) {
+            parts.push(
+                `<p>Gradescope JSONs: <code>${escHtml(String(data.gradescope_dir || ""))}</code></p>`
+            );
+            parts.push(
+                `<p>Excel: <code>${escHtml(String(data.excel_path || ""))}</code></p>`
+            );
+            if (data.autograder_zip) {
+                parts.push(
+                    `<p>Gradescope autograder ZIP (refreshed with this export): <code>${escHtml(String(data.autograder_zip))}</code></p>`
+                );
+            }
+        } else {
+            parts.push(
+                `<p class="text-muted">No rows in <code>graded_results.json</code> — Gradescope JSONs, Excel, and the autograder ZIP were not regenerated.</p>`
+            );
+        }
+        document.getElementById("exportResults").innerHTML = parts.join("");
         const dl = document.getElementById("excelDownload");
-        dl.classList.remove("hidden");
-        dl.href = "/export/excel?t=" + Date.now();
+        if (n > 0 && data.excel_path) {
+            dl.classList.remove("hidden");
+            dl.href = exportApiPath("/export/excel?t=" + Date.now());
+        } else {
+            dl.classList.add("hidden");
+        }
     } catch (e) {
         document.getElementById("exportResults").innerHTML = `<p class="status-error">Error: ${escHtml(e.message)}</p>`;
     } finally {
@@ -1646,6 +1814,7 @@ document.getElementById("exportBtn").onclick = async () => {
 
 // Init
 loadRubricGroups();
+initExportPanelDownloadHrefs();
 
 async function initAssignmentSwitcher() {
     await refreshAssignmentsDropdown();

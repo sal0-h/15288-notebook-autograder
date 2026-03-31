@@ -7,18 +7,18 @@ from pathlib import Path
 
 from fastapi import APIRouter, Body, File, Form, HTTPException, UploadFile
 
-from api.helpers import build_parse_solution_response
+from api.helpers import build_parse_solution_response, resolve_solution_notebook_path
 from api import state
 from pydantic import ValidationError
 
 from config_models import (
     AppConfig,
-    app_config_to_yaml_data,
     default_config,
     ensure_app_config,
 )
 from parse_notebook import parse_notebook
-from utils import load_config, sanitize_assignment_name, save_config
+from config_models import load_app_config, sanitize_assignment_name
+from utils import save_config
 
 router = APIRouter()
 
@@ -41,7 +41,8 @@ def api_get_config():
     if state.get_active_config_path() is None:
         return {}
     try:
-        return load_config(state.get_active_config_path())  # type: ignore[arg-type]
+        cfg = load_app_config(state.get_active_config_path())  # type: ignore[arg-type]
+        return cfg.model_dump(mode="python")
     except (FileNotFoundError, ValueError, OSError) as e:
         raise HTTPException(
             status_code=500,
@@ -63,7 +64,7 @@ def api_put_config(config: dict = Body(...)):
         return merged
 
     try:
-        existing = state.get_active_config()
+        existing = state.get_active_app_config().model_dump(mode="python")
     except HTTPException as e:
         if e.status_code == 400:
             existing = {}
@@ -98,7 +99,8 @@ def api_put_config(config: dict = Body(...)):
         )
     # Plain dict for save_config / YAML I/O; already validated above.
     save_config(
-        app_config_to_yaml_data(validated), state.get_active_config_path()
+        validated.model_dump(mode="python", exclude_none=True),
+        state.get_active_config_path(),
     )  # type: ignore[arg-type]
     state.setup_file_logging()
     return {"ok": True}
@@ -126,7 +128,7 @@ def api_load_or_create(body: dict = Body(...)):
         default = AppConfig(assignment_name=safe_name)
         save_config(default, config_path)
     state.set_active_config_path(config_path)
-    cfg = load_config(config_path)
+    cfg = load_app_config(config_path).model_dump(mode="python")
     state.setup_file_logging()
     return {"config": cfg, "created": was_created, "assignment_name": safe_name}
 
@@ -158,8 +160,8 @@ async def api_parse_solution_upload(
     solution_path = save_dir / f"{safe_name}_sol.ipynb"
     solution_path.write_bytes(content)
 
-    config = dict(
-        state.get_active_config()
+    config = (
+        state.get_active_app_config().model_dump(mode="python")
         if state.get_active_config_path() is not None
         else default_config("default")
     )
@@ -168,7 +170,7 @@ async def api_parse_solution_upload(
     config["grading"] = config.get("grading", {})
     config["grading"]["question_groups"] = config["grading"].get("question_groups", [])
 
-    parsed = parse_notebook(solution_path, config)
+    parsed = parse_notebook(solution_path, ensure_app_config(config))
     return build_parse_solution_response(
         parsed,
         solution_notebook=config["solution_notebook"],
@@ -179,13 +181,18 @@ async def api_parse_solution_upload(
 @router.post("/parse-solution")
 async def api_parse_solution():
     """Parse the current solution notebook from config (no upload)."""
-    config = state.get_active_config()
-    solution_path = Path(config.get("solution_notebook", ""))
-    if not solution_path or not solution_path.is_absolute():
-        solution_path = state.PROJECT_ROOT / config.get("solution_notebook", "")
-    if not solution_path.exists():
+    config = state.get_active_app_config().model_dump(mode="python")
+    solution_path = resolve_solution_notebook_path(
+        state.PROJECT_ROOT, config.get("solution_notebook")
+    )
+    if solution_path is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Solution notebook path is not set. Upload one in Setup or set solution_notebook in config.",
+        )
+    if not solution_path.is_file():
         raise HTTPException(
             status_code=404, detail="Solution notebook not found. Upload one in Setup."
         )
-    parsed = parse_notebook(solution_path, config)
+    parsed = parse_notebook(solution_path, ensure_app_config(config))
     return build_parse_solution_response(parsed)

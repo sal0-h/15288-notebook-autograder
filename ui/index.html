@@ -78,6 +78,17 @@
                 </select>
             </div>
             <div class="mb-2">
+                <label for="setupGenaiModel"><strong>GenAI detection model</strong> <span class="text-muted-sm">(used by Detect GenAI)</span></label>
+                <select id="setupGenaiModel" class="input-select">
+                    <option value="gpt-4.1-mini">gpt-4.1-mini (recommended)</option>
+                    <option value="gpt-4.1">gpt-4.1</option>
+                    <option value="gpt-5-mini">gpt-5-mini</option>
+                    <option value="gpt-5-mini-2025-08-07">gpt-5-mini (dated)</option>
+                    <option value="gpt-5.2">gpt-5.2</option>
+                    <option value="gpt-5">gpt-5</option>
+                </select>
+            </div>
+            <div class="mb-2">
                 <label><strong>Solution notebook</strong></label>
                 <div class="upload-zone upload-zone-inline" id="setupSolutionUpload">
                     <input type="file" id="setupSolutionFile" accept=".ipynb">
@@ -190,11 +201,14 @@
         <p class="mb-2 text-muted-sm">Students who already have grades in <code>graded_results.json</code> are skipped automatically; the run continues with the next pending student. Each row below updates as grading proceeds.</p>
         <div class="mb-2 flex-row-gap10 flex-wrap grade-estimate-row">
             <button type="button" class="btn btn-align-start" id="gradeBtn">Start Grading</button>
+            <button type="button" class="btn btn-secondary btn-align-start" id="genaiDetectBtn" title="Optional: run a separate cheap-model pass to flag possible GenAI-style answers. Does not change scores.">Run GenAI detection</button>
+            <label class="review-flagged-inline mb-0"><input type="checkbox" id="genaiAutoRun"> Auto-run after grading</label>
             <div class="grade-estimate-block">
                 <span id="gradeEstimate" class="status-ok text-muted-sm"></span>
                 <p id="gradeQueueHint" class="text-muted-sm mb-0 hidden" role="status"></p>
             </div>
         </div>
+        <div id="genaiStatus" class="text-muted-sm mb-2" role="status" aria-live="polite"></div>
         <div id="gradeProgress" class="progress-list progress-mt-lg" role="status" aria-live="polite"></div>
     </div>
 
@@ -214,6 +228,7 @@
             <label class="review-flagged-inline mb-0"><input type="checkbox" id="reviewFilterOutlier"> Outlier</label>
             <label class="review-flagged-inline mb-0"><input type="checkbox" id="reviewFilterLowConf"> Low confidence</label>
             <label class="review-flagged-inline mb-0"><input type="checkbox" id="reviewFilterNeedsReview"> Needs review</label>
+            <label class="review-flagged-inline mb-0"><input type="checkbox" id="reviewFilterGenai"> GenAI flag</label>
         </div>
         <div id="reviewCalibrationResults" class="review-cal-strip" role="status" aria-live="polite"></div>
         <div id="reviewError" class="review-error-strip"></div>
@@ -265,7 +280,7 @@
                     <span id="reviewSaveFeedback" class="review-save-feedback"></span>
                     <div class="review-v2-bottombar-hints">
                         <span class="review-v2-hints" id="reviewHints">J/K student · [ ] question · S save (not in text box) · R re-grade</span>
-                        <span class="review-v2-hints review-v2-pill-legend" id="reviewPillLegend" aria-label="Question pill colors">Pills · <span class="review-legend-dot review-legend-dot-nr" aria-hidden="true"></span> needs review · <span class="review-legend-dot review-legend-dot-lc" aria-hidden="true"></span> low conf. · <span class="review-legend-dot review-legend-dot-out" aria-hidden="true"></span> outlier · <span class="review-legend-dot review-legend-dot-multi" aria-hidden="true"></span> multiple · gray none · blue selected (bar = flag)</span>
+                        <span class="review-v2-hints review-v2-pill-legend" id="reviewPillLegend" aria-label="Question pill colors">Pills · <span class="review-legend-dot review-legend-dot-nr" aria-hidden="true"></span> needs review · <span class="review-legend-dot review-legend-dot-lc" aria-hidden="true"></span> low conf. · <span class="review-legend-dot review-legend-dot-out" aria-hidden="true"></span> outlier · <span class="review-legend-dot review-legend-dot-genai" aria-hidden="true"></span> GenAI flag · <span class="review-legend-dot review-legend-dot-multi" aria-hidden="true"></span> multiple · gray none · blue selected (bar = flag)</span>
                     </div>
                 </div>
             </div>
@@ -275,7 +290,7 @@
     <!-- EXPORT -->
     <div id="panel-export" class="panel" role="tabpanel" aria-labelledby="tab-export">
         <h2>Export</h2>
-        <p class="mb-2">Generate Gradescope autograder JSONs and an Excel spreadsheet.</p>
+        <p class="mb-2">Generate Gradescope autograder JSONs, an Excel spreadsheet, and refresh <code>gradescope_autograder.zip</code> in one step.</p>
         <button type="button" class="btn mb-2 btn-align-start" id="exportBtn">Run Export</button>
         <div id="exportResults" class="results-mt" role="status" aria-live="polite"></div>
         <div class="mt-2 flex-row-gap12">
@@ -283,7 +298,8 @@
             <a id="linterZipDownload" class="btn btn-secondary" href="/export/linter-zip" download="linter_autograder.zip">Download Linter Autograder ZIP</a>
             <a id="autograderZipDownload" class="btn btn-secondary" href="/export/autograder-zip" download="gradescope_autograder.zip">Download Gradescope Autograder ZIP</a>
         </div>
-        <p class="mt-2 text-muted export-footnote">Linter ZIP: pre-deadline format check (0 pts). Gradescope ZIP: post-deadline, uses pre-computed grades.</p>
+        <p class="mt-2 text-muted export-footnote">Linter ZIP: pre-deadline format check (0 pts). Gradescope ZIP: post-deadline, uses pre-computed grades (id-keyed manifest when gather produced <code>submitter_stem_map.json</code>, plus legacy name map fallback).</p>
+        <p class="mt-2 text-muted export-footnote"><strong>Run Export</strong> already rebuilds the Gradescope ZIP. <strong>Download Gradescope Autograder ZIP</strong> runs export again first so the download always matches current <code>graded_results.json</code>.</p>
         <p class="mt-2 text-muted export-footnote">Upload in Gradescope: Configure Autograder → Upload. Then run Manage Submissions → Rerun Autograders.</p>
     </div>
 </div>

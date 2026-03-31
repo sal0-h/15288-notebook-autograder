@@ -6,7 +6,9 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from api import state
-from api.constants import DEFAULT_UPLOAD_MB  # noqa: F401 — re-exported for tests
+from api.routers.pipeline_routes import (  # noqa: F401 — re-exported for tests
+    DEFAULT_UPLOAD_MB,
+)
 from api.routers import (
     calibrate_routes,
     config_routes,

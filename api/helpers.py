@@ -13,7 +13,8 @@ from pathlib import Path
 from fastapi import HTTPException
 from fastapi.responses import FileResponse
 
-from parse_notebook import get_all_question_ids, sort_key_qid
+from config_models import sort_key_qid
+from parse_notebook import get_all_question_ids
 
 
 def safe_path(base: Path, user_input: str) -> Path:
@@ -25,6 +26,23 @@ def safe_path(base: Path, user_input: str) -> Path:
     except ValueError:
         raise HTTPException(status_code=400, detail="Path traversal detected")
     return resolved
+
+
+def resolve_solution_notebook_path(
+    project_root: Path, solution_notebook: str | None
+) -> Path | None:
+    """Absolute path to the solution ``.ipynb``, or ``None`` if unset/blank.
+
+    Relative paths are resolved under ``project_root`` with :func:`safe_path`
+    (rejects ``..`` traversal). Empty string must not resolve to ``project_root`` alone.
+    """
+    raw = (solution_notebook or "").strip()
+    if not raw:
+        return None
+    p = Path(raw)
+    if p.is_absolute():
+        return p
+    return safe_path(project_root, raw)
 
 
 def ui_file_response(path: Path) -> FileResponse:

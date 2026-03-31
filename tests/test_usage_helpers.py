@@ -1,12 +1,12 @@
-"""Tests for llm.usage_helpers."""
+"""Tests for results_models token usage utilities."""
 
-from llm.usage_helpers import (
+from results_models import (
+    GRADED_RESULT_USAGE_KEY,
+    TokenUsage,
     detach_usage_from_graded_result,
     graded_usage_summary_event,
     merge_graded_usage,
 )
-from llm.types import TokenUsage
-from results_models import GRADED_RESULT_USAGE_KEY
 
 
 def test_detach_usage_immutable():

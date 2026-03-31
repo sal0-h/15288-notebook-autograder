@@ -4,7 +4,7 @@
 - Follow existing Python style in this repo: clear function boundaries, typed signatures where present, and small focused helpers.
 - Keep pipeline modules single-purpose:
   - `parse_notebook.py` parses
-  - `rubric/` (`impl.py`) generates rubrics
+  - `rubric_generate.py` / `rubric_review.py` generate and review rubrics
   - `grade.py` grades per student/group
   - `batch_grader.py` orchestrates batch grading
   - `export.py` exports artifacts
