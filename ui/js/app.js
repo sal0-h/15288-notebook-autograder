@@ -8,6 +8,11 @@ function syncPanelInert(panelEl, isActive) {
 
 function switchToTab(tabEl) {
     if (!tabEl || !tabEl.dataset.tab) return;
+    // Guard unsaved Review edits before switching away
+    if (typeof reviewDirty !== "undefined" && reviewDirty) {
+        if (!confirm("You have unsaved changes in Review. Discard?")) return;
+        reviewDirty = false;
+    }
     const tabId = tabEl.dataset.tab;
     document.querySelectorAll(".tab[data-tab]").forEach(x => {
         x.classList.toggle("active", x === tabEl);
@@ -219,6 +224,17 @@ async function doLoadAssignment() {
 }
 
 document.getElementById("setupLoadBtn").onclick = () => doLoadAssignment();
+
+document.getElementById("setupResetBtn").onclick = async () => {
+    if (!confirm("Reset all config fields to defaults? Your rubrics and graded results are NOT affected.")) return;
+    try {
+        const r = await fetchWithRetry(API + "/config/default");
+        const data = await r.json();
+        _populateSetupFields(data);
+    } catch (e) {
+        alert("Failed to load defaults: " + e.message);
+    }
+};
 
 function updateOutputDirHint() {
     const name = document.getElementById("setupAssignmentName").value.trim() || "default";
@@ -913,6 +929,9 @@ document.getElementById("gradeBtn").onclick = async () => {
     const genaiBtn = document.getElementById("genaiDetectBtn");
     const autoGenai = document.getElementById("genaiAutoRun");
     list.innerHTML = "";
+    // Track results for summary
+    const gradeResults = [];
+    let gradeErrors = 0;
     const btn = document.getElementById("gradeBtn");
     setLoading(btn, true, "Grading…");
     genaiBtn.disabled = true;
@@ -956,6 +975,7 @@ document.getElementById("gradeBtn").onclick = async () => {
                 list.appendChild(div);
             } else if (data.status === "done" && data.result) {
                 const r = data.result;
+                gradeResults.push({ score: r.total_score, max: r.total_max, name: r.student_name });
                 const existing = list.querySelector(`[data-student="${CSS.escape(r.student_name)}"]`);
                 const div = existing || document.createElement("div");
                 div.className = "progress-item done";
@@ -963,6 +983,7 @@ document.getElementById("gradeBtn").onclick = async () => {
                 div.innerHTML = `<span>${escHtml(r.student_name)}</span><span style="font-weight:600">${r.total_score}/${r.total_max}</span>`;
                 if (!existing) list.appendChild(div);
             } else if (data.status === "error") {
+                gradeErrors++;
                 const existing = list.querySelector(`[data-student="${CSS.escape(student)}"]`);
                 const div = existing || document.createElement("div");
                 div.className = "progress-item error";
@@ -979,6 +1000,22 @@ document.getElementById("gradeBtn").onclick = async () => {
             stopGradePolling();
             setLoading(btn, false, "Start Grading");
             genaiBtn.disabled = false;
+            // Show grading summary banner
+            if (gradeResults.length > 0) {
+                const scores = gradeResults.map(r => r.max > 0 ? (r.score / r.max) * 100 : 0);
+                const avg = scores.reduce((a, b) => a + b, 0) / scores.length;
+                const min = Math.min(...scores);
+                const max = Math.max(...scores);
+                const pass = scores.filter(s => s >= 50).length;
+                const div = document.createElement("div");
+                div.className = "progress-item done grade-summary";
+                div.innerHTML = `<strong>Summary:</strong> ${gradeResults.length} graded`
+                    + (gradeErrors > 0 ? `, ${gradeErrors} error(s)` : "")
+                    + ` · Avg: ${avg.toFixed(1)}% · Min: ${min.toFixed(0)}% · Max: ${max.toFixed(0)}%`
+                    + ` · ≥50%: ${pass}/${gradeResults.length}`;
+                list.appendChild(div);
+                list.scrollTop = list.scrollHeight;
+            }
             if (autoGenai && autoGenai.checked) {
                 runGenaiDetection("Auto-run after grading");
             }
@@ -1076,6 +1113,17 @@ let currentReviewIdx = -1;
 let currentQids = [];
 let currentQidIdx = 0;
 let reviewDirty = false;
+
+function getQuestionTypeFromParsed(studentName, qid) {
+    const p = parsedCache[studentName];
+    if (!p || !p.sections) return null;
+    for (const secData of Object.values(p.sections)) {
+        if (secData.questions && secData.questions[qid]) {
+            return secData.questions[qid].question_type || null;
+        }
+    }
+    return null;
+}
 
 function calibrationLookup() {
     const m = {};
@@ -1553,10 +1601,14 @@ function renderQPills() {
     container.innerHTML = currentQids.map((qid, i) => {
         const flagCls = getQuestionPillFlagClass(qid, s);
         const flagTitle = formatQuestionFlagsTitle(qid, s);
+        const qType = getQuestionTypeFromParsed(s.student_name, qid);
+        const typeLabel = qType && qType !== "mixed" ? `[${qType}]` : "";
+        const titleParts = [qid, typeLabel, flagTitle].filter(Boolean).join(" · ");
         const labelExtra = flagTitle ? ` — ${flagTitle}` : "";
-        const aria = `Question ${qid}${labelExtra}`;
-        const titleAttr = flagTitle ? ` title="${escHtml(`${qid}: ${flagTitle}`)}"` : "";
-        return `<button type="button" class="review-v2-qpill${i === currentQidIdx ? " active" : ""}${flagCls}" data-qidx="${i}" aria-label="${escHtml(aria)}" aria-pressed="${i === currentQidIdx ? "true" : "false"}"${titleAttr}>${escHtml(qid)}</button>`;
+        const aria = `Question ${qid}${typeLabel ? ` (${qType})` : ""}${labelExtra}`;
+        const titleAttr = ` title="${escHtml(titleParts)}"`;
+        const pillLabel = typeLabel ? `${qid} <span class="qpill-type">${escHtml(typeLabel)}</span>` : escHtml(qid);
+        return `<button type="button" class="review-v2-qpill${i === currentQidIdx ? " active" : ""}${flagCls}" data-qidx="${i}" aria-label="${escHtml(aria)}" aria-pressed="${i === currentQidIdx ? "true" : "false"}"${titleAttr}>${pillLabel}</button>`;
     }).join("");
     container.querySelectorAll(".review-v2-qpill").forEach(btn => {
         btn.onclick = () => {
@@ -1656,6 +1708,8 @@ window.regradeStudent = async function() {
     if (!confirm("Re-grade this student? This will overwrite current scores with new LLM grades.")) return;
     const btn = document.getElementById("regradeStudentBtn");
     if (!btn) return;
+    const oldScore = s.total_score;
+    const oldMax = s.total_max;
     setLoading(btn, true, "Re-grading…");
     try {
         const r = await fetchWithRetry(API + "/grade/" + encodeURIComponent(s.student_name), { method: "POST" });
@@ -1667,11 +1721,65 @@ window.regradeStudent = async function() {
             reviewData[currentReviewIdx] = data.result;
             showReviewDetail(currentReviewIdx);
             renderStudentList();
+            // Show before/after score diff
+            const newScore = data.result.total_score;
+            const newMax = data.result.total_max;
+            const diff = newScore - oldScore;
+            const diffStr = diff >= 0 ? `+${diff.toFixed(1)}` : diff.toFixed(1);
+            const saveEl = document.getElementById("reviewSaveFeedback");
+            if (saveEl) {
+                saveEl.textContent = `Re-graded: ${oldScore}/${oldMax} → ${newScore}/${newMax} (${diffStr})`;
+                saveEl.className = "review-save-feedback " + (diff >= 0 ? "status-ok" : "status-warning");
+                setTimeout(() => { saveEl.textContent = ""; saveEl.className = "review-save-feedback"; }, 8000);
+            }
         }
     } catch (e) {
         document.getElementById("reviewError").innerHTML = `<p class="status-error">Re-grade failed: ${escHtml(e.message)}</p>`;
     } finally {
         setLoading(btn, false, "Re-grade student");
+    }
+};
+
+document.getElementById("reviewBatchRegradeBtn").onclick = async function() {
+    if (!reviewData || !reviewData.length) return;
+    // Find students with needs_review or low confidence on any question
+    const flagged = reviewData.filter(s => {
+        if (!s.questions) return false;
+        return Object.values(s.questions).some(q =>
+            q.requires_review || q.confidence === "low"
+        );
+    });
+    if (!flagged.length) {
+        alert("No flagged students found (needs_review or low confidence).");
+        return;
+    }
+    if (!confirm(`Re-grade ${flagged.length} flagged student(s)? This will overwrite their current scores.`)) return;
+    const btn = document.getElementById("reviewBatchRegradeBtn");
+    setLoading(btn, true, `Re-grading 0/${flagged.length}…`);
+    const saveEl = document.getElementById("reviewSaveFeedback");
+    let done = 0, errors = 0;
+    for (const s of flagged) {
+        try {
+            const r = await fetchWithRetry(API + "/grade/" + encodeURIComponent(s.student_name), { method: "POST" });
+            const data = await r.json();
+            if (data.detail) throw new Error(data.detail);
+            if (data.result) {
+                const idx = reviewData.findIndex(x => x.student_name === s.student_name);
+                if (idx >= 0) reviewData[idx] = data.result;
+            }
+            done++;
+        } catch (e) {
+            errors++;
+        }
+        btn.textContent = `Re-grading ${done + errors}/${flagged.length}…`;
+    }
+    setLoading(btn, false, "Re-grade flagged");
+    renderStudentList();
+    if (currentReviewIdx >= 0) showReviewDetail(currentReviewIdx);
+    if (saveEl) {
+        saveEl.textContent = `Batch re-grade: ${done} succeeded, ${errors} failed (of ${flagged.length})`;
+        saveEl.className = "review-save-feedback " + (errors ? "status-warning" : "status-ok");
+        setTimeout(() => { saveEl.textContent = ""; saveEl.className = "review-save-feedback"; }, 10000);
     }
 };
 
