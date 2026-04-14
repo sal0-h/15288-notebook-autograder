@@ -74,4 +74,3 @@ def get_job_logger(config: AppConfig, module_name: str) -> logging.Logger:
     """Get a logger scoped to the current assignment to prevent interleaved logs."""
     assignment_name = config.assignment_name or "DEFAULT"
     return logging.getLogger(f"autograder.{assignment_name}.{module_name}")
-

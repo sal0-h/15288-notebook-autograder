@@ -10,14 +10,43 @@ from batch_grader import load_grade_queue
 
 def _write_solution(output_dir: Path) -> None:
     solution = {
-        "sections": {"1": {"questions": {"1.1": {"points": 5, "question_markdown": "Q1.1", "answer_code_concat": "", "answer_text_concat": "", "answer_markdown_concat": "", "answer_cells": []}}}}
+        "sections": {
+            "1": {
+                "questions": {
+                    "1.1": {
+                        "points": 5,
+                        "question_markdown": "Q1.1",
+                        "answer_code_concat": "",
+                        "answer_text_concat": "",
+                        "answer_markdown_concat": "",
+                        "answer_cells": [],
+                    }
+                }
+            }
+        }
     }
     (output_dir / "solution_parsed.json").write_text(json.dumps(solution))
 
 
 def _write_student(parsed_dir: Path, name: str) -> None:
     parsed_dir.mkdir(parents=True, exist_ok=True)
-    data = {"student_name": name, "sections": {"1": {"questions": {"1.1": {"points": 5, "question_markdown": "Q", "answer_code_concat": "x=1", "answer_text_concat": "", "answer_markdown_concat": "", "answer_cells": []}}}}}
+    data = {
+        "student_name": name,
+        "sections": {
+            "1": {
+                "questions": {
+                    "1.1": {
+                        "points": 5,
+                        "question_markdown": "Q",
+                        "answer_code_concat": "x=1",
+                        "answer_text_concat": "",
+                        "answer_markdown_concat": "",
+                        "answer_cells": [],
+                    }
+                }
+            }
+        },
+    }
     (parsed_dir / f"{name}.json").write_text(json.dumps(data))
 
 
@@ -63,7 +92,14 @@ def test_load_grade_queue_skips_already_graded(tmp_path):
     _write_student(parsed_dir, "Bob")
 
     # Write existing results for Alice
-    results = [{"student_name": "Alice", "questions": {"1.1": {"score": 5, "max": 5, "feedback": "ok"}}, "total_score": 5, "total_max": 5}]
+    results = [
+        {
+            "student_name": "Alice",
+            "questions": {"1.1": {"score": 5, "max": 5, "feedback": "ok"}},
+            "total_score": 5,
+            "total_max": 5,
+        }
+    ]
     (output_dir / "graded_results.json").write_text(json.dumps(results))
 
     gq = load_grade_queue(cfg)

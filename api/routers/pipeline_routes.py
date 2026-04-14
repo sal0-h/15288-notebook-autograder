@@ -52,7 +52,6 @@ async def api_gather(zip_file: UploadFile = File(...)):
             tmp_path.unlink(missing_ok=True)
 
 
-
 @router.post("/parse")
 async def api_parse():
     """Run parse step. Returns verification report + first student preview."""

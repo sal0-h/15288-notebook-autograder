@@ -162,7 +162,9 @@ def _build_run_config(base_config: dict, run_output_dir: Path) -> dict:
 
     cfg["output_dir"] = str(run_output_dir)
     cfg["parsed_dir"] = str(source_parsed_dir)
-    cfg["submissions_dir"] = str(source_submissions_dir) if source_submissions_dir else ""
+    cfg["submissions_dir"] = (
+        str(source_submissions_dir) if source_submissions_dir else ""
+    )
 
     return ensure_app_config(cfg).model_dump()
 
@@ -237,9 +239,7 @@ def _load_existing_run_artifact(
             duration_s = float(run_summary.get("duration_seconds", 0.0) or 0.0)
             started = 0.0
             finished = max(duration_s, 0.0)
-            usage_total["prompt_tokens"] = int(
-                run_summary.get("prompt_tokens", 0) or 0
-            )
+            usage_total["prompt_tokens"] = int(run_summary.get("prompt_tokens", 0) or 0)
             usage_total["completion_tokens"] = int(
                 run_summary.get("completion_tokens", 0) or 0
             )
@@ -527,8 +527,7 @@ def _write_outputs(
     expected_students: int,
 ) -> None:
     total_duration_s = sum(
-        artifact.finished_at_epoch_s - artifact.started_at_epoch_s
-        for artifact in runs
+        artifact.finished_at_epoch_s - artifact.started_at_epoch_s for artifact in runs
     )
 
     run_index_summary: list[dict] = []
@@ -618,9 +617,7 @@ def run_nondeterminism_for_model(model: str) -> None:
 
     exp_root = _prepare_experiment_root(base_output_dir, experiment_name)
 
-    print(
-        f"\n{'='*60}\nModel: {model} | Workers: {workers} | Runs: {n_runs}\n{'='*60}"
-    )
+    print(f"\n{'='*60}\nModel: {model} | Workers: {workers} | Runs: {n_runs}\n{'='*60}")
     print(f"Source config: {SOURCE_CONFIG_PATH}")
     print(f"Experiment: {experiment_name}")
     print(f"Expected students per run: {expected_students}")
@@ -722,7 +719,9 @@ def main() -> None:
         run_nondeterminism_for_model(model)
 
     print("\n" + "=" * 60)
-    print("All models completed. Check output/HW1/nondeterminism/<model>__hw1__*/ for reports.")
+    print(
+        "All models completed. Check output/HW1/nondeterminism/<model>__hw1__*/ for reports."
+    )
 
 
 if __name__ == "__main__":

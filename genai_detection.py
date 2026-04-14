@@ -14,7 +14,12 @@ from grading_models import (
     GenaiLlmResponse,
     GenaiQuestionResult,
 )
-from llm.json_runner import MAX_JSON_LLM_ATTEMPTS, execute_llm_task, extract_llm_questions, run_jobs
+from llm.json_runner import (
+    MAX_JSON_LLM_ATTEMPTS,
+    execute_llm_task,
+    extract_llm_questions,
+    run_jobs,
+)
 from prompt_builder import (
     _sanitize_student_text,
     get_question_data,
@@ -72,6 +77,7 @@ def build_genai_detection_user_message(
     parts.insert(1, f"Question IDs: {', '.join(listed)}\n")
     return "\n\n".join(parts)
 
+
 @dataclass(frozen=True)
 class _DetectionJob:
     index: int
@@ -116,8 +122,7 @@ def _postprocess_genai_detection(
         get_qid=lambda item: str(item.question_id),
     )
     return [
-        item.model_copy(update={"question_id": qid})
-        for qid, item in by_qid.items()
+        item.model_copy(update={"question_id": qid}) for qid, item in by_qid.items()
     ]
 
 
