@@ -4,20 +4,20 @@ from __future__ import annotations
 
 import logging
 import time
-from collections.abc import Callable, Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Any, Protocol, TypeVar, cast, overload
+from typing import Any, TypeVar
 
 from openai import OpenAI
 from pydantic import BaseModel
 
-from results_models import TokenUsage
+from config_models import normalize_qid
+from token_usage import TokenUsage
 from llm_client import temperature_for_model
 
-T_out = TypeVar("T_out", covariant=True)
+T = TypeVar("T")
 _T = TypeVar("_T")
 _R = TypeVar("_R")
-T = TypeVar("T")
 
 # Application-level retries when validation fails.
 MAX_VALIDATION_RETRIES = 2
@@ -31,12 +31,7 @@ def retry_with_exponential_backoff(
     on_before_retry: Callable[[int, float], None] | None = None,
     on_attempt_failed: Callable[[int, BaseException], None] | None = None,
 ) -> tuple[T | None, BaseException | None]:
-    """Run ``operation`` up to ``max_attempts`` times.
-
-    Before attempts 1 .. max_attempts-1, sleep ``2**attempt`` seconds.
-    Returns ``(result, None)`` on success, or ``(None, last_error)`` if every
-    attempt raises.
-    """
+    """Run ``operation`` up to ``max_attempts`` times with exponential backoff."""
     last_error: BaseException | None = None
     for attempt in range(max_attempts):
         if attempt > 0:
@@ -53,21 +48,28 @@ def retry_with_exponential_backoff(
     return (None, last_error)
 
 
-def iter_unordered_parallel_results(
+def run_jobs(
     items: Iterable[_T],
     worker: Callable[[_T], _R],
     *,
     max_workers: int,
 ) -> Iterator[_R]:
-    """Run ``worker(item)`` for each item; yield results as tasks finish (arbitrary order)."""
+    """Run ``worker(item)`` for each item, sequentially or in parallel.
+
+    When ``max_workers <= 1`` or there's only one item, runs sequentially.
+    Otherwise uses a thread pool. Results arrive in arbitrary order when parallel.
+    """
     work = list(items)
     if not work:
         return
-    workers = max(1, int(max_workers))
-    with ThreadPoolExecutor(max_workers=workers) as pool:
-        futures = {pool.submit(worker, item): item for item in work}
-        for fut in as_completed(futures):
-            yield fut.result()
+    if max_workers <= 1 or len(work) <= 1:
+        for item in work:
+            yield worker(item)
+    else:
+        with ThreadPoolExecutor(max_workers=max(1, int(max_workers))) as pool:
+            futures = {pool.submit(worker, item): item for item in work}
+            for fut in as_completed(futures):
+                yield fut.result()
 
 
 def complete_structured(
@@ -78,11 +80,7 @@ def complete_structured(
     max_completion_tokens: int,
     response_model: type[BaseModel],
 ) -> tuple[BaseModel, TokenUsage]:
-    """Run structured outputs via Responses API; return ``(parsed_model, token_usage)``.
-
-    Uses ``client.responses.parse`` with ``text_format`` (Pydantic). Requires a
-    model that supports Structured Outputs.
-    """
+    """Run structured outputs via Responses API; return ``(parsed_model, token_usage)``."""
     temperature = temperature_for_model(model)
     response = client.responses.parse(
         model=model,
@@ -136,100 +134,6 @@ class JsonLlmExhaustedError(JsonLlmError):
         self.last_error = last_error
 
 
-class JsonLlmSpec(Protocol[T_out]):
-    """Structural type for :func:`run_json_llm` (implemented by frozen dataclasses)."""
-
-    @property
-    def model(self) -> str: ...
-
-    @property
-    def max_completion_tokens(self) -> int: ...
-
-    @property
-    def task_kind(self) -> str: ...
-
-    def llm_messages(self) -> list: ...
-
-    def response_model(self) -> type[BaseModel]: ...
-
-    def validate(self, parsed: BaseModel) -> T_out: ...
-
-
-def _spec_log_extra(spec: JsonLlmSpec[Any]) -> dict[str, Any]:
-    fn = getattr(spec, "extra_log_fields", None)
-    if callable(fn):
-        out = fn()
-        if isinstance(out, dict):
-            return cast(dict[str, Any], out)
-    return {}
-
-
-def _resolve_fallback_value(
-    *,
-    fallback: T | None,
-    fallback_factory: Callable[[BaseException | None], T] | None,
-    last_error: BaseException | None,
-) -> T:
-    if fallback_factory is not None:
-        if fallback is not None:
-            raise ValueError("Pass only one of fallback or fallback_factory")
-        return fallback_factory(last_error)
-    if fallback is not None:
-        return fallback
-    raise ValueError("internal: fallback resolution without fallback")
-
-
-@overload
-def execute_llm_task(
-    client: OpenAI,
-    *,
-    model: str,
-    messages: list,
-    max_completion_tokens: int,
-    response_model: type[BaseModel],
-    task_kind: str,
-    logger: logging.Logger,
-    postprocess: Callable[[BaseModel], T],
-    fallback: None = None,
-    fallback_factory: None = None,
-    extra_log_fields: dict[str, Any] | None = None,
-) -> tuple[T, TokenUsage]: ...
-
-
-@overload
-def execute_llm_task(
-    client: OpenAI,
-    *,
-    model: str,
-    messages: list,
-    max_completion_tokens: int,
-    response_model: type[BaseModel],
-    task_kind: str,
-    logger: logging.Logger,
-    postprocess: Callable[[BaseModel], T],
-    fallback: T,
-    fallback_factory: None = None,
-    extra_log_fields: dict[str, Any] | None = None,
-) -> tuple[T, TokenUsage]: ...
-
-
-@overload
-def execute_llm_task(
-    client: OpenAI,
-    *,
-    model: str,
-    messages: list,
-    max_completion_tokens: int,
-    response_model: type[BaseModel],
-    task_kind: str,
-    logger: logging.Logger,
-    postprocess: Callable[[BaseModel], T],
-    fallback: None = None,
-    fallback_factory: Callable[[BaseException | None], T] = ...,
-    extra_log_fields: dict[str, Any] | None = None,
-) -> tuple[T, TokenUsage]: ...
-
-
 def execute_llm_task(
     client: OpenAI,
     *,
@@ -275,23 +179,21 @@ def execute_llm_task(
         return result, usage
 
     def _on_before_retry(attempt: int, delay: float) -> None:
-        extra = {**base_extra, "attempt": attempt}
         logger.warning(
             "json_llm retry %d for %s after %ds",
             attempt,
             task_kind,
             int(delay),
-            extra=extra,
+            extra={**base_extra, "attempt": attempt},
         )
 
     def _on_failed(attempt: int, err: BaseException) -> None:
-        extra = {**base_extra, "attempt": attempt}
         logger.warning(
             "json_llm attempt %d failed for %s: %s",
             attempt,
             task_kind,
             err,
-            extra=extra,
+            extra={**base_extra, "attempt": attempt},
         )
 
     success, last_error = retry_with_exponential_backoff(
@@ -302,13 +204,10 @@ def execute_llm_task(
     )
     if success is not None:
         return success
-    if fallback is not None or fallback_factory is not None:
-        fb = _resolve_fallback_value(
-            fallback=fallback,
-            fallback_factory=fallback_factory,
-            last_error=last_error,
-        )
-        return fb, TokenUsage()
+    if fallback is not None:
+        return fallback, TokenUsage()
+    if fallback_factory is not None:
+        return fallback_factory(last_error), TokenUsage()
     raise JsonLlmExhaustedError(
         f"json_llm exhausted after {MAX_JSON_LLM_ATTEMPTS} attempts for {task_kind}",
         attempts=MAX_JSON_LLM_ATTEMPTS,
@@ -316,32 +215,35 @@ def execute_llm_task(
     ) from last_error
 
 
-def run_json_llm(
-    spec: JsonLlmSpec[T_out],
-    client: OpenAI,
+# ---------------------------------------------------------------------------
+# Shared LLM postprocess helpers
+# ---------------------------------------------------------------------------
+
+
+def extract_llm_questions(
+    items: Iterable,
     *,
-    logger: logging.Logger,
-) -> tuple[T_out, TokenUsage]:
-    """Run structured output with retries; ``spec`` supplies messages and validation."""
+    expected_qids: Sequence[str],
+    get_qid: Callable[[Any], str],
+) -> dict[str, Any]:
+    """Normalize QIDs, deduplicate (first wins), and validate completeness.
 
-    return execute_llm_task(
-        client,
-        model=spec.model,
-        messages=spec.llm_messages(),
-        max_completion_tokens=spec.max_completion_tokens,
-        response_model=spec.response_model(),
-        task_kind=spec.task_kind,
-        logger=logger,
-        postprocess=spec.validate,
-        extra_log_fields=_spec_log_extra(spec),
-    )
+    Returns ``{normalized_qid: item}`` for all valid items.
+    Raises ``ValueError`` if any ``expected_qids`` are missing from the output.
+    """
+    out: dict[str, Any] = {}
+    for item in items:
+        try:
+            qid = normalize_qid(get_qid(item))
+        except ValueError:
+            continue
+        if qid not in out:
+            out[qid] = item
+    missing = [q for q in expected_qids if q not in out]
+    if missing:
+        raise ValueError(f"LLM response missing questions: {missing}")
+    return out
 
 
-def run_parallel_map(
-    items: Iterable[_T],
-    worker: Callable[[_T], _R],
-    *,
-    max_workers: int,
-) -> Iterator[_R]:
-    """Single entry for parallel LLM workers (wraps :func:`iter_unordered_parallel_results`)."""
-    return iter_unordered_parallel_results(items, worker, max_workers=max_workers)
+# Backward-compatible aliases
+run_parallel_map = run_jobs

@@ -1,10 +1,9 @@
 """LLM façade: structured-output runner, parallelism, cost and usage helpers.
 
-Domain code should call :func:`llm.json_runner.execute_llm_task` with assembled
+Domain code calls :func:`llm.json_runner.execute_llm_task` with assembled
 messages, a Pydantic ``response_model``, optional ``postprocess``, and optional
-``fallback`` / ``fallback_factory``. :func:`llm.json_runner.run_json_llm` remains
-for tests and callers that still use the :class:`llm.json_runner.JsonLlmSpec`
-protocol. Parallel fan-out uses :func:`llm.json_runner.run_parallel_map`.
+``fallback`` / ``fallback_factory``. Parallel fan-out uses
+:func:`llm.json_runner.run_jobs`.
 """
 
 from token_usage import usage_cost_usd
@@ -17,7 +16,8 @@ from llm.json_runner import (
     JsonLlmParseError,
     JsonLlmValidationError,
     execute_llm_task,
-    run_json_llm,
+    extract_llm_questions,
+    run_jobs,
     run_parallel_map,
 )
 from token_usage import (
