@@ -9,9 +9,9 @@ from pydantic import BaseModel
 
 from config_models import AppConfig, DEFAULT_MODEL, normalize_qid
 from grading_helpers import (
-    get_active_grade_only,
-    get_effective_question_groups,
-    get_skipped_feedback,
+    grade_only_list,
+    effective_groups,
+    skipped_feedback,
 )
 from grading_models import (
     GRADING_FAILED,
@@ -276,8 +276,8 @@ def grade_student(
         client = get_openai_client()
 
     grading_config = cfg.grading
-    groups = get_effective_question_groups(grading_config)
-    grade_only = get_active_grade_only(grading_config)
+    groups = effective_groups(grading_config)
+    grade_only = grade_only_list(grading_config)
     student_name = student_parsed.get("student_name", "Unknown")
     is_merge = merge_into is not None and grade_only is not None
 
@@ -343,7 +343,7 @@ def grade_student(
             feedback_parts,
             ungrouped,
             solution_parsed,
-            get_skipped_feedback(grade_only),
+            skipped_feedback(grade_only),
         )
 
     if is_merge:

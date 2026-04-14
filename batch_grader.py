@@ -10,9 +10,9 @@ from openai import OpenAI
 
 from config_models import AppConfig, DEFAULT_MODEL
 from grading_helpers import (
-    get_active_grade_only,
-    get_effective_question_groups,
-    needs_merge as needs_grade_only_merge,
+    grade_only_list,
+    effective_groups,
+    needs_merge,
 )
 from results_models import (
     GradedResult,
@@ -74,13 +74,13 @@ def load_grade_queue(
     }
 
     grade_only_merge = grading_config.grade_only_merge
-    grade_only = get_active_grade_only(grading_config)
+    grade_only = grade_only_list(grading_config)
 
     if grade_only_merge:
         to_grade = [
             (i, path)
             for i, path in enumerate(student_files)
-            if needs_grade_only_merge(
+            if needs_merge(
                 (
                     results[results_by_name[path.stem]]
                     if path.stem in results_by_name
@@ -96,7 +96,7 @@ def load_grade_queue(
             if path.stem not in already_graded
         ]
 
-    groups = get_effective_question_groups(grading_config)
+    groups = effective_groups(grading_config)
     ungrouped = validate_question_groups(groups, solution_parsed)
 
     return GradeQueue(
@@ -154,7 +154,7 @@ def grade_all_students(
     ungrouped = gq.ungrouped
     grade_only_merge = gq.grade_only_merge
     grading_config = cfg.grading
-    grade_only = get_active_grade_only(grading_config)
+    grade_only = grade_only_list(grading_config)
 
     def _store_result(student_name: str, result: GradedResult) -> None:
         """Update results list/index and persist — call with lock held if parallel."""

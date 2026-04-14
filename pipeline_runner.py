@@ -95,6 +95,6 @@ def run_estimate_grade(config: AppConfig, student_name: str | None = None) -> di
 
 def run_genai_detection(config: AppConfig) -> dict:
     """Run optional GenAI suspicion pass; merges flags into graded_results.json."""
-    from genai_detection import run_genai_detection as _run
+    from genai_detection import run_genai_detection
 
-    return _run(config)
+    return run_genai_detection(config)

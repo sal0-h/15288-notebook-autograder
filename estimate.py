@@ -4,7 +4,7 @@ import json
 from typing import Any
 
 from config_models import AppConfig, DEFAULT_MODEL
-from grading_helpers import get_effective_question_groups
+from grading_helpers import effective_groups
 from grading_models import usage_cost_usd
 from results_models import TokenUsage
 from prompt_builder import build_group_prompt, estimate_tokens, load_prompt
@@ -59,7 +59,7 @@ def estimate_rubrics(config: AppConfig) -> dict:
 
     solution_parsed = json.loads(solution_path.read_text(encoding="utf-8"))
     grading_config = config.grading
-    groups = get_effective_question_groups(grading_config)
+    groups = effective_groups(grading_config)
     model = config.rubric_model or config.model or DEFAULT_MODEL
 
     prompt_tokens = estimate_tokens(" " * RUBRIC_SYSTEM_LEN, 0, model)
@@ -110,7 +110,7 @@ def estimate_grade(config: AppConfig, student_name: str | None = None) -> dict:
 
     solution_parsed = json.loads(solution_path.read_text(encoding="utf-8"))
     grading_config = config.grading
-    groups = get_effective_question_groups(grading_config)
+    groups = effective_groups(grading_config)
 
     model = config.model or DEFAULT_MODEL
 
