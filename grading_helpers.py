@@ -55,4 +55,3 @@ def needs_merge(
 def skipped_feedback(grade_only: list[str] | None) -> str:
     """Canonical feedback for skipped questions (grade_only vs not)."""
     return SKIP_FEEDBACKS[0] if grade_only else SKIP_FEEDBACKS[1]
-

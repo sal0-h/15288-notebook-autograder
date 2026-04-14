@@ -17,7 +17,12 @@ from config_models import (
 )
 from grading_models import RubricReviewResponse
 from grading_helpers import filter_groups_by_grade_only
-from llm.json_runner import MAX_JSON_LLM_ATTEMPTS, execute_llm_task, extract_llm_questions, run_jobs
+from llm.json_runner import (
+    MAX_JSON_LLM_ATTEMPTS,
+    execute_llm_task,
+    extract_llm_questions,
+    run_jobs,
+)
 from prompt_builder import get_question_data, load_prompt
 from utils import (
     get_job_logger,

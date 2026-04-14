@@ -100,12 +100,12 @@ def estimate_grade(config: AppConfig, student_name: str | None = None) -> dict:
     """Estimate tokens and cost for grading. If student_name is None, estimates pending bulk grading only."""
     paths = get_assignment_output_paths(config)
     parsed_dir = paths.parsed_dir
-    
+
     try:
         solution_parsed = load_solution_parsed(config)
     except FileNotFoundError:
         return _estimate_error("Run parse first")
-    
+
     if not parsed_dir.exists():
         return _estimate_error("No parsed files. Run parse first.")
 

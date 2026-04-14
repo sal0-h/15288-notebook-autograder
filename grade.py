@@ -94,8 +94,7 @@ def _postprocess_grade_group(
         get_qid=lambda g: g.question_id,
     )
     return [
-        item.model_copy(update={"question_id": qid})
-        for qid, item in by_qid.items()
+        item.model_copy(update={"question_id": qid}) for qid, item in by_qid.items()
     ]
 
 
@@ -275,11 +274,14 @@ def grade_student(
     if is_merge and merge_into is not None:
         if isinstance(merge_into, GradedResult):
             questions = {
-                qid: q.model_dump(mode="python") for qid, q in merge_into.questions.items()
+                qid: q.model_dump(mode="python")
+                for qid, q in merge_into.questions.items()
             }
         else:
             # Accept raw dict for backward compatibility (tests, API callers)
-            raw_qs = merge_into.get("questions", {}) if isinstance(merge_into, dict) else {}
+            raw_qs = (
+                merge_into.get("questions", {}) if isinstance(merge_into, dict) else {}
+            )
             questions = {qid: dict(q) for qid, q in raw_qs.items()}
     total_score = 0.0
     total_max = 0.0

@@ -21,7 +21,9 @@ _enc_lock = threading.Lock()
 _question_type_cache: dict[str, dict[str, str]] = {}
 
 
-def _load_question_type_instructions(assignment_name: str | None = None) -> dict[str, str]:
+def _load_question_type_instructions(
+    assignment_name: str | None = None,
+) -> dict[str, str]:
     """Load question type instructions, checking assignment-specific dir first."""
     cache_key = assignment_name or "_DEFAULT_"
     if cache_key in _question_type_cache:
@@ -39,7 +41,9 @@ def _load_question_type_instructions(assignment_name: str | None = None) -> dict
     if assignment_name:
         assignment_path = base_dir / assignment_name / "question_types.yaml"
         if assignment_path.exists():
-            overrides = _yaml.safe_load(assignment_path.read_text(encoding="utf-8")) or {}
+            overrides = (
+                _yaml.safe_load(assignment_path.read_text(encoding="utf-8")) or {}
+            )
             result.update(overrides)
 
     _question_type_cache[cache_key] = result
@@ -229,11 +233,17 @@ def _build_reference_parts(
     ref_text = "REFERENCE SOLUTION:\n"
     if sol_q:
         if sol_q.get("answer_code_concat"):
-            ref_text += f"Code:\n{truncate_output(sol_q['answer_code_concat'], cap)}\n\n"
+            ref_text += (
+                f"Code:\n{truncate_output(sol_q['answer_code_concat'], cap)}\n\n"
+            )
         if sol_q.get("answer_text_concat"):
-            ref_text += f"Output:\n{truncate_output(sol_q['answer_text_concat'], cap)}\n\n"
+            ref_text += (
+                f"Output:\n{truncate_output(sol_q['answer_text_concat'], cap)}\n\n"
+            )
         if sol_q.get("answer_markdown_concat"):
-            ref_text += f"Answer:\n{truncate_output(sol_q['answer_markdown_concat'], cap)}\n\n"
+            ref_text += (
+                f"Answer:\n{truncate_output(sol_q['answer_markdown_concat'], cap)}\n\n"
+            )
         for cell in sol_q.get("answer_cells", []):
             for img in cell.get("images", []):
                 ref_images.append(img)
@@ -258,9 +268,7 @@ def _build_student_parts(stu_q: dict | None, cap: int) -> tuple[str, list[dict]]
     if stu_q:
         has_code = bool(stu_q.get("answer_code_concat", "").strip())
         has_output = bool(stu_q.get("answer_text_concat", "").strip())
-        has_images = any(
-            cell.get("images") for cell in stu_q.get("answer_cells", [])
-        )
+        has_images = any(cell.get("images") for cell in stu_q.get("answer_cells", []))
         if not has_code and not has_output and not has_images:
             stu_text += "WARNING: This question has NO code, NO output, and NO images — only markdown (if any). Score accordingly; do not award points for code/output that is not present.\n\n"
         has_any = has_code or has_output or stu_q.get("answer_markdown_concat")

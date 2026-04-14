@@ -57,7 +57,10 @@ def tag_notebook(
 
         qtype = tags[qid].strip().lower()
         if qtype not in VALID_QUESTION_TYPES:
-            print(f"Warning: unknown type '{tags[qid]}' for {qid}, skipping", file=sys.stderr)
+            print(
+                f"Warning: unknown type '{tags[qid]}' for {qid}, skipping",
+                file=sys.stderr,
+            )
             continue
 
         # Ensure metadata and tags exist (handle tags=None from malformed notebooks)
@@ -68,7 +71,9 @@ def tag_notebook(
             meta["tags"] = cell_tags
 
         # Remove any existing type: tag
-        cell_tags[:] = [t for t in cell_tags if not (isinstance(t, str) and t.startswith("type:"))]
+        cell_tags[:] = [
+            t for t in cell_tags if not (isinstance(t, str) and t.startswith("type:"))
+        ]
 
         # Add the new type tag
         cell_tags.append(f"type:{qtype}")
@@ -84,11 +89,27 @@ def main():
     parser = argparse.ArgumentParser(
         description="Inject question-type tags into Jupyter notebook cell metadata",
     )
-    parser.add_argument("--notebook", type=Path, required=True, help="Path to .ipynb file")
-    parser.add_argument("--tags", type=Path, required=True, help="Path to JSON mapping {qid: type}")
-    parser.add_argument("--regex", default=DEFAULT_QUESTION_REGEX, help="Question regex (default: standard Q pattern)")
-    parser.add_argument("--config", type=Path, help="Optional: load question_regex from assignment config")
-    parser.add_argument("--dry-run", action="store_true", help="Print what would be tagged without writing")
+    parser.add_argument(
+        "--notebook", type=Path, required=True, help="Path to .ipynb file"
+    )
+    parser.add_argument(
+        "--tags", type=Path, required=True, help="Path to JSON mapping {qid: type}"
+    )
+    parser.add_argument(
+        "--regex",
+        default=DEFAULT_QUESTION_REGEX,
+        help="Question regex (default: standard Q pattern)",
+    )
+    parser.add_argument(
+        "--config",
+        type=Path,
+        help="Optional: load question_regex from assignment config",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Print what would be tagged without writing",
+    )
     args = parser.parse_args()
 
     if not args.notebook.exists():
@@ -106,6 +127,7 @@ def main():
     regex = args.regex
     if args.config:
         from config_models import load_app_config
+
         cfg = load_app_config(args.config)
         regex = cfg.parsing.question_regex
 
@@ -119,9 +141,14 @@ def main():
 
     unmatched = set(tags.keys()) - set(tagged.keys())
     if unmatched:
-        print(f"\nWarning: {len(unmatched)} QIDs not found in notebook: {sorted(unmatched)}", file=sys.stderr)
+        print(
+            f"\nWarning: {len(unmatched)} QIDs not found in notebook: {sorted(unmatched)}",
+            file=sys.stderr,
+        )
 
-    print(f"\n{'Would tag' if args.dry_run else 'Tagged'} {len(tagged)}/{len(tags)} questions.")
+    print(
+        f"\n{'Would tag' if args.dry_run else 'Tagged'} {len(tagged)}/{len(tags)} questions."
+    )
     return 0
 
 
