@@ -14,7 +14,7 @@ from grading_helpers import (
     effective_groups,
     needs_merge,
 )
-from results_models import GradedResult
+from results_models import GradedResult, graded_result_to_disk_dict
 from token_usage import (
     TokenUsage,
     graded_usage_summary_event,
@@ -29,6 +29,39 @@ from utils import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _emit_working_event(student_name: str, index: int, total: int) -> dict:
+    """Emit a 'working' status event for a student."""
+    return {
+        "student": student_name,
+        "status": "working",
+        "result": None,
+        "error": None,
+        "index": index + 1,
+        "total": total,
+    }
+
+
+def _emit_usage_summary(
+    usage_total: TokenUsage, model: str, graded_count: int, logger_obj: logging.Logger
+) -> dict | None:
+    """
+    Emit a usage summary event if usage data exists; log it.
+    Returns the event dict or None if no tokens were tracked.
+    """
+    if not usage_total.has_tokens():
+        return None
+    cost_evt = graded_usage_summary_event(usage_total, model)
+    logger_obj.info(
+        "Grading complete: %d students, %d tokens (%.0f in / %.0f out), ~$%.4f",
+        graded_count,
+        usage_total.total_tokens,
+        usage_total.prompt_tokens,
+        usage_total.completion_tokens,
+        cost_evt["cost_usd"],
+    )
+    return cost_evt
 
 
 @dataclass(frozen=True)
@@ -207,14 +240,7 @@ def grade_all_students(
         graded_count = 0
         for i, path in to_grade:
             student_name = path.stem
-            yield {
-                "student": student_name,
-                "status": "working",
-                "result": None,
-                "error": None,
-                "index": i + 1,
-                "total": len(student_files),
-            }
+            yield _emit_working_event(student_name, i, len(student_files))
             try:
                 student_parsed = json.loads(path.read_text(encoding="utf-8"))
                 existing = (
@@ -264,17 +290,9 @@ def grade_all_students(
                 }
 
         # Final usage summary
-        if usage_total.has_tokens():
-            cost_evt = graded_usage_summary_event(usage_total, model)
-            logger.info(
-                "Grading complete: %d students, %d tokens (%.0f in / %.0f out), ~$%.4f",
-                graded_count,
-                usage_total.total_tokens,
-                usage_total.prompt_tokens,
-                usage_total.completion_tokens,
-                cost_evt["cost_usd"],
-            )
-            yield cost_evt
+        summary_evt = _emit_usage_summary(usage_total, model, graded_count, logger)
+        if summary_evt:
+            yield summary_evt
     else:
         # Parallel grading — shared client is thread-safe (httpx.Client); connection pooling reduces latency
         def _grade_one(args):
@@ -309,14 +327,7 @@ def grade_all_students(
             for i, path in to_grade
         ]
         for i, path in to_grade:
-            yield {
-                "student": path.stem,
-                "status": "working",
-                "result": None,
-                "error": None,
-                "index": i + 1,
-                "total": len(student_files),
-            }
+            yield _emit_working_event(path.stem, i, len(student_files))
         for i, student_name, status, result, error in run_jobs(
             to_grade_with_merge,
             _grade_one,
@@ -340,7 +351,7 @@ def grade_all_students(
                     _store_result(student_name, stored)
                 graded_count += 1
             result_dict = (
-                stored.model_dump(mode="python", by_alias=True, exclude_none=True)
+                graded_result_to_disk_dict(stored)
                 if status == "done" and result is not None
                 else None
             )
@@ -353,14 +364,6 @@ def grade_all_students(
                 "total": len(student_files),
             }
 
-        if usage_total.has_tokens():
-            cost_evt = graded_usage_summary_event(usage_total, model)
-            logger.info(
-                "Grading complete: %d students, %d tokens (%.0f in / %.0f out), ~$%.4f",
-                graded_count,
-                usage_total.total_tokens,
-                usage_total.prompt_tokens,
-                usage_total.completion_tokens,
-                cost_evt["cost_usd"],
-            )
-            yield cost_evt
+        summary_evt = _emit_usage_summary(usage_total, model, graded_count, logger)
+        if summary_evt:
+            yield summary_evt
