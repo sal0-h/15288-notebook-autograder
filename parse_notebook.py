@@ -77,6 +77,8 @@ from config_models import load_app_config
 
 logger = logging.getLogger(__name__)
 
+VALID_QUESTION_TYPES = {"code", "plot", "analysis", "open-ended", "exact", "mixed"}
+
 
 def md_text(cell: dict) -> str:
     """Extract markdown/text from a cell's source."""
@@ -249,9 +251,20 @@ def parse_notebook(nb_path: Path, config: AppConfig) -> dict:
                 current_section = sec_id
                 ensure_section(sec_id)
 
+            # Extract question type from cell metadata tags (e.g., ["type:analysis"])
+            cell_tags = cell.get("metadata", {}).get("tags", [])
+            question_type = "mixed"
+            for tag in cell_tags:
+                if isinstance(tag, str) and tag.startswith("type:"):
+                    candidate = tag[5:].strip().lower()
+                    if candidate in VALID_QUESTION_TYPES:
+                        question_type = candidate
+                        break
+
             q_obj: dict = {
                 "points": pts,
                 "question_markdown": md_text(cell),
+                "question_type": question_type,
             }
 
             # Collect answer cells and concatenations
