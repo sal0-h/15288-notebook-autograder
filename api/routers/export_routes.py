@@ -9,6 +9,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 
 from api import state
+from api.helpers import require_active_config
 from linter_export import export_linter_zip
 from pipeline_runner import run_export, run_export_autograder_zip
 
@@ -18,14 +19,14 @@ router = APIRouter()
 @router.post("/export")
 async def api_export():
     """Run export step. Returns summary and Excel download path."""
-    cfg = state.get_active_app_config()
+    cfg = require_active_config()
     return await asyncio.to_thread(run_export, cfg)
 
 
 @router.get("/export/excel")
 def api_download_excel():
     """Download Final_Grades.xlsx."""
-    cfg = state.get_active_app_config()
+    cfg = require_active_config()
     output_dir = Path(cfg.output_dir)
     path = output_dir / "Final_Grades.xlsx"
     if not path.exists():
@@ -38,7 +39,7 @@ def api_download_excel():
 @router.get("/export/autograder-zip")
 def api_download_autograder_zip():
     """Create Gradescope autograder zip and return it for download."""
-    cfg = state.get_active_app_config()
+    cfg = require_active_config()
     run_export(cfg)
     zip_path = run_export_autograder_zip(cfg)
     return FileResponse(zip_path, filename="gradescope_autograder.zip")
