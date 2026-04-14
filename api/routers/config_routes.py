@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
-
 from fastapi import APIRouter, Body, File, Form, HTTPException, UploadFile
 
 from api.helpers import build_parse_solution_response, resolve_solution_notebook_path

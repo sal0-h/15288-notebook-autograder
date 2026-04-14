@@ -33,7 +33,7 @@ if __name__ == "__main__":
 """
 
 
-def _q_vals(q: Question | dict) -> tuple[float, float, str]:
+def _extract_question_scores(q: Question | dict) -> tuple[float, float, str]:
     if isinstance(q, dict):
         return (
             float(q.get("score", 0)),
@@ -206,7 +206,7 @@ def export_all(cfg: AppConfig) -> dict[str, str | int]:
         for qid in gs_q_cols:
             q_data = questions.get(qid)
             score, max_s, out = (
-                _q_vals(q_data) if q_data is not None else (0.0, 0.0, "")
+                _extract_question_scores(q_data) if q_data is not None else (0.0, 0.0, "")
             )
             tests.append(
                 {
@@ -242,7 +242,7 @@ def export_all(cfg: AppConfig) -> dict[str, str | int]:
         }
         for qid in q_cols:
             q_data = r.questions.get(qid)
-            row[f"Q{qid}"] = "" if q_data is None else _q_vals(q_data)[0]
+            row[f"Q{qid}"] = "" if q_data is None else _extract_question_scores(q_data)[0]
         row["summary_feedback"] = r.summary_feedback
         rows.append(row)
 

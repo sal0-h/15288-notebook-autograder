@@ -6,7 +6,6 @@ import asyncio
 import json
 import logging
 from collections.abc import Callable
-from pathlib import Path
 from fastapi import APIRouter, HTTPException
 
 from batch_grader import grade_all_students
@@ -16,7 +15,6 @@ from api.validation import parse_student_name_path_param
 from genai_detection import run_genai_detection
 from grading_helpers import effective_groups
 from grade import grade_student
-from results_models import GradedResult
 from token_usage import TokenUsage
 from prompt_builder import validate_question_groups
 from results_store import find_student, load_results, save_results, update_student

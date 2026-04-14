@@ -1,6 +1,5 @@
 """Create a Phase 1 linter autograder zip for Gradescope (pre-deadline format check, 0 pts)."""
 
-import json
 import zipfile
 from pathlib import Path
 
