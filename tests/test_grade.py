@@ -352,17 +352,17 @@ class TestGradeOnly:
             )
 
         # 1.1 graded by LLM
-        assert result["questions"]["1.1"]["score"] == 2.0
-        assert result["questions"]["1.1"]["feedback"] == "correct"
+        assert result.questions["1.1"].score == 2.0
+        assert result.questions["1.1"].feedback == "correct"
 
         # 1.2 and 2.1 skipped
-        assert result["questions"]["1.2"]["score"] == 0.0
-        assert "[skipped - not in grade_only]" in result["questions"]["1.2"]["feedback"]
-        assert result["questions"]["2.1"]["score"] == 0.0
-        assert "[skipped - not in grade_only]" in result["questions"]["2.1"]["feedback"]
+        assert result.questions["1.2"].score == 0.0
+        assert "[skipped - not in grade_only]" in result.questions["1.2"].feedback
+        assert result.questions["2.1"].score == 0.0
+        assert "[skipped - not in grade_only]" in result.questions["2.1"].feedback
         # total_max is sum of graded questions only (not skipped)
-        assert result["total_max"] == 2.0  # 1.1 only (2 pts)
-        assert result["total_score"] == 2.0  # only 1.1 contributes
+        assert result.total_max == 2.0  # 1.1 only (2 pts)
+        assert result.total_score == 2.0  # only 1.1 contributes
 
     def test_grade_all_students_configures_shared_client_pool_by_workers(
         self, tmp_path
@@ -432,10 +432,10 @@ class TestGradeOnly:
                 stu, sol, ensure_app_config(config), client=MagicMock()
             )
 
-        assert result["questions"]["1.1"]["score"] == 2.0
-        assert result["questions"]["1.2"]["score"] == 1.0
-        assert result["total_score"] == 3.0
-        assert result["total_max"] == 4.0
+        assert result.questions["1.1"].score == 2.0
+        assert result.questions["1.2"].score == 1.0
+        assert result.total_score == 3.0
+        assert result.total_max == 4.0
 
 
 class TestComputeTotals:
@@ -529,22 +529,22 @@ class TestComputeTotals:
             )
 
         # 1.1 and 1.2 preserved exactly
-        assert result["questions"]["1.1"]["score"] == 2.0
-        assert result["questions"]["1.1"]["feedback"] == "correct"
-        assert result["questions"]["1.2"]["score"] == 1.0
-        assert result["questions"]["1.2"]["feedback"] == "partial"
+        assert result.questions["1.1"].score == 2.0
+        assert result.questions["1.1"].feedback == "correct"
+        assert result.questions["1.2"].score == 1.0
+        assert result.questions["1.2"].feedback == "partial"
 
         # 2.1 newly graded
-        assert result["questions"]["2.1"]["score"] == 2.0
-        assert result["questions"]["2.1"]["feedback"] == "correct"
+        assert result.questions["2.1"].score == 2.0
+        assert result.questions["2.1"].feedback == "correct"
 
         # totals recomputed from full questions
-        assert result["total_score"] == 5.0
-        assert result["total_max"] == 6.0
+        assert result.total_score == 5.0
+        assert result.total_max == 6.0
 
         # summary_feedback includes deductions from both old and new
-        assert "Q1.2: partial" in result["summary_feedback"]
-        assert "Q2.1" not in result["summary_feedback"]  # 2.1 got full marks
+        assert "Q1.2: partial" in result.summary_feedback
+        assert "Q2.1" not in result.summary_feedback  # 2.1 got full marks
 
     def test_grade_only_merge_overwrites_regraded_question(self):
         """When grade_only includes a question already in existing, new grade overwrites."""
@@ -599,16 +599,16 @@ class TestComputeTotals:
             )
 
         # 1.1 unchanged
-        assert result["questions"]["1.1"]["score"] == 2.0
-        assert result["questions"]["1.1"]["feedback"] == "correct"
+        assert result.questions["1.1"].score == 2.0
+        assert result.questions["1.1"].feedback == "correct"
 
         # 1.2 overwritten with new grade
-        assert result["questions"]["1.2"]["score"] == 2.0
-        assert result["questions"]["1.2"]["feedback"] == "now correct"
+        assert result.questions["1.2"].score == 2.0
+        assert result.questions["1.2"].feedback == "now correct"
 
-        assert result["total_score"] == 4.0
-        assert result["total_max"] == 4.0
-        assert result["summary_feedback"] == "Full marks."
+        assert result.total_score == 4.0
+        assert result.total_max == 4.0
+        assert result.summary_feedback == "Full marks."
 
     def test_grade_only_merge_skipped_group_preserves_rest(self):
         """When merged group is all-missing (skipped), existing questions preserved."""
@@ -656,16 +656,16 @@ class TestComputeTotals:
         mock_cs.assert_not_called()
 
         # 1.1 preserved
-        assert result["questions"]["1.1"]["score"] == 2.0
-        assert result["questions"]["1.1"]["feedback"] == "correct"
+        assert result.questions["1.1"].score == 2.0
+        assert result.questions["1.1"].feedback == "correct"
 
         # 2.1 added as [no submission]
-        assert result["questions"]["2.1"]["score"] == 0.0
-        assert result["questions"]["2.1"]["feedback"] == "[no submission]"
-        assert result["questions"]["2.1"]["max"] == 2
+        assert result.questions["2.1"].score == 0.0
+        assert result.questions["2.1"].feedback == "[no submission]"
+        assert result.questions["2.1"].max == 2
 
-        assert result["total_score"] == 2.0
-        assert result["total_max"] == 4.0
+        assert result.total_score == 2.0
+        assert result.total_max == 4.0
 
     def test_grade_only_merge_without_grade_only_ignores_merge(self):
         """When merge_into provided but grade_only is None, treat as normal grading (no merge)."""
@@ -705,11 +705,11 @@ class TestComputeTotals:
             )
 
         # Normal grading: both questions graded, existing ignored
-        assert result["questions"]["1.1"]["score"] == 2.0
-        assert result["questions"]["1.1"]["feedback"] == "new"
-        assert result["questions"]["2.1"]["score"] == 2.0
-        assert result["total_score"] == 4.0
-        assert result["total_max"] == 4.0
+        assert result.questions["1.1"].score == 2.0
+        assert result.questions["1.1"].feedback == "new"
+        assert result.questions["2.1"].score == 2.0
+        assert result.total_score == 4.0
+        assert result.total_max == 4.0
 
     def test_grade_only_merge_empty_existing_questions(self):
         """Merge with empty existing questions still produces correct result."""
@@ -749,10 +749,10 @@ class TestComputeTotals:
             )
 
         # Only 2.1 graded; 1.1 not in existing so not in result
-        assert set(result["questions"].keys()) == {"2.1"}
-        assert result["questions"]["2.1"]["score"] == 2.0
-        assert result["total_score"] == 2.0
-        assert result["total_max"] == 2.0
+        assert set(result.questions.keys()) == {"2.1"}
+        assert result.questions["2.1"].score == 2.0
+        assert result.total_score == 2.0
+        assert result.total_max == 2.0
 
     def test_grade_only_merge_summary_includes_all_deductions(self):
         """summary_feedback includes deductions from both preserved and newly graded."""
@@ -806,10 +806,10 @@ class TestComputeTotals:
                 merge_into=existing,
             )
 
-        assert "Q1.2: partial" in result["summary_feedback"]
-        assert "Q2.1: minor error" in result["summary_feedback"]
-        assert result["total_score"] == 4.0
-        assert result["total_max"] == 6.0
+        assert "Q1.2: partial" in result.summary_feedback
+        assert "Q2.1: minor error" in result.summary_feedback
+        assert result.total_score == 4.0
+        assert result.total_max == 6.0
 
 
 # ---------------------------------------------------------------------------

@@ -17,7 +17,7 @@ from genai_detection import run_genai_detection
 from grading_helpers import effective_groups
 from grade import grade_student
 from results_models import GradedResult
-from token_usage import TokenUsage, detach_usage_from_graded_result
+from token_usage import TokenUsage
 from prompt_builder import validate_question_groups
 from results_store import find_student, load_results, save_results, update_student
 from utils import get_assignment_output_paths
@@ -107,16 +107,14 @@ async def api_grade_one(student_name: str):
                 try:
                     existing_results = load_results(out_path)
                     found = find_student(existing_results, student_name)
-                    merge_into = (
-                        found.model_dump(mode="python") if found is not None else None
-                    )
+                    merge_into = found
                 except ValueError as e:
                     raise HTTPException(
                         status_code=500,
                         detail=str(e),
                     )
 
-        result = await asyncio.to_thread(
+        graded_result = await asyncio.to_thread(
             grade_student,
             student_parsed,
             solution_parsed,
@@ -125,20 +123,24 @@ async def api_grade_one(student_name: str):
             ungrouped,
             merge_into,
         )
-        result_for_disk, usage = detach_usage_from_graded_result(result)
+        usage = (
+            TokenUsage.from_json_dict(graded_result.usage)
+            if graded_result.usage
+            else None
+        )
+        stored = graded_result.model_copy(update={"usage": None})
 
         with state.results_lock:
             try:
                 results = load_results(out_path)
-                update_student(
-                    results,
-                    student_name,
-                    GradedResult.model_validate(result_for_disk),
-                )
+                update_student(results, student_name, stored)
                 save_results(out_path, results)
             except ValueError as e:
                 raise HTTPException(status_code=500, detail=str(e))
-        response = {"ok": True, "result": result_for_disk}
+        result_dict = stored.model_dump(
+            mode="python", by_alias=True, exclude_none=True
+        )
+        response = {"ok": True, "result": result_dict}
         if usage is not None and usage.has_tokens():
             response["usage"] = usage.to_json_dict()
         return response

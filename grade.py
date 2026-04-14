@@ -224,16 +224,16 @@ def _apply_ungrouped(
         feedback_parts.append(f"Q{qid}: {skip_msg}")
 
 
-def _build_result_dict(
+def _build_graded_result(
     student_name: str,
     questions: dict[str, dict],
     total_score: float,
     total_max: float,
     feedback_parts: list[str],
     usage_total: TokenUsage,
-) -> dict:
-    """Build the final graded result dict for graded_results.json."""
-    gr = GradedResult(
+) -> GradedResult:
+    """Build the final GradedResult for one student."""
+    return GradedResult(
         student_name=student_name,
         questions=questions,
         total_score=round(total_score, 2),
@@ -243,8 +243,6 @@ def _build_result_dict(
         ),
         usage=usage_total.to_json_dict() if usage_total.has_tokens() else None,
     )
-    # Serialize to disk dict format (with _usage alias)
-    return gr.model_dump(mode="python", by_alias=True, exclude_none=True)
 
 
 def grade_student(
@@ -253,9 +251,9 @@ def grade_student(
     cfg: AppConfig,
     client: OpenAI | None = None,
     ungrouped: list[str] | None = None,
-    merge_into: dict | None = None,
-) -> dict:
-    """Grade one student. Returns result dict for graded_results.json.
+    merge_into: GradedResult | dict | None = None,
+) -> GradedResult:
+    """Grade one student. Returns GradedResult.
 
     When merge_into is provided with grade_only, only grades grade_only questions
     and merges new grades into existing result (keeps other questions unchanged).
@@ -274,8 +272,15 @@ def grade_student(
         ungrouped = validate_question_groups(groups, solution_parsed)
 
     questions: dict[str, dict] = {}
-    if is_merge:
-        questions = dict(merge_into.get("questions", {}))
+    if is_merge and merge_into is not None:
+        if isinstance(merge_into, GradedResult):
+            questions = {
+                qid: q.model_dump(mode="python") for qid, q in merge_into.questions.items()
+            }
+        else:
+            # Accept raw dict for backward compatibility (tests, API callers)
+            raw_qs = merge_into.get("questions", {}) if isinstance(merge_into, dict) else {}
+            questions = {qid: dict(q) for qid, q in raw_qs.items()}
     total_score = 0.0
     total_max = 0.0
     feedback_parts: list[str] = []
@@ -340,7 +345,7 @@ def grade_student(
             questions
         )
 
-    result = _build_result_dict(
+    result = _build_graded_result(
         student_name, questions, total_score, total_max, feedback_parts, usage_total
     )
     logger.info(

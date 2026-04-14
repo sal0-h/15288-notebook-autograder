@@ -17,9 +17,7 @@ from grading_helpers import (
 from results_models import GradedResult
 from token_usage import (
     TokenUsage,
-    detach_usage_from_graded_result,
     graded_usage_summary_event,
-    merge_graded_usage,
 )
 from llm.json_runner import run_jobs
 from prompt_builder import validate_question_groups
@@ -235,21 +233,26 @@ def grade_all_students(
                     cfg,
                     client,
                     ungrouped=ungrouped,
-                    merge_into=existing.model_dump(mode="python") if existing else None,
+                    merge_into=existing if existing else None,
                 )
-                usage_total = merge_graded_usage(usage_total, result)
-                result, _ = detach_usage_from_graded_result(result)
-                stored = GradedResult.model_validate(result)
+                if result.usage:
+                    usage_total = usage_total.merged(
+                        TokenUsage.from_json_dict(result.usage)
+                    )
+                stored = result.model_copy(update={"usage": None})
                 if results_lock:
                     with results_lock:
                         _store_result(student_name, stored)
                 else:
                     _store_result(student_name, stored)
                 graded_count += 1
+                result_dict = stored.model_dump(
+                    mode="python", by_alias=True, exclude_none=True
+                )
                 yield {
                     "student": student_name,
                     "status": "done",
-                    "result": result,
+                    "result": result_dict,
                     "error": None,
                     "index": i + 1,
                     "total": len(student_files),
@@ -290,7 +293,7 @@ def grade_all_students(
                     cfg,
                     client,
                     ungrouped=ungrouped,
-                    merge_into=existing.model_dump(mode="python") if existing else None,
+                    merge_into=existing if existing else None,
                 )
                 return (i, student_name, "done", result, None)
             except Exception as e:
@@ -330,19 +333,26 @@ def grade_all_students(
                         "Worker returned done without result for %s", student_name
                     )
                     continue
-                usage_total = merge_graded_usage(usage_total, result)
-                result, _ = detach_usage_from_graded_result(result)
-                stored = GradedResult.model_validate(result)
+                if result.usage:
+                    usage_total = usage_total.merged(
+                        TokenUsage.from_json_dict(result.usage)
+                    )
+                stored = result.model_copy(update={"usage": None})
                 if results_lock:
                     with results_lock:
                         _store_result(student_name, stored)
                 else:
                     _store_result(student_name, stored)
                 graded_count += 1
+            result_dict = (
+                stored.model_dump(mode="python", by_alias=True, exclude_none=True)
+                if status == "done" and result is not None
+                else None
+            )
             yield {
                 "student": student_name,
                 "status": status,
-                "result": result,
+                "result": result_dict,
                 "error": error,
                 "index": i + 1,
                 "total": len(student_files),
