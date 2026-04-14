@@ -1,7 +1,7 @@
 """Tests for graded / parsed artifact models."""
 
+from token_usage import GRADED_RESULT_USAGE_KEY
 from results_models import (
-    GRADED_RESULT_USAGE_KEY,
     GradedResult,
     ParsedNotebook,
     graded_result_to_disk_dict,

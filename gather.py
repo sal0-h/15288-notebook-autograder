@@ -7,27 +7,23 @@ from pathlib import Path
 
 import yaml  # Used for Gradescope submission_metadata.yml (Ruby-style keys)
 
-from utils import load_app_config as _load_app_config
+from config_models import load_app_config as _load_app_config
+from gradescope_submitters import submitter_key_from_yaml_submitters
+from utils import sanitize_filename_component
 
 
 def load_submission_metadata(metadata_path: Path) -> dict:
-    """Load submission_metadata.yml. Handles both Ruby-style (:key) and plain keys."""
+    """Load Gradescope export ``submission_metadata.yml`` (Ruby-style symbol keys)."""
     with open(metadata_path, "r", encoding="utf-8") as f:
-        raw = yaml.safe_load(f)
-    if raw is None:
-        return {}
-    return raw
+        return yaml.safe_load(f)
 
 
 def get_student_name(entry: dict) -> str | None:
-    """Extract student name from a submission entry."""
-    submitters = entry.get(":submitters") or entry.get("submitters") or []
+    """Extract student name from a submission entry (Gradescope Rails export format)."""
+    submitters = entry.get(":submitters") or []
     if not submitters:
         return None
-    first = submitters[0]
-    if isinstance(first, dict):
-        return first.get(":name") or first.get("name")
-    return None
+    return submitters[0].get(":name")
 
 
 def _result_entry(
@@ -42,11 +38,6 @@ def _result_entry(
         "status": status,
         "message": message,
     }
-
-
-def _safe_output_name(student_name: str, notebook_name: str) -> str:
-    new_name = f"{student_name}_{notebook_name}"
-    return "".join(c for c in new_name if c not in '/\\:*?"<>|') or "unknown_student"
 
 
 def _resolve_export_dir(source: Path, from_zip: bool) -> tuple[Path, Path | None]:
@@ -74,7 +65,7 @@ def _resolve_export_dir(source: Path, from_zip: bool) -> tuple[Path, Path | None
 
 def _find_single_notebook(
     submission_folder: Path,
-) -> tuple[Path | None, str | None, str]:
+) -> tuple[Path, None, str] | tuple[None, str, str]:
     folder_name = submission_folder.name
     if not submission_folder.exists():
         return None, "missing", f"Folder {folder_name} not found"
@@ -119,6 +110,10 @@ def gather_submissions(
 
         seen_names: set[str] = set()
         results: list[dict] = []
+        student_name_map: dict[str, str] = {}  # normalized_name → stem (without .ipynb)
+        submitter_stem_map: dict[str, str] = (
+            {}
+        )  # Gradescope submitter key → stem (needs :id in YAML)
 
         for sub_key, sub_data in data.items():
             if not isinstance(sub_data, dict):
@@ -140,33 +135,72 @@ def gather_submissions(
             nb_path, failure_status, failure_message = _find_single_notebook(
                 submission_folder
             )
-            if failure_status is not None:
+            if nb_path is None:
                 results.append(
                     _result_entry(
                         student_name,
                         "",
-                        failure_status,
+                        failure_status or "missing",
                         failure_message,
                     )
                 )
                 continue
 
-            assert nb_path is not None
-            safe_name = _safe_output_name(student_name, nb_path.name)
+            base_stem = sanitize_filename_component(
+                student_name,
+                if_empty="unknown_student",
+            )
+            safe_name = f"{base_stem}.ipynb"
+            stem_only = base_stem
+
             status = "duplicate" if student_name in seen_names else "ok"
             seen_names.add(student_name)
 
+            msg = "" if status == "ok" else f"Duplicate submitter: {student_name}"
             if status == "ok":
-                shutil.copy2(nb_path, out_dir / safe_name)
+                submitters = (
+                    sub_data.get(":submitters") if isinstance(sub_data, dict) else None
+                ) or []
+                sk = submitter_key_from_yaml_submitters(
+                    submitters if isinstance(submitters, list) else []
+                )
+                if sk:
+                    prev = submitter_stem_map.get(sk)
+                    if prev is not None and prev != stem_only:
+                        status = "duplicate"
+                        msg = (
+                            f"Submitter id key {sk!r} already mapped to {prev!r}, "
+                            f"conflicts with {stem_only!r}"
+                        )
+
+                if status == "ok":
+                    shutil.copy2(nb_path, out_dir / safe_name)
+                    normalized = "".join(
+                        c for c in student_name.strip().lower() if c.isalnum()
+                    )
+                    student_name_map[normalized] = stem_only
+                    if sk:
+                        submitter_stem_map[sk] = stem_only
 
             results.append(
                 _result_entry(
                     student_name,
                     safe_name,
                     status,
-                    "" if status == "ok" else f"Duplicate submitter: {student_name}",
+                    msg,
                 )
             )
+
+        # Persist metadata map to parent directory (output/{assignment_name})
+        import json
+
+        map_path = out_dir.parent / "student_name_map.json"
+        with open(map_path, "w", encoding="utf-8") as f:
+            json.dump(student_name_map, f, indent=2)
+
+        stem_map_path = out_dir.parent / "submitter_stem_map.json"
+        with open(stem_map_path, "w", encoding="utf-8") as f:
+            json.dump(submitter_stem_map, f, indent=2)
 
         return results
     finally:

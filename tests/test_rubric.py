@@ -1,12 +1,22 @@
-"""Tests for rubric.py: LLM-based rubric generation."""
+"""Tests for rubric_generate: LLM-based rubric generation."""
 
 import json
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from rubric import generate_rubrics
+from config_models import (
+    RubricEntry,
+    RubricItem,
+    ensure_app_config,
+)
+from grading_models import (
+    RubricGroupLlmResponse,
+    RubricQuestionLlm,
+)
+from llm.json_runner import MAX_JSON_LLM_ATTEMPTS
+from token_usage import TokenUsage
+from rubric_generate import generate_rubrics
 
 
 def _solution_parsed(qids: list[str]) -> dict:
@@ -25,6 +35,19 @@ def _solution_parsed(qids: list[str]) -> dict:
     return {"sections": sections}
 
 
+def _rubric_response(rubric_dict: dict) -> tuple:
+    """Build a (RubricGroupLlmResponse, TokenUsage) mock return value."""
+    questions = [
+        RubricQuestionLlm(
+            question_id=qid,
+            points=v["points"],
+            items=[RubricItem(**item) for item in v["items"]],
+        )
+        for qid, v in rubric_dict.items()
+    ]
+    return (RubricGroupLlmResponse(questions=questions), TokenUsage(1, 1))
+
+
 class TestGenerateRubrics:
     def test_uses_configured_rubric_generation_prompt(self, tmp_path, monkeypatch):
         """Rubric generation should use the prompt text returned by load_prompt."""
@@ -34,9 +57,8 @@ class TestGenerateRubrics:
         )
 
         custom_prompt = "CUSTOM RUBRIC SYSTEM PROMPT"
-
         monkeypatch.setattr(
-            "rubric.prompts.load_prompt",
+            "rubric_generate.load_prompt",
             lambda name, assignment_name=None: custom_prompt,
         )
 
@@ -45,25 +67,21 @@ class TestGenerateRubrics:
             "grading": {"question_groups": [["1.1"]]},
             "model": "gpt-4o",
             "max_completion_tokens": 4096,
+            "rubric_review": False,
         }
 
-        mock_response = MagicMock()
-        mock_response.choices = [MagicMock()]
-        mock_response.choices[0].message.content = json.dumps(
-            {
-                "1.1": {
-                    "points": 2,
-                    "items": [{"description": "Correct", "deduction": 2.0}],
+        with patch("llm.json_runner.complete_structured") as mock_cs:
+            mock_cs.return_value = _rubric_response(
+                {
+                    "1.1": {
+                        "points": 2,
+                        "items": [{"description": "Correct", "deduction": 2.0}],
+                    }
                 }
-            }
-        )
+            )
+            generate_rubrics(ensure_app_config(config), client=MagicMock())
 
-        mock_client = MagicMock()
-        mock_client.chat.completions.create.return_value = mock_response
-
-        generate_rubrics(config, client=mock_client)
-
-        call = mock_client.chat.completions.create.call_args
+        call = mock_cs.call_args
         assert call.kwargs["messages"][0]["content"] == custom_prompt
 
     def test_uses_configured_rubric_review_prompt(self, tmp_path, monkeypatch):
@@ -88,12 +106,12 @@ class TestGenerateRubrics:
         )
 
         custom_review_prompt = "CUSTOM RUBRIC REVIEW PROMPT"
-        monkeypatch.setattr(
-            "rubric.prompts.load_prompt",
-            lambda name, assignment_name=None: (
-                custom_review_prompt if name == "review_system" else "OTHER"
-            ),
-        )
+
+        def _load_prompt(name, assignment_name=None):
+            return custom_review_prompt if name == "review_system" else "OTHER"
+
+        monkeypatch.setattr("rubric_generate.load_prompt", _load_prompt)
+        monkeypatch.setattr("rubric_review.load_prompt", _load_prompt)
 
         config = {
             "output_dir": str(tmp_path),
@@ -103,9 +121,13 @@ class TestGenerateRubrics:
             "rubric_review": True,
         }
 
-        gen_response = MagicMock()
-        gen_response.choices = [MagicMock()]
-        gen_response.choices[0].message.content = json.dumps(
+        from grading_models import (
+            RubricReviewItem,
+            RubricReviewQuestion,
+            RubricReviewResponse,
+        )
+
+        gen_resp = _rubric_response(
             {
                 "1.1": {
                     "points": 2,
@@ -113,33 +135,29 @@ class TestGenerateRubrics:
                 }
             }
         )
-
-        review_response = MagicMock()
-        review_response.choices = [MagicMock()]
-        review_response.choices[0].message.content = json.dumps(
-            {
-                "1.1": {
-                    "points": 2,
-                    "items": [{"description": "Reviewed", "deduction": 2.0}],
-                }
-            }
+        review_resp = (
+            RubricReviewResponse(
+                questions=[
+                    RubricReviewQuestion(
+                        question_id="1.1",
+                        items=[RubricReviewItem(description="Reviewed")],
+                    )
+                ]
+            ),
+            TokenUsage(1, 1),
         )
 
-        mock_client = MagicMock()
-        mock_client.chat.completions.create.side_effect = [
-            gen_response,
-            review_response,
-        ]
+        with patch("llm.json_runner.complete_structured") as mock_cs:
+            mock_cs.side_effect = [gen_resp, review_resp]
+            rubrics = generate_rubrics(ensure_app_config(config), client=MagicMock())
 
-        rubrics = generate_rubrics(config, client=mock_client)
-
-        calls = mock_client.chat.completions.create.call_args_list
-        assert len(calls) == 2
-        assert calls[1].kwargs["messages"][0]["content"] == custom_review_prompt
-        assert rubrics["1.1"]["items"][0]["description"] == "Reviewed"
+        assert mock_cs.call_count == 2
+        review_call = mock_cs.call_args_list[1]
+        assert review_call.kwargs["messages"][0]["content"] == custom_review_prompt
+        assert rubrics["1.1"].items[0].description == "Reviewed"
 
     def test_returns_expected_structure_and_normalizes_keys(self, tmp_path):
-        """Mock LLM returns valid JSON; keys like Q4.1 are normalized to 4.1."""
+        """Mock LLM returns valid response; keys like Q4.1 are normalized to 4.1."""
         sol = _solution_parsed(["4.1", "4.2"])
         (tmp_path / "solution_parsed.json").write_text(
             json.dumps(sol), encoding="utf-8"
@@ -152,9 +170,7 @@ class TestGenerateRubrics:
             "max_completion_tokens": 4096,
         }
 
-        mock_response = MagicMock()
-        mock_response.choices = [MagicMock()]
-        mock_response.choices[0].message.content = json.dumps(
+        resp = _rubric_response(
             {
                 "Q4.1": {
                     "points": 2,
@@ -166,28 +182,26 @@ class TestGenerateRubrics:
                 "q4.2": {
                     "points": 2,
                     "items": [
-                        {"description": "Full marks: correct.", "deduction": 2.0},
+                        {"description": "Full marks: correct.", "deduction": 2.0}
                     ],
                 },
             }
         )
 
-        with patch("rubric.generate_one.get_openai_client") as mock_get_client:
-            mock_client = MagicMock()
-            mock_client.chat.completions.create.return_value = mock_response
-            mock_get_client.return_value = mock_client
-
-            rubrics = generate_rubrics(config, client=mock_client)
+        with patch("llm.json_runner.complete_structured", return_value=resp):
+            rubrics = generate_rubrics(ensure_app_config(config), client=MagicMock())
 
         assert "4.1" in rubrics
         assert "4.2" in rubrics
-        assert rubrics["4.1"]["points"] == 2
-        assert rubrics["4.1"]["items"][0]["description"] == "Correct output"
-        assert rubrics["4.1"]["items"][0]["deduction"] == 1.0
-        assert rubrics["4.2"]["points"] == 2
+        assert rubrics["4.1"].points == 2
+        assert rubrics["4.1"].items[0].description == "Correct output"
+        assert rubrics["4.1"].items[0].deduction == 1.0
+        assert rubrics["4.2"].points == 2
 
-    def test_fallback_when_points_missing_uses_solution(self, tmp_path):
-        """When LLM omits points, use solution's points."""
+    def test_missing_question_in_response_triggers_retry_then_placeholder(
+        self, tmp_path
+    ):
+        """When validate raises (question missing from response), retries then falls back."""
         sol = _solution_parsed(["5.1"])
         (tmp_path / "solution_parsed.json").write_text(
             json.dumps(sol), encoding="utf-8"
@@ -198,27 +212,31 @@ class TestGenerateRubrics:
             "grading": {"question_groups": [["5.1"]]},
             "model": "gpt-4o",
             "max_completion_tokens": 4096,
+            "rubric_review": False,
         }
 
-        mock_response = MagicMock()
-        mock_response.choices = [MagicMock()]
-        mock_response.choices[0].message.content = json.dumps(
-            {
-                "5.1": {
-                    "items": [{"description": "Check the plot.", "deduction": 2.0}]
-                },
-            }
-        )
+        # LLM keeps returning an empty questions list — missing "5.1" every time
+        empty_resp = (RubricGroupLlmResponse(questions=[]), TokenUsage(1, 1))
 
-        with patch("rubric.generate_one.get_openai_client") as mock_get_client:
-            mock_client = MagicMock()
-            mock_client.chat.completions.create.return_value = mock_response
-            mock_get_client.return_value = mock_client
+        with patch("llm.json_runner.time.sleep"):
+            with patch(
+                "llm.json_runner.complete_structured",
+                return_value=empty_resp,
+            ) as mock_cs:
+                rubrics = generate_rubrics(
+                    ensure_app_config(config), client=MagicMock()
+                )
 
-            rubrics = generate_rubrics(config, client=mock_client)
+        assert mock_cs.call_count == MAX_JSON_LLM_ATTEMPTS
+        assert rubrics["5.1"].points == 2
+        assert rubrics["5.1"].items[0].description == "[generation failed]"
+        assert rubrics["5.1"].items[0].deduction == 2.0
 
-        assert rubrics["5.1"]["points"] == 2
-        assert rubrics["5.1"]["items"][0]["description"] == "Check the plot."
+    def test_from_llm_output_requires_points(self):
+        with pytest.raises(ValueError, match="points"):
+            RubricEntry.from_llm_output(
+                {"items": [{"description": "x", "deduction": 1.0}]}
+            )
 
     def test_fallback_when_llm_fails(self, tmp_path):
         """When LLM call raises, fallback to solution points and error message."""
@@ -232,18 +250,21 @@ class TestGenerateRubrics:
             "grading": {"question_groups": [["6.1"]]},
             "model": "gpt-4o",
             "max_completion_tokens": 4096,
+            "rubric_review": False,
         }
 
-        with patch("rubric.generate_one.get_openai_client") as mock_get_client:
-            mock_client = MagicMock()
-            mock_client.chat.completions.create.side_effect = Exception("API error")
-            mock_get_client.return_value = mock_client
+        with patch("llm.json_runner.time.sleep"):
+            with patch(
+                "llm.json_runner.complete_structured",
+                side_effect=Exception("API error"),
+            ):
+                rubrics = generate_rubrics(
+                    ensure_app_config(config), client=MagicMock()
+                )
 
-            rubrics = generate_rubrics(config, client=mock_client)
-
-        assert rubrics["6.1"]["points"] == 2
-        assert rubrics["6.1"]["items"][0]["description"] == "[generation failed]"
-        assert rubrics["6.1"]["items"][0]["deduction"] == 2
+        assert rubrics["6.1"].points == 2
+        assert rubrics["6.1"].items[0].description == "[generation failed]"
+        assert rubrics["6.1"].items[0].deduction == 2
 
     def test_deductions_rescaled_when_off(self, tmp_path):
         """When LLM returns items summing to wrong total, rescale to match points."""
@@ -259,10 +280,8 @@ class TestGenerateRubrics:
             "max_completion_tokens": 4096,
         }
 
-        mock_response = MagicMock()
-        mock_response.choices = [MagicMock()]
         # LLM returns 3 total deductions for a 2-point question
-        mock_response.choices[0].message.content = json.dumps(
+        resp = _rubric_response(
             {
                 "7.1": {
                     "points": 2,
@@ -271,19 +290,15 @@ class TestGenerateRubrics:
                         {"description": "B", "deduction": 1.0},
                         {"description": "C", "deduction": 1.0},
                     ],
-                },
+                }
             }
         )
 
-        with patch("rubric.generate_one.get_openai_client") as mock_get_client:
-            mock_client = MagicMock()
-            mock_client.chat.completions.create.return_value = mock_response
-            mock_get_client.return_value = mock_client
+        with patch("llm.json_runner.complete_structured", return_value=resp):
+            rubrics = generate_rubrics(ensure_app_config(config), client=MagicMock())
 
-            rubrics = generate_rubrics(config, client=mock_client)
-
-        assert rubrics["7.1"]["points"] == 2
-        total = sum(i["deduction"] for i in rubrics["7.1"]["items"])
+        assert rubrics["7.1"].points == 2
+        total = sum(i.deduction for i in rubrics["7.1"].items)
         assert abs(total - 2.0) < 0.01
 
     def test_missing_solution_raises(self, tmp_path):
@@ -293,7 +308,7 @@ class TestGenerateRubrics:
             "grading": {"question_groups": [["1.1"]]},
         }
         with pytest.raises(FileNotFoundError, match="Solution parsed not found"):
-            generate_rubrics(config)
+            generate_rubrics(ensure_app_config(config))
 
     def test_group_indices_merges_into_existing(self, tmp_path):
         """When group_indices is set, only generates for those groups and merges into existing."""
@@ -321,9 +336,7 @@ class TestGenerateRubrics:
             "rubrics": existing_rubrics,
         }
 
-        mock_response = MagicMock()
-        mock_response.choices = [MagicMock()]
-        mock_response.choices[0].message.content = json.dumps(
+        resp = _rubric_response(
             {
                 "5.1": {
                     "points": 2,
@@ -332,18 +345,14 @@ class TestGenerateRubrics:
             }
         )
 
-        with patch("rubric.generate_one.get_openai_client") as mock_get_client:
-            mock_client = MagicMock()
-            mock_client.chat.completions.create.return_value = mock_response
-            mock_get_client.return_value = mock_client
+        with patch("llm.json_runner.complete_structured", return_value=resp):
+            rubrics = generate_rubrics(
+                ensure_app_config(config), client=MagicMock(), group_indices=[1]
+            )
 
-            rubrics = generate_rubrics(config, client=mock_client, group_indices=[1])
-
-        # Existing rubrics preserved (group 0 not processed)
-        assert rubrics["4.1"]["items"][0]["description"] == "Existing 4.1"
-        assert rubrics["4.2"]["items"][0]["description"] == "Existing 4.2"
-        # Group 1 (5.1) generated
-        assert rubrics["5.1"]["items"][0]["description"] == "New 5.1"
+        assert rubrics["4.1"].items[0].description == "Existing 4.1"
+        assert rubrics["4.2"].items[0].description == "Existing 4.2"
+        assert rubrics["5.1"].items[0].description == "New 5.1"
 
     def test_group_indices_are_applied_before_grade_only_filter(self, tmp_path):
         """group_indices refer to original question_groups even when grade_only is set."""
@@ -363,9 +372,7 @@ class TestGenerateRubrics:
             "rubrics": {},
         }
 
-        mock_response = MagicMock()
-        mock_response.choices = [MagicMock()]
-        mock_response.choices[0].message.content = json.dumps(
+        resp = _rubric_response(
             {
                 "2.1": {
                     "points": 2,
@@ -374,12 +381,10 @@ class TestGenerateRubrics:
             }
         )
 
-        with patch("rubric.generate_one.get_openai_client") as mock_get_client:
-            mock_client = MagicMock()
-            mock_client.chat.completions.create.return_value = mock_response
-            mock_get_client.return_value = mock_client
-
-            rubrics = generate_rubrics(config, client=mock_client, group_indices=[2])
+        with patch("llm.json_runner.complete_structured", return_value=resp):
+            rubrics = generate_rubrics(
+                ensure_app_config(config), client=MagicMock(), group_indices=[2]
+            )
 
         assert "2.1" in rubrics
-        assert rubrics["2.1"]["items"][0]["description"] == "Generated 2.1"
+        assert rubrics["2.1"].items[0].description == "Generated 2.1"

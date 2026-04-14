@@ -28,4 +28,15 @@ For each criterion, compare it against the QUESTION TEXT and apply these rules:
 Do NOT change the number of items, point values, or deduction amounts — only rewrite
 description text.
 
-Return valid JSON with the exact same keys, but with updated descriptions.
+Return a JSON object with a "questions" array. Each element covers one question:
+{
+  "questions": [
+    {
+      "question_id": "N.N",
+      "items": [{"description": "Rewritten description"}, ...]
+    }
+  ]
+}
+
+Include every question ID from the rubric you were given. Preserve the exact number of
+items per question in the same order.

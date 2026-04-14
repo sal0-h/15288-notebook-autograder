@@ -3,17 +3,14 @@
 import json
 from typing import Any
 
-from llm.cost import usage_cost_usd
-from llm.types import TokenUsage
+from config_models import AppConfig, DEFAULT_MODEL, load_solution_parsed
+from grading_helpers import effective_groups
+from token_usage import TokenUsage, usage_cost_usd
 from prompt_builder import build_group_prompt, estimate_tokens, load_prompt
-from rubric import build_rubric_group_prompt
+from rubric_generate import build_rubric_group_prompt
 from batch_grader import load_grade_queue
 from utils import (
-    AppConfig,
-    DEFAULT_MODEL,
-    ensure_app_config,
     get_assignment_output_paths,
-    get_effective_question_groups,
 )
 
 RUBRIC_SYSTEM_LEN = 800  # approx chars
@@ -44,26 +41,24 @@ def _tokens_from_messages(messages: list, model: str) -> int:
             n_img = 0
             for p in c:
                 if isinstance(p, dict):
-                    if p.get("type") == "text":
+                    if p.get("type") in ("text", "input_text"):
                         text_len += len(p.get("text", ""))
-                    elif p.get("type") == "image_url":
+                    elif p.get("type") in ("image_url", "input_image"):
                         n_img += 1
             total += estimate_tokens(" " * text_len if text_len else "", n_img, model)
     return total
 
 
-def estimate_rubrics(config: AppConfig | dict) -> dict:
+def estimate_rubrics(config: AppConfig) -> dict:
     """Estimate tokens and cost for rubric generation."""
-    cfg = ensure_app_config(config)
-    paths = get_assignment_output_paths(cfg)
-    solution_path = paths.solution_parsed
-    if not solution_path.exists():
+    try:
+        solution_parsed = load_solution_parsed(config)
+    except FileNotFoundError:
         return _estimate_error("Run parse first")
 
-    solution_parsed = json.loads(solution_path.read_text(encoding="utf-8"))
-    grading_config = cfg.grading
-    groups = get_effective_question_groups(grading_config)
-    model = cfg.rubric_model or cfg.model or DEFAULT_MODEL
+    grading_config = config.grading
+    groups = effective_groups(grading_config)
+    model = config.rubric_model or config.model or DEFAULT_MODEL
 
     prompt_tokens = estimate_tokens(" " * RUBRIC_SYSTEM_LEN, 0, model)
     completion_tokens = 0
@@ -75,7 +70,7 @@ def estimate_rubrics(config: AppConfig | dict) -> dict:
         completion_tokens += OUTPUT_TOKENS_PER_GROUP
 
     # Rubric review pass (when enabled) adds one LLM call per group
-    rubric_review = cfg.rubric_review
+    rubric_review = config.rubric_review
     if rubric_review:
         review_prompt = 0
         for group in groups:
@@ -101,28 +96,29 @@ def estimate_rubrics(config: AppConfig | dict) -> dict:
     }
 
 
-def estimate_grade(config: AppConfig | dict, student_name: str | None = None) -> dict:
+def estimate_grade(config: AppConfig, student_name: str | None = None) -> dict:
     """Estimate tokens and cost for grading. If student_name is None, estimates pending bulk grading only."""
-    cfg = ensure_app_config(config)
-    paths = get_assignment_output_paths(cfg)
-    solution_path = paths.solution_parsed
+    paths = get_assignment_output_paths(config)
     parsed_dir = paths.parsed_dir
-    if not solution_path.exists():
+    
+    try:
+        solution_parsed = load_solution_parsed(config)
+    except FileNotFoundError:
         return _estimate_error("Run parse first")
+    
     if not parsed_dir.exists():
         return _estimate_error("No parsed files. Run parse first.")
 
-    solution_parsed = json.loads(solution_path.read_text(encoding="utf-8"))
-    grading_config = cfg.grading
-    groups = get_effective_question_groups(grading_config)
+    grading_config = config.grading
+    groups = effective_groups(grading_config)
 
-    model = cfg.model or DEFAULT_MODEL
+    model = config.model or DEFAULT_MODEL
 
-    assignment_name = cfg.assignment_name
+    assignment_name = config.assignment_name
     system_prompt = load_prompt("grade_system", assignment_name=assignment_name)
 
-    max_prompt_tokens = cfg.max_prompt_tokens
-    rubrics = cfg.rubrics
+    max_prompt_tokens = config.max_prompt_tokens
+    rubrics = config.rubrics
 
     if student_name:
         student_files = sorted(parsed_dir.glob("*.json"))
@@ -131,7 +127,7 @@ def estimate_grade(config: AppConfig | dict, student_name: str | None = None) ->
             return _estimate_error("No students to grade")
     else:
         try:
-            gq = load_grade_queue(cfg)
+            gq = load_grade_queue(config)
         except FileNotFoundError as e:
             return _estimate_error(str(e))
         if not gq.student_files:

@@ -35,6 +35,7 @@ It is especially useful for courses where students submit notebooks containing a
 - Regrade a subset of questions with grade_only and merge results back in.
 - Flag score outliers through a calibration pass.
 - Export Gradescope JSON, Excel gradebooks, and optional autograder ZIP artifacts.
+- Optionally flag answers that may look GenAI-assisted (separate pass; scores unchanged).
 - Run either from the CLI or through a FastAPI web interface.
 
 ## End-to-end workflow
@@ -79,20 +80,26 @@ Main pipeline modules:
 - app.py: FastAPI backend plus static UI serving.
 - gather.py: submission extraction and normalization.
 - parse_notebook.py: notebook parser for solution and student files.
-- rubric/ package: rubric generation and review (`python -m rubric` or import `generate_rubrics`).
+- rubric_generate.py / rubric_review.py: rubric generation and optional review pass (`generate_rubrics` from `rubric_generate`; use `main.py --steps rubric` or import).
 - grade.py: single-student grading logic.
 - batch_grader.py: sequential and parallel batch orchestration.
 - calibrate.py: outlier detection on graded results.
 - export.py: Gradescope and Excel export, plus autograder ZIP creation.
 - linter_export.py: packaging for a notebook-format linter autograder.
 - estimate.py: token and cost estimation helpers.
+- genai_detection.py: optional post-grade GenAI suspicion flags merged into results.
+- llm/json_runner.py: shared structured-output LLM calls, retries, and parallel helpers.
+- llm_client.py: OpenAI client creation and model-specific helpers (temperature).
 - prompt_builder.py: prompt construction, sanitization, and JSON extraction.
-- grading_models.py: shared grading schemas and validation models.
-- utils.py: config I/O, assignment-scoped logging, OpenAI client setup, and shared helpers.
-- config_models.py: AppConfig, ParsingConfig, GradingConfig, default_config, normalize_qid.
-- grading_helpers.py: grade_only filtering, effective_groups, needs_merge (re-exported by utils).
+- grading_models.py: Pydantic schemas for all LLM structured outputs (grading, rubrics, GenAI detection).
+- utils.py: assignment-scoped logging and filename sanitization.
+- config_models.py: AppConfig, ParsingConfig, GradingConfig, config I/O, default_config, normalize_qid.
+- grading_helpers.py: grade_only filtering, effective_groups, needs_merge.
+- token_usage.py: TokenUsage, MODEL_PRICING, cost calculation, usage merge/detach helpers.
 - pipeline_runner.py: thin wrappers for app pipeline steps (run_gather, run_parse, run_export, etc.).
+- results_models.py: GradedResult, ParsedNotebook, Question (on-disk artifact schemas).
 - results_store.py: load_results, save_results, update_student, load_results_with_backup.
+- zip_helpers.py: shared ZIP archive helper (write_to_zip with Unix attributes).
 
 Supporting directories:
 
@@ -240,8 +247,7 @@ Important fields in config.yaml:
 - max_completion_tokens: completion budget.
 - include_reference_in_grading: whether to embed the reference solution in grading prompts.
 - rubric_review: whether to run the rubric review pass.
-- parsing.section_regex: regex used to identify sections.
-- parsing.question_regex: regex used to identify question IDs and points.
+- parsing.section_regex / parsing.question_regex: see **Notebook parsing (regex)** below.
 - parsing.keep_images: whether image payloads are preserved during parsing.
 - grading.question_groups: question groupings for each grading call.
 - grading.grade_only: optional subset of questions for partial regrading.
@@ -255,6 +261,28 @@ In practice, the most important configuration work is getting three things right
 - grading question groups, and
 - prompt quality (edit `prompts/{assignment_name}/*.md` or `prompts/DEFAULT/*.md`; prompts are loaded from the filesystem, not stored in config).
 
+### Notebook parsing (regex)
+
+The parser (`parse_notebook.py`) walks each `.ipynb` **in cell order**. Only **markdown**
+cells are tested for structure; **code** cells only contribute answers.
+
+**Precedence:** if one markdown cell matches both `parsing.section_regex` and
+`parsing.question_regex`, it is treated as a **section** header only.
+
+| Setting | Compile flags | Match | Captures |
+|--------|----------------|-------|-----------|
+| `section_regex` | `re.IGNORECASE` | `re.search` on the full cell text | **Group 1** = section id string (e.g. `1`) |
+| `question_regex` | `re.MULTILINE` | `re.search` on the full cell text | **Either** 4 groups (optional prefix, section, qnum, pts → parser uses groups 2–4) **or** 3 groups (section, qnum, pts → parser uses groups 1–3) |
+
+After a question header, every following code/markdown cell belongs to that question until
+the **next** markdown cell that matches either regex. A `section_regex` that also matches
+student subheadings (e.g. loose `#+ … 1. …`) will **cut answers short**; tighten it to
+your real handout lines (HTML anchors, fixed wording, single `#`, etc.).
+
+Defaults live in `config_models.ParsingConfig`; the full contract (including
+`extract_qids_from_notebook`) is in the **`parse_notebook.py` module docstring** and
+`docs/CODEBASE_GUIDE.md` section 4.2 (Parse).
+
 ## Direct module entrypoints
 
 Each stage can also be run independently.
@@ -263,7 +291,7 @@ Each stage can also be run independently.
 python gather.py --zip gradescope_export.zip
 python gather.py --folder extracted_export_folder
 python parse_notebook.py --config output/<assignment_name>/config.yaml
-python -m rubric --config output/<assignment_name>/config.yaml
+python main.py --steps rubric --config output/<assignment_name>/config.yaml
 python grade.py --config output/<assignment_name>/config.yaml
 python calibrate.py --config output/<assignment_name>/config.yaml
 python export.py --config output/<assignment_name>/config.yaml
@@ -291,7 +319,6 @@ Setup helpers:
 Pipeline:
 
 - POST /gather
-- POST /gather-from-folder
 - POST /parse
 - GET /generate-rubrics
 - POST /generate-rubrics

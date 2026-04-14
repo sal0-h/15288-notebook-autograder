@@ -1,0 +1,36 @@
+# Per-question-type grading instructions.
+# Injected into the grading prompt between the rubric and student submission.
+# {qid} and {pts} are replaced at runtime.
+
+code: |
+  QUESTION TYPE: Code implementation.
+  Focus on whether the code runs correctly and produces the expected output.
+  A working solution with minimal or no explanation earns full credit.
+  Accept any functionally equivalent approach.
+
+plot: |
+  QUESTION TYPE: Visualization.
+  Check that the correct data is plotted, axes are labeled, and the visual
+  trend or pattern matches expectations. Minor cosmetic differences
+  (colors, legend placement, figure size) are acceptable.
+
+analysis: |
+  QUESTION TYPE: Written analysis.
+  A short, correct answer that addresses what the question asks earns full
+  credit. Do not require lengthy explanations, multiple perspectives, or
+  suggestions for improvement unless the question explicitly asks for them.
+
+open-ended: |
+  QUESTION TYPE: Open-ended exploration.
+  Any reasonable approach with a clear justification earns full credit.
+  There is no single correct answer. Reward creativity and demonstrated
+  understanding. Do not penalize unconventional methods if the reasoning
+  is sound.
+
+exact: |
+  QUESTION TYPE: Exact answer expected.
+  The answer must be numerically or factually correct within reasonable
+  tolerance (1% or 0.01 absolute for numerical values). Partial credit
+  only for demonstrated understanding of the method with minor errors.
+
+mixed: ""

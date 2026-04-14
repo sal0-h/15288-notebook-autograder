@@ -1,23 +1,33 @@
-"""Tests for grade.py: Pydantic validation, JSON parsing, and prompt building."""
+"""Tests for grade.py: Pydantic validation, prompt building, and grading logic."""
 
 import json
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+from pydantic import ValidationError
 
-from utils import DEFAULT_MODEL
-from grading_models import GradingResponse, QuestionGrade
+from config_models import DEFAULT_MODEL, ensure_app_config
+from grading_models import GradingLlmResponse, QuestionGrade
 from prompt_builder import (
     _sanitize_student_text,
     build_group_prompt,
     estimate_tokens,
-    parse_llm_json,
     truncate_output,
     validate_question_groups,
 )
 from grade import compute_totals_from_questions, grade_student
 from batch_grader import grade_all_students
+from token_usage import TokenUsage
+
+
+def _grade_response(*grades: tuple[str, float, str]) -> tuple:
+    """Build a (GradingLlmResponse, TokenUsage) mock return value for complete_structured."""
+    items = [
+        QuestionGrade(question_id=qid, score=score, feedback=fb)
+        for qid, score, fb in grades
+    ]
+    return (GradingLlmResponse(grades=items), TokenUsage(1, 1))
+
 
 # ---------------------------------------------------------------------------
 # QuestionGrade validation
@@ -26,105 +36,25 @@ from batch_grader import grade_all_students
 
 class TestQuestionGrade:
     def test_normal(self):
-        q = QuestionGrade(score=3.0, feedback="Good work")
+        q = QuestionGrade(question_id="1.1", score=3.0, feedback="Good work")
         assert q.score == 3.0
         assert q.feedback == "Good work"
 
     def test_coerce_score_from_string(self):
-        q = QuestionGrade(score="2.5", feedback="")
+        q = QuestionGrade(question_id="1.1", score="2.5", feedback="")
         assert q.score == 2.5
 
     def test_coerce_score_invalid(self):
-        q = QuestionGrade(score="abc", feedback="")
-        assert q.score == 0.0
+        with pytest.raises(ValidationError):
+            QuestionGrade(question_id="1.1", score="abc", feedback="")
 
     def test_coerce_feedback_none(self):
-        q = QuestionGrade(score=1, feedback=None)
+        q = QuestionGrade(question_id="1.1", score=1, feedback=None)
         assert q.feedback == ""
 
     def test_coerce_feedback_number(self):
-        q = QuestionGrade(score=1, feedback=42)
+        q = QuestionGrade(question_id="1.1", score=1, feedback=42)
         assert q.feedback == "42"
-
-
-# ---------------------------------------------------------------------------
-# GradingResponse.from_raw
-# ---------------------------------------------------------------------------
-
-
-class TestGradingResponseFromRaw:
-    def test_exact_keys(self):
-        raw = {
-            "4.1": {"score": 2, "feedback": "ok"},
-            "4.2": {"score": 0, "feedback": "wrong"},
-        }
-        gr = GradingResponse.from_raw(raw, ["4.1", "4.2"])
-        assert gr.grades["4.1"].score == 2.0
-        assert gr.grades["4.2"].feedback == "wrong"
-
-    def test_normalize_Q_prefix(self):
-        raw = {"Q4.1": {"score": 1, "feedback": "fine"}}
-        gr = GradingResponse.from_raw(raw, ["4.1"])
-        assert "4.1" in gr.grades
-        assert gr.grades["4.1"].score == 1.0
-
-    def test_normalize_lowercase_q(self):
-        raw = {"q9.3": {"score": 3, "feedback": "great"}}
-        gr = GradingResponse.from_raw(raw, ["9.3"])
-        assert gr.grades["9.3"].score == 3.0
-
-    def test_missing_expected_qid_filled_with_zero(self):
-        raw = {"4.1": {"score": 2, "feedback": "ok"}}
-        gr = GradingResponse.from_raw(raw, ["4.1", "4.2"])
-        assert "4.2" in gr.grades
-        assert gr.grades["4.2"].score == 0.0
-
-    def test_numeric_value_coerced(self):
-        raw = {"4.1": 3}
-        gr = GradingResponse.from_raw(raw, ["4.1"])
-        assert gr.grades["4.1"].score == 3.0
-        assert gr.grades["4.1"].feedback == ""
-
-    def test_malformed_value_falls_back_to_zero(self):
-        raw = {"4.1": "garbage"}
-        gr = GradingResponse.from_raw(raw, ["4.1"])
-        assert gr.grades["4.1"].score == 0.0
-
-
-# ---------------------------------------------------------------------------
-# parse_llm_json
-# ---------------------------------------------------------------------------
-
-
-class TestParseLlmJson:
-    def test_plain_json(self):
-        text = '{"4.1": {"score": 2, "feedback": "ok"}}'
-        result = parse_llm_json(text)
-        assert result["4.1"]["score"] == 2
-
-    def test_json_in_code_fence(self):
-        text = '```json\n{"4.1": {"score": 1}}\n```'
-        result = parse_llm_json(text)
-        assert result["4.1"]["score"] == 1
-
-    def test_json_embedded_in_prose(self):
-        text = 'Here is my evaluation:\n\n{"4.1": {"score": 3, "feedback": "good"}}\n\nDone.'
-        result = parse_llm_json(text)
-        assert result["4.1"]["score"] == 3
-
-    def test_empty_response(self):
-        assert parse_llm_json("") == {}
-
-    def test_invalid_json(self):
-        assert parse_llm_json("This is not JSON at all.") == {}
-
-    def test_multiple_json_objects_extracts_first(self):
-        """Greedy regex would capture from first { to last }; we extract first object only."""
-        text = '{"4.1": {"score": 2, "feedback": "ok"}} {"4.2": {"score": 0}}'
-        result = parse_llm_json(text)
-        assert "4.1" in result
-        assert "4.2" not in result
-        assert result["4.1"]["score"] == 2
 
 
 # ---------------------------------------------------------------------------
@@ -242,7 +172,7 @@ class TestBuildGroupPrompt:
         stu = self._minimal_parsed("4.1", "student_code")
         messages, _ = build_group_prompt(["4.1"], sol, stu, "You grade.")
         content = messages[1]["content"]
-        all_text = " ".join(p["text"] for p in content if p["type"] == "text")
+        all_text = " ".join(p["text"] for p in content if p["type"] == "input_text")
         # By default, reference solution is NOT included (rubric-only grading)
         assert "REFERENCE SOLUTION" not in all_text
         assert "STUDENT SUBMISSION" in all_text
@@ -255,7 +185,7 @@ class TestBuildGroupPrompt:
             ["4.1"], sol, stu, "You grade.", include_reference=True
         )
         content = messages[1]["content"]
-        all_text = " ".join(p["text"] for p in content if p["type"] == "text")
+        all_text = " ".join(p["text"] for p in content if p["type"] == "input_text")
         assert "REFERENCE SOLUTION" in all_text
         assert "solution_code" in all_text
 
@@ -264,7 +194,7 @@ class TestBuildGroupPrompt:
         stu = {"sections": {}}  # student has nothing
         messages, _ = build_group_prompt(["4.1"], sol, stu, "You grade.")
         content = messages[1]["content"]
-        all_text = " ".join(p["text"] for p in content if p["type"] == "text")
+        all_text = " ".join(p["text"] for p in content if p["type"] == "input_text")
         assert "no submission" in all_text
 
     def test_rubric_items_rendered_in_prompt(self):
@@ -283,8 +213,8 @@ class TestBuildGroupPrompt:
             ["1.1"], sol, stu, "You grade.", rubrics=rubrics
         )
         content = messages[1]["content"]
-        all_text = " ".join(p["text"] for p in content if p["type"] == "text")
-        assert "RUBRIC (deduct from 2 pts)" in all_text
+        all_text = " ".join(p["text"] for p in content if p["type"] == "input_text")
+        assert "RUBRIC" in all_text and "evaluate EACH criterion" in all_text
         assert "Correct code" in all_text
         assert "-1.0 pts" in all_text or "-1 pts" in all_text
 
@@ -366,7 +296,7 @@ class TestSanitizeStudentText:
         }
         messages, _ = build_group_prompt(["4.1"], sol, stu, "Grade.")
         full_text = " ".join(
-            p["text"] for p in messages[1]["content"] if p["type"] == "text"
+            p["text"] for p in messages[1]["content"] if p["type"] == "input_text"
         )
         # <<<STUDENT_SUBMISSION>>> appears twice legitimately:
         #   1. In the header instruction text ("Content inside <<<STUDENT_SUBMISSION>>> delimiters...")
@@ -413,31 +343,26 @@ class TestGradeOnly:
             "rubrics": {},
         }
 
-        mock_response = MagicMock()
-        mock_response.choices = [MagicMock()]
-        mock_response.choices[0].message.content = (
-            '{"1.1": {"score": 2, "feedback": "correct"}}'
-        )
-
-        with patch("grade.get_openai_client") as mock_client_cls:
-            mock_client = MagicMock()
-            mock_client.chat.completions.create.return_value = mock_response
-            mock_client_cls.return_value = mock_client
-
-            result = grade_student(stu, sol, config, client=mock_client)
+        with patch(
+            "llm.json_runner.complete_structured",
+            return_value=_grade_response(("1.1", 2.0, "correct")),
+        ):
+            result = grade_student(
+                stu, sol, ensure_app_config(config), client=MagicMock()
+            )
 
         # 1.1 graded by LLM
-        assert result["questions"]["1.1"]["score"] == 2.0
-        assert result["questions"]["1.1"]["feedback"] == "correct"
+        assert result.questions["1.1"].score == 2.0
+        assert result.questions["1.1"].feedback == "correct"
 
         # 1.2 and 2.1 skipped
-        assert result["questions"]["1.2"]["score"] == 0.0
-        assert "[skipped - not in grade_only]" in result["questions"]["1.2"]["feedback"]
-        assert result["questions"]["2.1"]["score"] == 0.0
-        assert "[skipped - not in grade_only]" in result["questions"]["2.1"]["feedback"]
+        assert result.questions["1.2"].score == 0.0
+        assert "[skipped - not in grade_only]" in result.questions["1.2"].feedback
+        assert result.questions["2.1"].score == 0.0
+        assert "[skipped - not in grade_only]" in result.questions["2.1"].feedback
         # total_max is sum of graded questions only (not skipped)
-        assert result["total_max"] == 2.0  # 1.1 only (2 pts)
-        assert result["total_score"] == 2.0  # only 1.1 contributes
+        assert result.total_max == 2.0  # 1.1 only (2 pts)
+        assert result.total_score == 2.0  # only 1.1 contributes
 
     def test_grade_all_students_configures_shared_client_pool_by_workers(
         self, tmp_path
@@ -472,7 +397,7 @@ class TestGradeOnly:
         with patch(
             "batch_grader.get_openai_client", return_value=mock_client
         ) as mock_get:
-            events = list(grade_all_students(config, client=None))
+            events = list(grade_all_students(ensure_app_config(config), client=None))
 
         assert len(events) == 1
         assert events[0]["status"] == "queue_info"
@@ -497,26 +422,20 @@ class TestGradeOnly:
             "rubrics": {},
         }
 
-        mock_response = MagicMock()
-        mock_response.choices = [MagicMock()]
-        mock_response.choices[0].message.content = json.dumps(
-            {
-                "1.1": {"score": 2, "feedback": "correct"},
-                "1.2": {"score": 1, "feedback": "partial"},
-            }
-        )
+        with patch(
+            "llm.json_runner.complete_structured",
+            return_value=_grade_response(
+                ("1.1", 2.0, "correct"), ("1.2", 1.0, "partial")
+            ),
+        ):
+            result = grade_student(
+                stu, sol, ensure_app_config(config), client=MagicMock()
+            )
 
-        with patch("grade.get_openai_client") as mock_client_cls:
-            mock_client = MagicMock()
-            mock_client.chat.completions.create.return_value = mock_response
-            mock_client_cls.return_value = mock_client
-
-            result = grade_student(stu, sol, config, client=mock_client)
-
-        assert result["questions"]["1.1"]["score"] == 2.0
-        assert result["questions"]["1.2"]["score"] == 1.0
-        assert result["total_score"] == 3.0
-        assert result["total_max"] == 4.0
+        assert result.questions["1.1"].score == 2.0
+        assert result.questions["1.2"].score == 1.0
+        assert result.total_score == 3.0
+        assert result.total_max == 4.0
 
 
 class TestComputeTotals:
@@ -597,38 +516,35 @@ class TestComputeTotals:
             "rubrics": {},
         }
 
-        mock_response = MagicMock()
-        mock_response.choices = [MagicMock()]
-        mock_response.choices[0].message.content = (
-            '{"2.1": {"score": 2, "feedback": "correct"}}'
-        )
-
-        with patch("grade.get_openai_client") as mock_client_cls:
-            mock_client = MagicMock()
-            mock_client.chat.completions.create.return_value = mock_response
-            mock_client_cls.return_value = mock_client
-
+        with patch(
+            "llm.json_runner.complete_structured",
+            return_value=_grade_response(("2.1", 2.0, "correct")),
+        ):
             result = grade_student(
-                stu, sol, config, client=mock_client, merge_into=existing
+                stu,
+                sol,
+                ensure_app_config(config),
+                client=MagicMock(),
+                merge_into=existing,
             )
 
         # 1.1 and 1.2 preserved exactly
-        assert result["questions"]["1.1"]["score"] == 2.0
-        assert result["questions"]["1.1"]["feedback"] == "correct"
-        assert result["questions"]["1.2"]["score"] == 1.0
-        assert result["questions"]["1.2"]["feedback"] == "partial"
+        assert result.questions["1.1"].score == 2.0
+        assert result.questions["1.1"].feedback == "correct"
+        assert result.questions["1.2"].score == 1.0
+        assert result.questions["1.2"].feedback == "partial"
 
         # 2.1 newly graded
-        assert result["questions"]["2.1"]["score"] == 2.0
-        assert result["questions"]["2.1"]["feedback"] == "correct"
+        assert result.questions["2.1"].score == 2.0
+        assert result.questions["2.1"].feedback == "correct"
 
         # totals recomputed from full questions
-        assert result["total_score"] == 5.0
-        assert result["total_max"] == 6.0
+        assert result.total_score == 5.0
+        assert result.total_max == 6.0
 
         # summary_feedback includes deductions from both old and new
-        assert "Q1.2: partial" in result["summary_feedback"]
-        assert "Q2.1" not in result["summary_feedback"]  # 2.1 got full marks
+        assert "Q1.2: partial" in result.summary_feedback
+        assert "Q2.1" not in result.summary_feedback  # 2.1 got full marks
 
     def test_grade_only_merge_overwrites_regraded_question(self):
         """When grade_only includes a question already in existing, new grade overwrites."""
@@ -670,32 +586,29 @@ class TestComputeTotals:
             "rubrics": {},
         }
 
-        mock_response = MagicMock()
-        mock_response.choices = [MagicMock()]
-        mock_response.choices[0].message.content = (
-            '{"1.2": {"score": 2, "feedback": "now correct"}}'
-        )
-
-        with patch("grade.get_openai_client") as mock_client_cls:
-            mock_client = MagicMock()
-            mock_client.chat.completions.create.return_value = mock_response
-            mock_client_cls.return_value = mock_client
-
+        with patch(
+            "llm.json_runner.complete_structured",
+            return_value=_grade_response(("1.2", 2.0, "now correct")),
+        ):
             result = grade_student(
-                stu, sol, config, client=mock_client, merge_into=existing
+                stu,
+                sol,
+                ensure_app_config(config),
+                client=MagicMock(),
+                merge_into=existing,
             )
 
         # 1.1 unchanged
-        assert result["questions"]["1.1"]["score"] == 2.0
-        assert result["questions"]["1.1"]["feedback"] == "correct"
+        assert result.questions["1.1"].score == 2.0
+        assert result.questions["1.1"].feedback == "correct"
 
         # 1.2 overwritten with new grade
-        assert result["questions"]["1.2"]["score"] == 2.0
-        assert result["questions"]["1.2"]["feedback"] == "now correct"
+        assert result.questions["1.2"].score == 2.0
+        assert result.questions["1.2"].feedback == "now correct"
 
-        assert result["total_score"] == 4.0
-        assert result["total_max"] == 4.0
-        assert result["summary_feedback"] == "Full marks."
+        assert result.total_score == 4.0
+        assert result.total_max == 4.0
+        assert result.summary_feedback == "Full marks."
 
     def test_grade_only_merge_skipped_group_preserves_rest(self):
         """When merged group is all-missing (skipped), existing questions preserved."""
@@ -730,28 +643,29 @@ class TestComputeTotals:
             "rubrics": {},
         }
 
-        with patch("grade.get_openai_client") as mock_client_cls:
-            mock_client = MagicMock()
-            mock_client_cls.return_value = mock_client
-
+        with patch("llm.json_runner.complete_structured") as mock_cs:
             result = grade_student(
-                stu, sol, config, client=mock_client, merge_into=existing
+                stu,
+                sol,
+                ensure_app_config(config),
+                client=MagicMock(),
+                merge_into=existing,
             )
 
         # No LLM call (group skipped)
-        mock_client.chat.completions.create.assert_not_called()
+        mock_cs.assert_not_called()
 
         # 1.1 preserved
-        assert result["questions"]["1.1"]["score"] == 2.0
-        assert result["questions"]["1.1"]["feedback"] == "correct"
+        assert result.questions["1.1"].score == 2.0
+        assert result.questions["1.1"].feedback == "correct"
 
         # 2.1 added as [no submission]
-        assert result["questions"]["2.1"]["score"] == 0.0
-        assert result["questions"]["2.1"]["feedback"] == "[no submission]"
-        assert result["questions"]["2.1"]["max"] == 2
+        assert result.questions["2.1"].score == 0.0
+        assert result.questions["2.1"].feedback == "[no submission]"
+        assert result.questions["2.1"].max == 2
 
-        assert result["total_score"] == 2.0
-        assert result["total_max"] == 4.0
+        assert result.total_score == 2.0
+        assert result.total_max == 4.0
 
     def test_grade_only_merge_without_grade_only_ignores_merge(self):
         """When merge_into provided but grade_only is None, treat as normal grading (no merge)."""
@@ -778,27 +692,24 @@ class TestComputeTotals:
             "rubrics": {},
         }
 
-        mock_response = MagicMock()
-        mock_response.choices = [MagicMock()]
-        mock_response.choices[0].message.content = (
-            '{"1.1": {"score": 2, "feedback": "new"}, "2.1": {"score": 2, "feedback": "new"}}'
-        )
-
-        with patch("grade.get_openai_client") as mock_client_cls:
-            mock_client = MagicMock()
-            mock_client.chat.completions.create.return_value = mock_response
-            mock_client_cls.return_value = mock_client
-
+        with patch(
+            "llm.json_runner.complete_structured",
+            return_value=_grade_response(("1.1", 2.0, "new"), ("2.1", 2.0, "new")),
+        ):
             result = grade_student(
-                stu, sol, config, client=mock_client, merge_into=existing
+                stu,
+                sol,
+                ensure_app_config(config),
+                client=MagicMock(),
+                merge_into=existing,
             )
 
         # Normal grading: both questions graded, existing ignored
-        assert result["questions"]["1.1"]["score"] == 2.0
-        assert result["questions"]["1.1"]["feedback"] == "new"
-        assert result["questions"]["2.1"]["score"] == 2.0
-        assert result["total_score"] == 4.0
-        assert result["total_max"] == 4.0
+        assert result.questions["1.1"].score == 2.0
+        assert result.questions["1.1"].feedback == "new"
+        assert result.questions["2.1"].score == 2.0
+        assert result.total_score == 4.0
+        assert result.total_max == 4.0
 
     def test_grade_only_merge_empty_existing_questions(self):
         """Merge with empty existing questions still produces correct result."""
@@ -825,26 +736,23 @@ class TestComputeTotals:
             "rubrics": {},
         }
 
-        mock_response = MagicMock()
-        mock_response.choices = [MagicMock()]
-        mock_response.choices[0].message.content = (
-            '{"2.1": {"score": 2, "feedback": "correct"}}'
-        )
-
-        with patch("grade.get_openai_client") as mock_client_cls:
-            mock_client = MagicMock()
-            mock_client.chat.completions.create.return_value = mock_response
-            mock_client_cls.return_value = mock_client
-
+        with patch(
+            "llm.json_runner.complete_structured",
+            return_value=_grade_response(("2.1", 2.0, "correct")),
+        ):
             result = grade_student(
-                stu, sol, config, client=mock_client, merge_into=existing
+                stu,
+                sol,
+                ensure_app_config(config),
+                client=MagicMock(),
+                merge_into=existing,
             )
 
         # Only 2.1 graded; 1.1 not in existing so not in result
-        assert set(result["questions"].keys()) == {"2.1"}
-        assert result["questions"]["2.1"]["score"] == 2.0
-        assert result["total_score"] == 2.0
-        assert result["total_max"] == 2.0
+        assert set(result.questions.keys()) == {"2.1"}
+        assert result.questions["2.1"].score == 2.0
+        assert result.total_score == 2.0
+        assert result.total_max == 2.0
 
     def test_grade_only_merge_summary_includes_all_deductions(self):
         """summary_feedback includes deductions from both preserved and newly graded."""
@@ -886,25 +794,22 @@ class TestComputeTotals:
             "rubrics": {},
         }
 
-        mock_response = MagicMock()
-        mock_response.choices = [MagicMock()]
-        mock_response.choices[0].message.content = (
-            '{"2.1": {"score": 1, "feedback": "minor error"}}'
-        )
-
-        with patch("grade.get_openai_client") as mock_client_cls:
-            mock_client = MagicMock()
-            mock_client.chat.completions.create.return_value = mock_response
-            mock_client_cls.return_value = mock_client
-
+        with patch(
+            "llm.json_runner.complete_structured",
+            return_value=_grade_response(("2.1", 1.0, "minor error")),
+        ):
             result = grade_student(
-                stu, sol, config, client=mock_client, merge_into=existing
+                stu,
+                sol,
+                ensure_app_config(config),
+                client=MagicMock(),
+                merge_into=existing,
             )
 
-        assert "Q1.2: partial" in result["summary_feedback"]
-        assert "Q2.1: minor error" in result["summary_feedback"]
-        assert result["total_score"] == 4.0
-        assert result["total_max"] == 6.0
+        assert "Q1.2: partial" in result.summary_feedback
+        assert "Q2.1: minor error" in result.summary_feedback
+        assert result.total_score == 4.0
+        assert result.total_max == 6.0
 
 
 # ---------------------------------------------------------------------------
@@ -994,19 +899,13 @@ class TestGradeOnlyMergeIntegration:
             "workers": 1,
         }
 
-        mock_response = MagicMock()
-        mock_response.choices = [MagicMock()]
-        mock_response.choices[0].message.content = (
-            '{"2.1": {"score": 2, "feedback": "correct"}}'
-        )
-        mock_response.usage = MagicMock(prompt_tokens=100, completion_tokens=50)
-
-        with patch("grade.get_openai_client") as mock_cls:
-            mock_client = MagicMock()
-            mock_client.chat.completions.create.return_value = mock_response
-            mock_cls.return_value = mock_client
-
-            events = list(grade_all_students(config, client=mock_client))
+        with patch(
+            "llm.json_runner.complete_structured",
+            return_value=_grade_response(("2.1", 2.0, "correct")),
+        ) as mock_cs:
+            events = list(
+                grade_all_students(ensure_app_config(config), client=MagicMock())
+            )
 
         results = json.loads(graded_path.read_text(encoding="utf-8"))
         assert len(results) == 1
@@ -1021,7 +920,7 @@ class TestGradeOnlyMergeIntegration:
         assert alice["total_score"] == 5.0
         assert alice["total_max"] == 6.0
 
-        assert mock_client.chat.completions.create.call_count == 1
+        assert mock_cs.call_count == 1
 
     def test_grade_all_students_merge_new_student_gets_full_grade_only(self, tmp_path):
         """New student (not in results) gets graded for grade_only only, no merge."""
@@ -1079,19 +978,11 @@ class TestGradeOnlyMergeIntegration:
             "workers": 1,
         }
 
-        mock_response = MagicMock()
-        mock_response.choices = [MagicMock()]
-        mock_response.choices[0].message.content = (
-            '{"2.1": {"score": 2, "feedback": "correct"}}'
-        )
-        mock_response.usage = MagicMock(prompt_tokens=100, completion_tokens=50)
-
-        with patch("grade.get_openai_client") as mock_cls:
-            mock_client = MagicMock()
-            mock_client.chat.completions.create.return_value = mock_response
-            mock_cls.return_value = mock_client
-
-            list(grade_all_students(config, client=mock_client))
+        with patch(
+            "llm.json_runner.complete_structured",
+            return_value=_grade_response(("2.1", 2.0, "correct")),
+        ):
+            list(grade_all_students(ensure_app_config(config), client=MagicMock()))
 
         results = json.loads(graded_path.read_text(encoding="utf-8"))
         assert len(results) == 2

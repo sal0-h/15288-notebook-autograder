@@ -37,18 +37,21 @@ LENIENCY RULES — THESE ARE MANDATORY:
     entire question into one giant criterion. Use a small number of broad, concept-level
     items so partial credit is stable and feedback remains actionable.
 
-Return valid JSON only, no prose outside JSON.
-
-For each question ID, output:
+Return a JSON object with a "questions" array. Each element covers one question ID:
 {
-  "QID": {
-    "points": N,
-    "items": [
-      {"description": "Criterion description", "deduction": 1.0},
-      ...
-    ]
-  }
+  "questions": [
+    {
+      "question_id": "N.N",
+      "points": N,
+      "items": [
+        {"description": "Criterion description", "deduction": 1.0},
+        ...
+      ]
+    }
+  ]
 }
+
+Include every question ID you were asked to generate a rubric for.
 
 Constraints:
 - The sum of all deduction values MUST equal the total points for that question exactly.

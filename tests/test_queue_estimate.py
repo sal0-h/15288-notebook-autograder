@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 
 from batch_grader import load_grade_queue
-from config_models import default_config
+from config_models import AppConfig, default_config, ensure_app_config
 from estimate import estimate_grade
 from utils import get_assignment_output_paths
 
@@ -60,18 +60,18 @@ def _graded_row(name: str, qid: str = "1.1") -> dict:
     }
 
 
-def _fixture_dirs(tmp_path: Path) -> tuple[dict, Path, Path]:
+def _fixture_dirs(tmp_path: Path) -> tuple[AppConfig, Path, Path]:
     out = tmp_path / "out"
     parsed = out / "parsed"
     out.mkdir(parents=True)
     parsed.mkdir(parents=True)
-    cfg = default_config(
+    raw = default_config(
         assignment_name="queue_test",
         output_dir=str(out),
         parsed_dir=str(parsed),
     )
-    cfg["grading"] = {"question_groups": [["1.1"]]}
-    return cfg, out, parsed
+    raw["grading"] = {"question_groups": [["1.1"]]}
+    return ensure_app_config(raw), out, parsed
 
 
 class TestLoadGradeQueue:

@@ -1,4 +1,69 @@
-"""Config-driven notebook parser for solution and student notebooks."""
+"""Config-driven notebook parser for solution and student notebooks.
+
+Typical ``.ipynb`` file (JSON, nbformat v4): a top-level object with ``nbformat``,
+``metadata``, and ``cells`` — an **ordered list** of cells. Each cell is a dict with:
+
+- ``cell_type``: ``"markdown"`` or ``"code"`` (this module only uses those).
+- ``source``: list of string fragments (often one per line); join them for full text.
+- ``outputs``: only on code cells; list of output objects (``stream``, ``execute_result``,
+  ``display_data``, ``error``, etc.) with text under ``text`` or ``data["text/plain"]``,
+  and plot bytes under ``data["image/png"]`` / ``image/jpeg``.
+
+This code reads JSON with :func:`json.loads` and walks ``cells`` linearly; it does not
+use the ``nbformat`` package.
+
+Notebook parsing contract (regex and scan)
+------------------------------------------
+
+**Structural cells**
+
+Only **markdown** cells are considered for section and question detection. Code cells
+never match ``section_regex`` or ``question_regex``. Other cell types (e.g. raw) are
+ignored for structure but are still skipped over while scanning indices.
+
+**Scan order**
+
+Cells are visited in list order. For each cell:
+
+1. If it matches ``section_regex``, it opens/updates that section (see below) and the
+   parser moves on — **even if the same cell could also match ``question_regex``**
+   (section wins).
+2. Else if it matches ``question_regex``, it starts a question; following cells are
+   attached as answers until a cell matches either regex again.
+
+**``section_regex``** (compiled with ``re.IGNORECASE``)
+
+- Applied to the full markdown cell text via :func:`re.search` (first match anywhere
+  in the cell).
+- The pattern **must** define **capture group 1** as the section id string (e.g.
+  ``"1"``, ``"2"``) used as keys under ``result["sections"]`` and to build QIDs with
+  question captures.
+- If the same section id appears in multiple section-header cells, later cells
+  overwrite ``overview_markdown`` for that section.
+
+**``question_regex``** (compiled with ``re.MULTILINE``)
+
+- Applied to the full markdown cell text via :func:`re.search` (first match anywhere
+  in the cell; ``^`` in the pattern matches after newlines inside the cell).
+- The pattern **must** expose captures in one of two shapes (see
+  :func:`parse_notebook`):
+
+  - **Four groups:** ``(-\\s*)?``, section id, question number, points — groups
+    ``2``, ``3``, ``4`` are used (group ``1`` is optional dash/prefix).
+  - **Three groups:** section id, question number, points — groups ``1``, ``2``, ``3``.
+
+- Points are parsed with :class:`int` (must be numeric in the match).
+
+**Answer attachment**
+
+After a question header cell, every following **code** or **markdown** cell is part
+of that question's answer until the next markdown cell that matches ``section_regex``
+or ``question_regex``. Empty markdown (after strip) is skipped without breaking the
+run. If ``section_regex`` is too broad, it can match student headings (e.g.
+``### 1. …``) and **truncate answers early**; tighten the pattern to real handout
+headers (distinctive HTML, wording, or ``#`` level).
+
+"""
 
 from __future__ import annotations
 
@@ -7,14 +72,12 @@ import json
 import logging
 import re
 from pathlib import Path
-from typing import TYPE_CHECKING
-
-from utils import ensure_app_config, load_app_config
-
-if TYPE_CHECKING:
-    from config_models import AppConfig
+from config_models import AppConfig, sort_key_qid
+from config_models import load_app_config
 
 logger = logging.getLogger(__name__)
+
+VALID_QUESTION_TYPES = {"code", "plot", "analysis", "open-ended", "exact", "mixed"}
 
 
 def md_text(cell: dict) -> str:
@@ -58,57 +121,112 @@ def extract_code_outputs(
     }
 
 
-def parse_notebook(nb_path: Path, config: AppConfig | dict) -> dict:
-    """
-    Parse a Jupyter notebook into structured sections and questions.
+def _collect_answer_cells(
+    cells: list[dict],
+    start: int,
+    match_section,
+    match_question,
+    keep_images: bool,
+) -> tuple[dict, int]:
+    """Collect answer cells for a question starting at index `start`.
 
-    Captures per-question: code cells, text outputs, markdown answer cells, and base64 images.
+    Iterates through cells following a question header, collecting code and markdown
+    cells until hitting another section/question header. Extracts code, text outputs,
+    and markdown content.
+
+    Returns:
+        (question_data_updates, next_index) where question_data_updates contains:
+        - answer_code_concat: joined non-empty code cells
+        - answer_text_concat: joined non-empty output text
+        - answer_markdown_concat: joined non-empty markdown cells
+        - answer_cells: list of extracted cell artifacts
+        next_index is the position to resume scanning after this question's answers
     """
-    cfg = ensure_app_config(config)
+    answer_cells: list[dict] = []
+    code_parts: list[str] = []
+    text_parts: list[str] = []
+    markdown_parts: list[str] = []
+
+    j = start + 1
+    while j < len(cells):
+        nxt = cells[j]
+
+        if match_section(nxt) or match_question(nxt):
+            break
+
+        if nxt.get("cell_type") == "code":
+            artifacts = extract_code_outputs(nxt, keep_images_base64=keep_images)
+            answer_cells.append(artifacts)
+
+            if artifacts["code"].strip():
+                code_parts.append(artifacts["code"].rstrip())
+            if artifacts["output_text"].strip():
+                text_parts.append(artifacts["output_text"].rstrip())
+
+        elif nxt.get("cell_type") == "markdown":
+            md_content = md_text(nxt).strip()
+            if md_content:
+                markdown_parts.append(md_content)
+
+        j += 1
+
+    return (
+        {
+            "answer_cells": answer_cells,
+            "answer_code_concat": "\n\n".join(code_parts).strip(),
+            "answer_text_concat": "\n\n".join(text_parts).strip(),
+            "answer_markdown_concat": "\n\n".join(markdown_parts).strip(),
+        },
+        j,
+    )
+
+
+def parse_notebook(nb_path: Path, config: AppConfig) -> dict:
+    """Parse a Jupyter notebook into structured sections and questions.
+
+    Regex rules, compile flags, capture groups, and scan order are documented in the
+    module docstring ("Notebook parsing contract").
+
+    Per question, collects: code cells, stdout/plain outputs, markdown answer cells,
+    and optional base64 images (when ``parsing.keep_images`` is true).
+    """
     nb = json.loads(nb_path.read_text(encoding="utf-8"))
     cells = nb.get("cells", [])
 
-    parsing = cfg.parsing
+    parsing = config.parsing
     section_re = re.compile(parsing.section_regex, re.IGNORECASE)
     question_re = re.compile(parsing.question_regex, re.MULTILINE)
     keep_images = parsing.keep_images
 
-    def is_section(cell: dict, *, strict: bool = False) -> bool:
-        """Check if cell is a section header. When strict=True (used while gathering
-        answers), require HTML tags so plain markdown subheaders like ### 1. Model
-        Results in student answers are not mistaken for handout section headers."""
+    def match_section(cell: dict) -> re.Match | None:
+        """Return the section regex match if this markdown cell opens a section."""
         if cell.get("cell_type") != "markdown":
-            return False
-        m = section_re.search(md_text(cell))
-        if not m:
-            return False
-        if strict:
-            # Handout section headers typically use HTML (e.g. <font>, <center>).
-            # Student answers may use plain ### 1. Foo subheaders; don't treat as section.
-            return "<" in md_text(cell)
-        return True
+            return None
+        return section_re.search(md_text(cell))
 
     def match_question(cell: dict) -> re.Match | None:
         if cell.get("cell_type") != "markdown":
             return None
         return question_re.search(md_text(cell))
 
+    def ensure_section(sec_id: str) -> None:
+        result["sections"].setdefault(
+            sec_id, {"overview_markdown": "", "questions": {}}
+        )
+
     result: dict = {"sections": {}, "source_file": str(nb_path)}
     current_section: str | None = None
-    seen_qids: dict[str, int] = {}  # qid -> cell index (for duplicate detection)
+    seen_qids: set[str] = set()
 
     i = 0
     while i < len(cells):
         cell = cells[i]
 
-        if is_section(cell):
-            md = md_text(cell)
-            sec_id = section_re.search(md).group(1)
+        if sm := match_section(cell):
+            sec_id = sm.group(1)
             current_section = sec_id
-            result["sections"].setdefault(
-                sec_id, {"overview_markdown": "", "questions": {}}
-            )
-            result["sections"][sec_id]["overview_markdown"] = md
+            ensure_section(sec_id)
+            result["sections"][sec_id]["overview_markdown"] = md_text(cell)
             i += 1
             continue
 
@@ -124,116 +242,55 @@ def parse_notebook(nb_path: Path, config: AppConfig | dict) -> dict:
             qid = f"{sec_id}.{qnum}"
 
             if current_section != sec_id:
-                current_section = sec_id
-                result["sections"].setdefault(
-                    sec_id, {"overview_markdown": "", "questions": {}}
+                logger.info(
+                    "Question %s implies section %s (previous was %s) — creating implicitly",
+                    qid,
+                    sec_id,
+                    current_section,
                 )
+                current_section = sec_id
+                ensure_section(sec_id)
 
-            q_md = md_text(cell)
+            # Extract question type from cell metadata tags (e.g., ["type:analysis"])
+            cell_tags = cell.get("metadata", {}).get("tags") or []
+            question_type = "mixed"
+            for tag in cell_tags if isinstance(cell_tags, list) else []:
+                if isinstance(tag, str) and tag.startswith("type:"):
+                    candidate = tag[5:].strip().lower()
+                    if candidate in VALID_QUESTION_TYPES:
+                        question_type = candidate
+                        break
 
             q_obj: dict = {
                 "points": pts,
-                "question_markdown": q_md,
-                "answer_cells": [],
-                "answer_code_concat": "",
-                "answer_text_concat": "",
-                "answer_markdown_concat": "",
+                "question_markdown": md_text(cell),
+                "question_type": question_type,
             }
 
-            code_parts: list[str] = []
-            text_parts: list[str] = []
-            markdown_parts: list[str] = []
-
-            j = i + 1
-            while j < len(cells):
-                nxt = cells[j]
-
-                if is_section(nxt, strict=True) or match_question(nxt):
-                    break
-
-                if nxt.get("cell_type") == "code":
-                    artifacts = extract_code_outputs(
-                        nxt, keep_images_base64=keep_images
-                    )
-                    q_obj["answer_cells"].append(artifacts)
-
-                    if artifacts["code"].strip():
-                        code_parts.append(artifacts["code"].rstrip())
-                    if artifacts["output_text"].strip():
-                        text_parts.append(artifacts["output_text"].rstrip())
-
-                elif nxt.get("cell_type") == "markdown":
-                    md_content = md_text(nxt).strip()
-                    if md_content:
-                        markdown_parts.append(md_content)
-
-                j += 1
-
-            q_obj["answer_code_concat"] = "\n\n".join(code_parts).strip()
-            q_obj["answer_text_concat"] = "\n\n".join(text_parts).strip()
-            q_obj["answer_markdown_concat"] = "\n\n".join(markdown_parts).strip()
+            # Collect answer cells and concatenations
+            answer_data, next_i = _collect_answer_cells(
+                cells, i, match_section, match_question, keep_images
+            )
+            q_obj.update(answer_data)
 
             if qid in seen_qids:
                 dupes = result.setdefault("duplicate_qids", [])
                 if qid not in dupes:
                     dupes.append(qid)
-            seen_qids[qid] = i
+                logger.warning(
+                    "Duplicate question ID %s in %s — last occurrence wins",
+                    qid,
+                    nb_path.name,
+                )
+            seen_qids.add(qid)
 
             result["sections"][sec_id]["questions"][qid] = q_obj
-            i = j
+            i = next_i
             continue
 
         i += 1
 
     return result
-
-
-def extract_qids_from_notebook(
-    cells: list[dict], question_regex: str
-) -> tuple[list[str], list[str]]:
-    """
-    Extract found QIDs and duplicate QIDs from notebook cells.
-
-    Uses one match per cell (search, not finditer) to match parse_notebook semantics.
-    Duplicates = QIDs that appear in more than one cell.
-
-    Returns (found_qids, duplicate_qids).
-    """
-    question_re = re.compile(question_regex, re.MULTILINE)
-    seen_qids: dict[str, int] = {}
-    duplicate_qids: list[str] = []
-
-    for i, cell in enumerate(cells):
-        if cell.get("cell_type") != "markdown":
-            continue
-        text = "".join(cell.get("source", []))
-        m = question_re.search(text)
-        if not m:
-            continue
-        if m.lastindex >= 4:
-            sec_id, qnum = m.group(2), m.group(3)
-        else:
-            sec_id, qnum = m.group(1), m.group(2)
-        qid = f"{sec_id}.{qnum}"
-        if qid in seen_qids:
-            if qid not in duplicate_qids:
-                duplicate_qids.append(qid)
-        seen_qids[qid] = i
-
-    found = sorted(seen_qids.keys(), key=sort_key_qid)
-    dupes = sorted(duplicate_qids, key=sort_key_qid)
-    return found, dupes
-
-
-def sort_key_qid(qid: str) -> tuple[int, int] | tuple[float, str]:
-    """Sort key for question IDs. Standard X.Y format sorts numerically; others fall back to string."""
-    parts = qid.split(".")
-    if len(parts) == 2:
-        try:
-            return (int(parts[0]), int(parts[1]))
-        except ValueError:
-            pass
-    return (999_999, qid)  # non-standard IDs at end
 
 
 def get_all_question_ids(parsed: dict) -> list[str]:
@@ -253,7 +310,7 @@ def get_total_points(parsed: dict) -> int | float:
     return total
 
 
-def parse_all_students(config: AppConfig | dict) -> tuple[dict | None, list[dict]]:
+def parse_all_students(config: AppConfig) -> tuple[dict | None, list[dict]]:
     """
     Parse solution notebook and all student notebooks.
 
@@ -264,13 +321,12 @@ def parse_all_students(config: AppConfig | dict) -> tuple[dict | None, list[dict
     """
     from utils import get_assignment_output_paths, get_job_logger
 
-    cfg = ensure_app_config(config)
-    logger = get_job_logger(cfg, __name__)
+    logger = get_job_logger(config, __name__)
 
-    paths = get_assignment_output_paths(cfg)
-    submissions_dir = Path(cfg.submissions_dir)
+    paths = get_assignment_output_paths(config)
+    submissions_dir = Path(config.submissions_dir)
     parsed_dir = paths.parsed_dir
-    solution_notebook = Path(cfg.solution_notebook)
+    solution_notebook = Path(config.solution_notebook)
 
     parsed_dir.mkdir(parents=True, exist_ok=True)
 
@@ -279,7 +335,7 @@ def parse_all_students(config: AppConfig | dict) -> tuple[dict | None, list[dict
     solution_total_pts = 0
 
     if solution_notebook and Path(solution_notebook).exists():
-        solution_parsed = parse_notebook(Path(solution_notebook), cfg)
+        solution_parsed = parse_notebook(Path(solution_notebook), config)
         solution_question_ids = get_all_question_ids(solution_parsed)
         solution_total_pts = get_total_points(solution_parsed)
 
@@ -295,7 +351,7 @@ def parse_all_students(config: AppConfig | dict) -> tuple[dict | None, list[dict
     for nb_path in student_files:
         student_name = nb_path.stem
         try:
-            parsed = parse_notebook(nb_path, cfg)
+            parsed = parse_notebook(nb_path, config)
         except (json.JSONDecodeError, KeyError, ValueError, OSError) as e:
             logger.warning("Parse failed for %s: %s", student_name, e)
             report.append(
