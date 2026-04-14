@@ -1,4 +1,8 @@
-"""Pydantic models for on-disk JSON artifacts (graded results, parsed notebooks)."""
+"""On-disk result schemas: graded results, parsed notebooks.
+
+Re-exports TokenUsage and usage helpers from token_usage for backward
+compatibility — new code should import from token_usage directly.
+"""
 
 from __future__ import annotations
 
