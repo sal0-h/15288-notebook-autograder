@@ -326,7 +326,10 @@ def build_group_prompt(
         rubric_lines = "\n".join(_rubric_item_lines(rubrics.get(qid)))
         if rubric_lines:
             q_header += (
-                f"RUBRIC (deduct from {pts} pts):\n{rubric_lines}\nMinimum score: 0\n\n"
+                f"RUBRIC — evaluate EACH criterion below (start at {pts}, deduct if not met):\n"
+                f"{rubric_lines}\n"
+                f"Score = {pts} minus sum of applicable deductions (minimum 0).\n"
+                f"Your feedback MUST address every criterion above.\n\n"
             )
 
         # Inject question-type grading instruction if available

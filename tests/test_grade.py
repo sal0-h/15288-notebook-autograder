@@ -214,7 +214,7 @@ class TestBuildGroupPrompt:
         )
         content = messages[1]["content"]
         all_text = " ".join(p["text"] for p in content if p["type"] == "input_text")
-        assert "RUBRIC (deduct from 2 pts)" in all_text
+        assert "RUBRIC" in all_text and "evaluate EACH criterion" in all_text
         assert "Correct code" in all_text
         assert "-1.0 pts" in all_text or "-1 pts" in all_text
 

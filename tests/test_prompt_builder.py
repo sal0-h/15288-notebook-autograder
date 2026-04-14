@@ -97,7 +97,7 @@ def test_build_group_prompt_includes_rubric_from_rubric_entry_models():
     text_blob = "\n".join(
         p["text"] for p in user if isinstance(p, dict) and p.get("type") == "input_text"
     )
-    assert "RUBRIC (deduct from 10 pts):" in text_blob
+    assert "RUBRIC" in text_blob and "evaluate EACH criterion" in text_blob
     assert "Wrong approach: -5.0 pts" in text_blob
     assert "No explanation: -5.0 pts" in text_blob
     assert qid_to_max["1.1"] == 10
