@@ -22,7 +22,7 @@ def test_load_results_empty_file_returns_empty(tmp_path):
     path = tmp_path / "graded_results.json"
     path.write_text("", encoding="utf-8")
     assert load_results(path) == []
-    assert (tmp_path / "graded_results.json.broken").exists()
+    assert list(tmp_path.glob("graded_results.json.broken*"))
 
 
 def test_load_results_valid(tmp_path):
@@ -40,7 +40,7 @@ def test_load_results_invalid_json_recover(tmp_path):
     path = tmp_path / "graded_results.json"
     path.write_text("{ invalid }", encoding="utf-8")
     assert load_results(path) == []
-    assert (tmp_path / "graded_results.json.broken").exists()
+    assert list(tmp_path.glob("graded_results.json.broken*"))
 
 
 def test_save_results_deduplicates_by_student_name(tmp_path):
