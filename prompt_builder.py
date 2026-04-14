@@ -4,6 +4,7 @@ import threading
 from pathlib import Path
 
 import tiktoken
+import yaml as _yaml
 
 from config_models import DEFAULT_MODEL
 from results_models import ParsedNotebook
@@ -16,6 +17,19 @@ TOKENS_PER_IMAGE = 1_000  # typical matplotlib plot at high detail
 
 _enc_cache: dict[str, object] = {}
 _enc_lock = threading.Lock()
+
+_question_type_instructions: dict[str, str] | None = None
+
+
+def _load_question_type_instructions() -> dict[str, str]:
+    global _question_type_instructions
+    if _question_type_instructions is None:
+        path = Path(__file__).resolve().parent / "prompts" / "DEFAULT" / "question_types.yaml"
+        if path.exists():
+            _question_type_instructions = _yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        else:
+            _question_type_instructions = {}
+    return _question_type_instructions
 
 
 def _grading_body_char_cap(max_prompt_tokens: int) -> int:
@@ -299,6 +313,14 @@ def build_group_prompt(
             q_header += (
                 f"RUBRIC (deduct from {pts} pts):\n{rubric_lines}\nMinimum score: 0\n\n"
             )
+
+        # Inject question-type grading instruction if available
+        q_type = (sol_q or stu_q or {}).get("question_type", "mixed")
+        type_instructions = _load_question_type_instructions()
+        type_hint = type_instructions.get(q_type, "").strip()
+        if type_hint:
+            q_header += f"\n{type_hint}\n"
+
         content_parts.append({"type": "input_text", "text": q_header})
 
         # Reference solution — only included when explicitly requested.
