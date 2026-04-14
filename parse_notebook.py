@@ -119,6 +119,66 @@ def extract_code_outputs(
     }
 
 
+def _collect_answer_cells(
+    cells: list[dict],
+    start: int,
+    match_section,
+    match_question,
+    keep_images: bool,
+) -> tuple[dict, int]:
+    """Collect answer cells for a question starting at index `start`.
+
+    Iterates through cells following a question header, collecting code and markdown
+    cells until hitting another section/question header. Extracts code, text outputs,
+    and markdown content.
+
+    Returns:
+        (question_data_updates, next_index) where question_data_updates contains:
+        - answer_code_concat: joined non-empty code cells
+        - answer_text_concat: joined non-empty output text
+        - answer_markdown_concat: joined non-empty markdown cells
+        - answer_cells: list of extracted cell artifacts
+        next_index is the position to resume scanning after this question's answers
+    """
+    answer_cells: list[dict] = []
+    code_parts: list[str] = []
+    text_parts: list[str] = []
+    markdown_parts: list[str] = []
+
+    j = start + 1
+    while j < len(cells):
+        nxt = cells[j]
+
+        if match_section(nxt) or match_question(nxt):
+            break
+
+        if nxt.get("cell_type") == "code":
+            artifacts = extract_code_outputs(nxt, keep_images_base64=keep_images)
+            answer_cells.append(artifacts)
+
+            if artifacts["code"].strip():
+                code_parts.append(artifacts["code"].rstrip())
+            if artifacts["output_text"].strip():
+                text_parts.append(artifacts["output_text"].rstrip())
+
+        elif nxt.get("cell_type") == "markdown":
+            md_content = md_text(nxt).strip()
+            if md_content:
+                markdown_parts.append(md_content)
+
+        j += 1
+
+    return (
+        {
+            "answer_cells": answer_cells,
+            "answer_code_concat": "\n\n".join(code_parts).strip(),
+            "answer_text_concat": "\n\n".join(text_parts).strip(),
+            "answer_markdown_concat": "\n\n".join(markdown_parts).strip(),
+        },
+        j,
+    )
+
+
 def parse_notebook(nb_path: Path, config: AppConfig) -> dict:
     """Parse a Jupyter notebook into structured sections and questions.
 
@@ -192,44 +252,13 @@ def parse_notebook(nb_path: Path, config: AppConfig) -> dict:
             q_obj: dict = {
                 "points": pts,
                 "question_markdown": md_text(cell),
-                "answer_cells": [],
-                "answer_code_concat": "",
-                "answer_text_concat": "",
-                "answer_markdown_concat": "",
             }
 
-            code_parts: list[str] = []
-            text_parts: list[str] = []
-            markdown_parts: list[str] = []
-
-            j = i + 1
-            while j < len(cells):
-                nxt = cells[j]
-
-                if match_section(nxt) or match_question(nxt):
-                    break
-
-                if nxt.get("cell_type") == "code":
-                    artifacts = extract_code_outputs(
-                        nxt, keep_images_base64=keep_images
-                    )
-                    q_obj["answer_cells"].append(artifacts)
-
-                    if artifacts["code"].strip():
-                        code_parts.append(artifacts["code"].rstrip())
-                    if artifacts["output_text"].strip():
-                        text_parts.append(artifacts["output_text"].rstrip())
-
-                elif nxt.get("cell_type") == "markdown":
-                    md_content = md_text(nxt).strip()
-                    if md_content:
-                        markdown_parts.append(md_content)
-
-                j += 1
-
-            q_obj["answer_code_concat"] = "\n\n".join(code_parts).strip()
-            q_obj["answer_text_concat"] = "\n\n".join(text_parts).strip()
-            q_obj["answer_markdown_concat"] = "\n\n".join(markdown_parts).strip()
+            # Collect answer cells and concatenations
+            answer_data, next_i = _collect_answer_cells(
+                cells, i, match_section, match_question, keep_images
+            )
+            q_obj.update(answer_data)
 
             if qid in seen_qids:
                 dupes = result.setdefault("duplicate_qids", [])
@@ -243,7 +272,7 @@ def parse_notebook(nb_path: Path, config: AppConfig) -> dict:
             seen_qids.add(qid)
 
             result["sections"][sec_id]["questions"][qid] = q_obj
-            i = j
+            i = next_i
             continue
 
         i += 1

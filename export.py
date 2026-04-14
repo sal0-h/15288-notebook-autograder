@@ -142,62 +142,19 @@ def _build_linter_summary_test(
     return _linter_test_entry(summary)
 
 
-def export_all(cfg: AppConfig) -> dict[str, str | int]:
+def _export_gradescope_json(
+    results: list[GradedResult],
+    gs_q_cols: list[str],
+    gs_title_mapping: dict[str, str],
+    gradescope_dir: Path,
+    parsed_dir: Path,
+    required_qids_for_linter: list[str],
+) -> int:
     """
-    Read graded_results.json and write:
-    - output/gradescope/{StudentName}.json (Gradescope autograder format)
-    - output/Final_Grades.xlsx (human-readable Excel)
+    Export per-student Gradescope JSON files with tests and linter summary.
 
-    Returns summary dict with paths and counts.
+    Returns the number of files written.
     """
-    paths = get_assignment_output_paths(cfg)
-    output_dir = paths.output_dir
-    parsed_dir = paths.parsed_dir
-    graded_path = paths.graded_results
-    gradescope_dir = paths.gradescope_dir
-
-    if not graded_path.exists():
-        raise FileNotFoundError(f"Graded results not found: {graded_path}")
-
-    raw_results = json.loads(graded_path.read_text(encoding="utf-8"))
-    if not raw_results:
-        return {
-            "students": 0,
-            "gradescope_dir": str(gradescope_dir),
-            "gradescope_files": 0,
-            "excel_path": "",
-            "autograder_zip": "",
-        }
-
-    results: list[GradedResult] = [GradedResult.model_validate(r) for r in raw_results]
-
-    gradescope_dir.mkdir(parents=True, exist_ok=True)
-
-    # Collect all question IDs for Excel columns
-    all_qids: set[str] = set()
-    for r in results:
-        all_qids.update(r.questions.keys())
-    q_cols = sorted(all_qids, key=sort_key_qid)
-
-    # For Gradescope: only include grade_only questions if set; use optional title mapping
-    grade_only = cfg.grading.grade_only
-    gs_title_mapping = cfg.gradescope_title_mapping
-
-    if grade_only:
-        gs_q_cols = [q for q in grade_only if q in all_qids]
-        gs_q_cols = sorted(gs_q_cols, key=sort_key_qid)
-    else:
-        gs_q_cols = q_cols
-
-    # Linter test uses full solution QIDs (not grade_only) when available
-    solution_path = paths.solution_parsed
-    if solution_path.exists():
-        solution_parsed = json.loads(solution_path.read_text(encoding="utf-8"))
-        required_qids_for_linter = get_all_question_ids(solution_parsed)
-    else:
-        required_qids_for_linter = gs_q_cols
-
-    # Export Gradescope JSON per student
     for r in results:
         student_name = r.student_name or "Unknown"
         questions = r.questions
@@ -233,7 +190,15 @@ def export_all(cfg: AppConfig) -> dict[str, str | int]:
         gs_path = gradescope_dir / f"{safe_name}.json"
         gs_path.write_text(json.dumps(gs_data, indent=2), encoding="utf-8")
 
-    # Export Excel
+    return len(results)
+
+
+def _export_excel(results: list[GradedResult], q_cols: list[str], output_dir: Path) -> str:
+    """
+    Export results to Excel (pandas DataFrame) and write to Final_Grades.xlsx.
+
+    Returns the path to the Excel file as a string.
+    """
     rows = []
     for r in results:
         row = {
@@ -260,6 +225,68 @@ def export_all(cfg: AppConfig) -> dict[str, str | int]:
     excel_path = output_dir / "Final_Grades.xlsx"
     df.to_excel(excel_path, index=False)
 
+    return str(excel_path)
+
+
+def export_all(cfg: AppConfig) -> dict[str, str | int]:
+    """
+    Read graded_results.json and write:
+    - output/gradescope/{StudentName}.json (Gradescope autograder format)
+    - output/Final_Grades.xlsx (human-readable Excel)
+
+    Returns summary dict with paths and counts.
+    """
+    paths = get_assignment_output_paths(cfg)
+    output_dir = paths.output_dir
+    parsed_dir = paths.parsed_dir
+    graded_path = paths.graded_results
+    gradescope_dir = paths.gradescope_dir
+
+    if not graded_path.exists():
+        raise FileNotFoundError(f"Graded results not found: {graded_path}")
+
+    raw_results = json.loads(graded_path.read_text(encoding="utf-8"))
+    if not raw_results:
+        return {
+            "students": 0,
+            "gradescope_dir": str(gradescope_dir),
+            "gradescope_files": 0,
+            "excel_path": "",
+            "autograder_zip": "",
+        }
+
+    results: list[GradedResult] = [GradedResult.model_validate(r) for r in raw_results]
+    gradescope_dir.mkdir(parents=True, exist_ok=True)
+
+    # Collect all question IDs for Excel columns
+    all_qids: set[str] = set()
+    for r in results:
+        all_qids.update(r.questions.keys())
+    q_cols = sorted(all_qids, key=sort_key_qid)
+
+    # For Gradescope: only include grade_only questions if set; use optional title mapping
+    grade_only = cfg.grading.grade_only
+    gs_title_mapping = cfg.gradescope_title_mapping
+    if grade_only:
+        gs_q_cols = [q for q in grade_only if q in all_qids]
+        gs_q_cols = sorted(gs_q_cols, key=sort_key_qid)
+    else:
+        gs_q_cols = q_cols
+
+    # Linter test uses full solution QIDs (not grade_only) when available
+    solution_path = paths.solution_parsed
+    if solution_path.exists():
+        solution_parsed = json.loads(solution_path.read_text(encoding="utf-8"))
+        required_qids_for_linter = get_all_question_ids(solution_parsed)
+    else:
+        required_qids_for_linter = gs_q_cols
+
+    # Export Gradescope JSON and Excel
+    _export_gradescope_json(
+        results, gs_q_cols, gs_title_mapping, gradescope_dir, parsed_dir, required_qids_for_linter
+    )
+    excel_path = _export_excel(results, q_cols, output_dir)
+
     # Always regenerate autograder zip so it stays in sync with grades
     zip_path = export_autograder_zip(cfg)
 
@@ -267,7 +294,7 @@ def export_all(cfg: AppConfig) -> dict[str, str | int]:
         "students": len(results),
         "gradescope_dir": str(gradescope_dir),
         "gradescope_files": len(results),
-        "excel_path": str(excel_path),
+        "excel_path": excel_path,
         "autograder_zip": str(zip_path),
     }
 

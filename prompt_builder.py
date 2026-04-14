@@ -183,6 +183,80 @@ def _rubric_item_lines(rubric_entry: object | None) -> list[str]:
     return lines
 
 
+def _build_reference_parts(
+    sol_q: dict | None, cap: int, include_reference: bool
+) -> tuple[str, list[dict]]:
+    """
+    Build the REFERENCE SOLUTION text block and extract images.
+
+    Returns:
+        (reference_text: str, reference_images: list[dict])
+    """
+    ref_text = ""
+    ref_images: list[dict] = []
+
+    if not include_reference:
+        return ref_text, ref_images
+
+    ref_text = "REFERENCE SOLUTION:\n"
+    if sol_q:
+        if sol_q.get("answer_code_concat"):
+            ref_text += f"Code:\n{truncate_output(sol_q['answer_code_concat'], cap)}\n\n"
+        if sol_q.get("answer_text_concat"):
+            ref_text += f"Output:\n{truncate_output(sol_q['answer_text_concat'], cap)}\n\n"
+        if sol_q.get("answer_markdown_concat"):
+            ref_text += f"Answer:\n{truncate_output(sol_q['answer_markdown_concat'], cap)}\n\n"
+        for cell in sol_q.get("answer_cells", []):
+            for img in cell.get("images", []):
+                ref_images.append(img)
+        if ref_images:
+            ref_text += f"[{len(ref_images)} reference plot(s) follow below]\n"
+    else:
+        ref_text += "(no reference)\n"
+
+    return ref_text, ref_images
+
+
+def _build_student_parts(stu_q: dict | None, cap: int) -> tuple[str, list[dict]]:
+    """
+    Build the STUDENT SUBMISSION text block (wrapped in delimiters) and extract images.
+
+    Returns:
+        (submission_text: str, submission_images: list[dict])
+    """
+    stu_text = "STUDENT SUBMISSION:\n<<<STUDENT_SUBMISSION>>>\n"
+    stu_images: list[dict] = []
+
+    if stu_q:
+        has_code = bool(stu_q.get("answer_code_concat", "").strip())
+        has_output = bool(stu_q.get("answer_text_concat", "").strip())
+        has_images = any(
+            cell.get("images") for cell in stu_q.get("answer_cells", [])
+        )
+        if not has_code and not has_output and not has_images:
+            stu_text += "WARNING: This question has NO code, NO output, and NO images — only markdown (if any). Score accordingly; do not award points for code/output that is not present.\n\n"
+        has_any = has_code or has_output or stu_q.get("answer_markdown_concat")
+        if stu_q.get("answer_code_concat"):
+            stu_text += f"Code:\n{_sanitize_student_text(truncate_output(stu_q['answer_code_concat'], cap))}\n\n"
+        if stu_q.get("answer_text_concat"):
+            stu_text += f"Output:\n{_sanitize_student_text(truncate_output(stu_q['answer_text_concat'], cap))}\n\n"
+        if stu_q.get("answer_markdown_concat"):
+            stu_text += f"Answer:\n{_sanitize_student_text(truncate_output(stu_q['answer_markdown_concat'], cap))}\n\n"
+        if not has_any:
+            stu_text += "(no submission)\n"
+        for cell in stu_q.get("answer_cells", []):
+            for img in cell.get("images", []):
+                stu_images.append(img)
+        if stu_images:
+            stu_text += f"[{len(stu_images)} student plot(s) follow below]\n"
+    else:
+        stu_text += "(no submission)\n"
+
+    stu_text += "<<<END_STUDENT_SUBMISSION>>>\n\n"
+
+    return stu_text, stu_images
+
+
 def build_group_prompt(
     group: list[str],
     solution_parsed: dict,
@@ -231,57 +305,13 @@ def build_group_prompt(
         # By default the rubric (generated from the reference) is sufficient
         # and including the raw reference anchors the grader to solution-specific
         # values (dataset size, parameter choices) causing unfair deductions.
-        ref_text = ""
-        ref_images: list[dict] = []
-        if include_reference:
-            ref_text = "REFERENCE SOLUTION:\n"
-            if sol_q:
-                if sol_q.get("answer_code_concat"):
-                    ref_text += f"Code:\n{truncate_output(sol_q['answer_code_concat'], cap)}\n\n"
-                if sol_q.get("answer_text_concat"):
-                    ref_text += f"Output:\n{truncate_output(sol_q['answer_text_concat'], cap)}\n\n"
-                if sol_q.get("answer_markdown_concat"):
-                    ref_text += f"Answer:\n{truncate_output(sol_q['answer_markdown_concat'], cap)}\n\n"
-                for cell in sol_q.get("answer_cells", []):
-                    for img in cell.get("images", []):
-                        ref_images.append(img)
-                if ref_images:
-                    ref_text += f"[{len(ref_images)} reference plot(s) follow below]\n"
-            else:
-                ref_text += "(no reference)\n"
-
+        ref_text, ref_images = _build_reference_parts(sol_q, cap, include_reference)
+        if ref_text:
             content_parts.append({"type": "input_text", "text": ref_text})
             _append_image_parts(content_parts, ref_images)
 
         # Student submission (wrapped in delimiters for prompt injection mitigation)
-        stu_text = "STUDENT SUBMISSION:\n<<<STUDENT_SUBMISSION>>>\n"
-        stu_images: list[dict] = []
-        if stu_q:
-            has_code = bool(stu_q.get("answer_code_concat", "").strip())
-            has_output = bool(stu_q.get("answer_text_concat", "").strip())
-            has_images = any(
-                cell.get("images") for cell in stu_q.get("answer_cells", [])
-            )
-            if not has_code and not has_output and not has_images:
-                stu_text += "WARNING: This question has NO code, NO output, and NO images — only markdown (if any). Score accordingly; do not award points for code/output that is not present.\n\n"
-            has_any = has_code or has_output or stu_q.get("answer_markdown_concat")
-            if stu_q.get("answer_code_concat"):
-                stu_text += f"Code:\n{_sanitize_student_text(truncate_output(stu_q['answer_code_concat'], cap))}\n\n"
-            if stu_q.get("answer_text_concat"):
-                stu_text += f"Output:\n{_sanitize_student_text(truncate_output(stu_q['answer_text_concat'], cap))}\n\n"
-            if stu_q.get("answer_markdown_concat"):
-                stu_text += f"Answer:\n{_sanitize_student_text(truncate_output(stu_q['answer_markdown_concat'], cap))}\n\n"
-            if not has_any:
-                stu_text += "(no submission)\n"
-            for cell in stu_q.get("answer_cells", []):
-                for img in cell.get("images", []):
-                    stu_images.append(img)
-            if stu_images:
-                stu_text += f"[{len(stu_images)} student plot(s) follow below]\n"
-        else:
-            stu_text += "(no submission)\n"
-        stu_text += "<<<END_STUDENT_SUBMISSION>>>\n\n"
-
+        stu_text, stu_images = _build_student_parts(stu_q, cap)
         content_parts.append({"type": "input_text", "text": stu_text})
         _append_image_parts(content_parts, stu_images)
 
