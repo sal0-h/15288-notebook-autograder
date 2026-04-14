@@ -18,11 +18,7 @@ from utils import (
     get_assignment_output_paths,
     sanitize_filename_component,
 )
-
-# Unix executable bits used when creating Gradescope autograder zip entries
-_UNIX_EXEC_ATTR = 0o755 << 16
-_UNIX_READ_ATTR = 0o644 << 16
-_ZIP_UNIX_CREATE_SYSTEM = 3  # Unix
+from zip_helpers import write_to_zip
 
 _REPO_ROOT = Path(__file__).resolve().parent
 _GRADESCOPE_PY_MODULES = ("gradescope_submitters.py", "gradescope_runtime.py")
@@ -319,25 +315,13 @@ def export_autograder_zip(config: AppConfig) -> Path:
     )
 
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
-        zi = zipfile.ZipInfo("setup.sh")
-        zi.create_system = _ZIP_UNIX_CREATE_SYSTEM
-        zi.external_attr = _UNIX_EXEC_ATTR
-        zf.writestr(zi, SETUP_SH)
-        zi = zipfile.ZipInfo("run_autograder")
-        zi.create_system = _ZIP_UNIX_CREATE_SYSTEM
-        zi.external_attr = _UNIX_EXEC_ATTR
-        zf.writestr(zi, RUN_AUTOGRADER)
+        write_to_zip(zf, "setup.sh", SETUP_SH, executable=True)
+        write_to_zip(zf, "run_autograder", RUN_AUTOGRADER, executable=True)
         for mod in _GRADESCOPE_PY_MODULES:
             mod_path = _REPO_ROOT / mod
-            zi = zipfile.ZipInfo(mod)
-            zi.create_system = _ZIP_UNIX_CREATE_SYSTEM
-            zi.external_attr = _UNIX_READ_ATTR
-            zf.writestr(zi, mod_path.read_text(encoding="utf-8"))
+            write_to_zip(zf, mod, mod_path.read_text(encoding="utf-8"))
         if manifest:
-            zi = zipfile.ZipInfo("precomputed_manifest.json")
-            zi.create_system = _ZIP_UNIX_CREATE_SYSTEM
-            zi.external_attr = _UNIX_READ_ATTR
-            zf.writestr(zi, json.dumps(manifest, indent=2))
+            write_to_zip(zf, "precomputed_manifest.json", json.dumps(manifest, indent=2))
         map_path = output_dir / "student_name_map.json"
         if map_path.exists():
             zf.write(map_path, arcname="student_name_map.json")
