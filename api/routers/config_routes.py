@@ -102,6 +102,7 @@ def api_put_config(config: dict = Body(...)):
         validated.model_dump(mode="python", exclude_none=True),
         state.get_active_config_path(),
     )  # type: ignore[arg-type]
+    state.invalidate_config_cache()
     state.setup_file_logging()
     return {"ok": True}
 

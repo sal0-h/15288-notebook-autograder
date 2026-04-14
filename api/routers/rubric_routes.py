@@ -62,6 +62,7 @@ async def api_generate_rubrics_stream(
             data = cfg.model_dump(mode="python")
             data["rubrics"] = rubrics_dump
             save_config(data, state.get_active_config_path())  # type: ignore[arg-type]
+            state.invalidate_config_cache()
             emit({"status": "done", "rubrics": rubrics_dump})
         except Exception as e:
             emit(error_event(str(e)))
@@ -92,6 +93,7 @@ async def api_generate_rubrics_post(
         data = cfg.model_dump(mode="python")
         data["rubrics"] = rubrics_dump
         save_config(data, state.get_active_config_path())  # type: ignore[arg-type]
+        state.invalidate_config_cache()
         return {"rubrics": rubrics_dump}
     finally:
         state.rubric_lock.release()
@@ -114,4 +116,5 @@ def api_put_rubrics(rubrics: dict = Body(...)):
     except ValidationError as e:
         raise HTTPException(status_code=422, detail=f"Invalid rubrics: {e}")
     save_config(merged, state.get_active_config_path())  # type: ignore[arg-type]
+    state.invalidate_config_cache()
     return {"ok": True}

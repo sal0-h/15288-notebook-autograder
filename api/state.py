@@ -18,6 +18,7 @@ logger = logging.getLogger(__name__)
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 _active_config_path: Path | None = None
+_cached_config: AppConfig | None = None
 
 grading_lock = threading.Lock()
 results_lock = threading.Lock()
@@ -29,18 +30,31 @@ def get_active_config_path() -> Path | None:
 
 
 def set_active_config_path(path: Path | None) -> None:
-    global _active_config_path
+    global _active_config_path, _cached_config
     _active_config_path = path
+    _cached_config = None
+
+
+def invalidate_config_cache() -> None:
+    """Clear cached config so the next read reloads from disk."""
+    global _cached_config
+    _cached_config = None
 
 
 def get_active_app_config() -> AppConfig:
-    """Return the active assignment as ``AppConfig``."""
+    """Return the active assignment config, cached after first load.
+
+    Call :func:`invalidate_config_cache` after saving config to disk.
+    """
+    global _cached_config
     if _active_config_path is None:
         raise HTTPException(
             status_code=400,
             detail="No assignment loaded. Use Setup to load or create an assignment.",
         )
-    return load_app_config(_active_config_path)
+    if _cached_config is None:
+        _cached_config = load_app_config(_active_config_path)
+    return _cached_config
 
 
 def setup_file_logging() -> None:
@@ -48,10 +62,10 @@ def setup_file_logging() -> None:
     if _active_config_path is None:
         return
     try:
-        cfg = load_app_config(_active_config_path)
+        cfg = get_active_app_config()
         out_dir = Path(cfg.output_dir)
         assignment_name = cfg.assignment_name or "DEFAULT"
-    except (FileNotFoundError, ValueError, OSError) as e:
+    except (HTTPException, FileNotFoundError, ValueError, OSError) as e:
         logger.warning(
             "Could not load config for file logging (%s): %s. Using defaults.",
             _active_config_path,
