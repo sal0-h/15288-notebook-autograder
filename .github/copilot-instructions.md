@@ -1,8 +1,13 @@
 # Project Guidelines
 
-## Git Commits
+## Agent Rules
 
-Never add `Co-authored-by` trailers to commit messages. Commits are authored by the developer only.
+- Never add `Co-authored-by` trailers to commit messages. Commits are authored by the developer only.
+- Never use the phrase "god module", "god object", or "god class". Use "overloaded module", "central module", or "high-coupling module" instead.
+- Never create database files, temp files, or artifacts in the repository root. If a tool creates `.db` or `.sqlite3` files, delete them immediately.
+- When moving functions between modules, do NOT add backward-compatible re-exports. Update all callers to import from the new canonical location directly. Grep the codebase to find all import sites before moving.
+- All prompt and config file loading must follow the assignment-first fallback pattern: check `prompts/{assignment_name}/` first, fall back to `prompts/DEFAULT/`. Never hardcode DEFAULT as the only lookup path.
+- After any code change, verify these docs are still accurate before committing: `docs/CODEBASE_GUIDE.md` (module tree, function names, test table, API endpoints), `README.md` (API endpoint list, module descriptions), `.github/copilot-instructions.md` (module table, test count).
 
 ## Build and Test
 
