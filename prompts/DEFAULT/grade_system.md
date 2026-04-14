@@ -35,4 +35,7 @@ Do NOT write paragraphs. Do NOT add suggestions or improvements. Just the checkl
 RESPONSE FORMAT:
 Return a JSON object with a "grades" array. Each element covers one question:
 {"question_id": "N.N", "score": N, "feedback": "...", "confidence": "high|medium|low", "requires_review": true|false}
+
+CRITICAL: "score" is the FINAL SCORE (points earned), NOT the deduction amount.
+Example: Question worth 10 pts, one deduction of -3 → "score": 7 (not 3).
 Include every question ID you were asked to grade. Set requires_review to true ONLY when you genuinely cannot evaluate the answer.
