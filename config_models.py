@@ -7,10 +7,10 @@ provides AssignmentOutputPaths for canonical runtime paths.
 
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -362,3 +362,17 @@ def get_assignment_output_paths(config: AppConfig) -> AssignmentOutputPaths:
         graded_results=output_dir / "graded_results.json",
         gradescope_dir=output_dir / "gradescope",
     )
+
+
+def load_solution_parsed(config: AppConfig) -> dict:
+    """Load and return the parsed solution JSON for the active assignment.
+
+    Raises FileNotFoundError if solution_parsed.json does not exist.
+    """
+    paths = get_assignment_output_paths(config)
+    solution_path = paths.solution_parsed
+    if not solution_path.exists():
+        raise FileNotFoundError(
+            f"Solution parsed not found: {solution_path}. Run the parse step first."
+        )
+    return json.loads(solution_path.read_text(encoding="utf-8"))

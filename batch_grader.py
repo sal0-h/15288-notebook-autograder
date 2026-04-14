@@ -8,7 +8,7 @@ from typing import Generator
 
 from openai import OpenAI
 
-from config_models import AppConfig, DEFAULT_MODEL
+from config_models import AppConfig, DEFAULT_MODEL, load_solution_parsed
 from grading_helpers import (
     grade_only_list,
     effective_groups,
@@ -53,13 +53,8 @@ def load_grade_queue(
     Load solution + parsed students + existing results and compute the grade queue.
     Raises FileNotFoundError if solution_parsed.json is missing.
     """
+    solution_parsed = load_solution_parsed(cfg)
     paths = get_assignment_output_paths(cfg)
-    solution_path = paths.solution_parsed
-    if not solution_path.exists():
-        raise FileNotFoundError(
-            f"Solution parsed not found: {solution_path}. Run the parse step first."
-        )
-    solution_parsed = json.loads(solution_path.read_text(encoding="utf-8"))
     parsed_dir = paths.parsed_dir
     student_files = sorted(parsed_dir.glob("*.json")) if parsed_dir.exists() else []
     out_path = paths.graded_results

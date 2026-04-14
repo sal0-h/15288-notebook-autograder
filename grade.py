@@ -168,7 +168,7 @@ def grade_group(
     return grade_items, qid_to_max, usage
 
 
-def _process_group_result(
+def _store_group_grades(
     questions: dict[str, dict],
     feedback_parts: list[str],
     group: list[str],
@@ -203,7 +203,7 @@ def _process_group_result(
     return total_score, total_max
 
 
-def _apply_ungrouped(
+def _zero_ungrouped_questions(
     questions: dict[str, dict],
     feedback_parts: list[str],
     ungrouped: list[str],
@@ -325,14 +325,14 @@ def grade_student(
                 student_name=student_name,
             )
         usage_total = usage_total.merged(usage)
-        score_delta, max_delta = _process_group_result(
+        score_delta, max_delta = _store_group_grades(
             questions, feedback_parts, group, grade_items, qid_to_max
         )
         total_score += score_delta
         total_max += max_delta
 
     if not is_merge:
-        _apply_ungrouped(
+        _zero_ungrouped_questions(
             questions,
             feedback_parts,
             ungrouped,
