@@ -16,8 +16,6 @@ from config_models import RubricItem
 
 SKIP_FEEDBACKS = ("[skipped - not in grade_only]", "[not included in grading groups]")
 NO_SUBMISSION = "[no submission]"
-LLM_PARSE_ERROR = "[parse error in LLM response]"
-LLM_NOT_RETURNED = "[not returned by LLM]"
 GRADING_FAILED = "[grading failed after retries]"
 
 
