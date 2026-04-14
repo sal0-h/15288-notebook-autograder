@@ -91,6 +91,24 @@ class GradingConfig(BaseModel):
             )
         return self
 
+    def get_grade_only(self) -> list[str] | None:
+        """Return grade_only list, or None if empty."""
+        g = self.grade_only
+        return g if g else None
+
+    def get_effective_groups(self) -> list[list[str]]:
+        """Return question groups filtered by grade_only when set."""
+        groups = self.question_groups
+        grade_only = self.get_grade_only()
+        if not grade_only:
+            return groups
+        grade_only_set = set(grade_only)
+        return [
+            [q for q in group if q in grade_only_set]
+            for group in groups
+            if group and any(q in grade_only_set for q in group)
+        ]
+
 
 def sanitize_llm_text(text: str) -> str:
     """Normalize malformed control-char artifacts seen in some LLM outputs."""
