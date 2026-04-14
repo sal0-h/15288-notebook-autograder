@@ -20,23 +20,6 @@ def run_gather(config: AppConfig, zip_path: Path) -> dict:
     return {"results": results, "output_dir": str(out_dir)}
 
 
-def run_gather_from_folder(
-    config: AppConfig, folder_path: str, project_root: Path
-) -> dict:
-    """Run gather from folder. Returns results and output_dir.
-    Raises FileNotFoundError or ValueError if folder invalid."""
-    out_dir = Path(config.submissions_dir)
-    folder = Path(folder_path).resolve()
-    if not folder.exists():
-        raise FileNotFoundError(f"Folder not found: {folder_path}")
-    try:
-        folder.relative_to(project_root)
-    except ValueError:
-        raise ValueError("Folder path must be inside the project directory.")
-    results = gather_submissions(folder, out_dir, from_zip=False)
-    return {"results": results, "output_dir": str(out_dir)}
-
-
 def run_parse(config: AppConfig) -> dict:
     """Run parse step. Returns report, preview, solution_questions, solution_duplicate_qids."""
     solution_parsed, report = parse_all_students(config)
