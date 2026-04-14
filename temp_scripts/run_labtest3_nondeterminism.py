@@ -179,7 +179,9 @@ def _build_run_config(base_config: dict, run_output_dir: Path) -> dict:
 
     cfg["output_dir"] = str(run_output_dir)
     cfg["parsed_dir"] = str(source_parsed_dir)
-    cfg["submissions_dir"] = str(source_submissions_dir) if source_submissions_dir else ""
+    cfg["submissions_dir"] = (
+        str(source_submissions_dir) if source_submissions_dir else ""
+    )
 
     return ensure_app_config(cfg).model_dump()
 
@@ -217,7 +219,9 @@ def _run_once(run_index: int, run_config: dict, run_output_dir: Path) -> RunArti
     )
 
 
-def _load_existing_run_artifact(run_index: int, run_output_dir: Path) -> RunArtifact | None:
+def _load_existing_run_artifact(
+    run_index: int, run_output_dir: Path
+) -> RunArtifact | None:
     graded_path = run_output_dir / "graded_results.json"
     if not graded_path.exists():
         return None
@@ -253,9 +257,7 @@ def _load_existing_run_artifact(run_index: int, run_output_dir: Path) -> RunArti
             duration_s = float(run_summary.get("duration_seconds", 0.0) or 0.0)
             started = 0.0
             finished = max(duration_s, 0.0)
-            usage_total["prompt_tokens"] = int(
-                run_summary.get("prompt_tokens", 0) or 0
-            )
+            usage_total["prompt_tokens"] = int(run_summary.get("prompt_tokens", 0) or 0)
             usage_total["completion_tokens"] = int(
                 run_summary.get("completion_tokens", 0) or 0
             )
@@ -653,7 +655,9 @@ def run_nondeterminism_experiment() -> None:
     for i in range(1, n_runs + 1):
         run_dir = exp_root / f"run_{i:02d}"
 
-        existing = _load_existing_run_artifact(i, run_dir) if resume_existing_runs else None
+        existing = (
+            _load_existing_run_artifact(i, run_dir) if resume_existing_runs else None
+        )
         state = _classify_run_state(existing, expected_students)
 
         if state == "complete" and existing is not None:
@@ -682,7 +686,11 @@ def run_nondeterminism_experiment() -> None:
                     f"Partial run {i}/{n_runs} ({existing_count}/{expected_students}) will be continued"
                 )
 
-        if state in {"missing", "invalid"} and run_dir.exists() and rerun_incomplete_runs:
+        if (
+            state in {"missing", "invalid"}
+            and run_dir.exists()
+            and rerun_incomplete_runs
+        ):
             shutil.rmtree(run_dir)
 
         run_cfg = _build_run_config(base_cfg, run_dir)

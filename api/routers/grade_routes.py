@@ -133,9 +133,7 @@ async def api_grade_one(student_name: str):
                 save_results(out_path, results)
             except ValueError as e:
                 raise HTTPException(status_code=500, detail=str(e))
-        result_dict = stored.model_dump(
-            mode="python", by_alias=True, exclude_none=True
-        )
+        result_dict = stored.model_dump(mode="python", by_alias=True, exclude_none=True)
         response = {"ok": True, "result": result_dict}
         if usage is not None and usage.has_tokens():
             response["usage"] = usage.to_json_dict()

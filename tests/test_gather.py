@@ -164,8 +164,30 @@ class TestGatherFromFolder:
         (tmp_path / "submission_metadata.yml").write_text(
             yaml.dump(meta), encoding="utf-8"
         )
-        nb1 = {"cells": [{"cell_type": "code", "source": ["first"], "metadata": {}, "outputs": []}], "nbformat": 4, "metadata": {}}
-        nb2 = {"cells": [{"cell_type": "code", "source": ["second"], "metadata": {}, "outputs": []}], "nbformat": 4, "metadata": {}}
+        nb1 = {
+            "cells": [
+                {
+                    "cell_type": "code",
+                    "source": ["first"],
+                    "metadata": {},
+                    "outputs": [],
+                }
+            ],
+            "nbformat": 4,
+            "metadata": {},
+        }
+        nb2 = {
+            "cells": [
+                {
+                    "cell_type": "code",
+                    "source": ["second"],
+                    "metadata": {},
+                    "outputs": [],
+                }
+            ],
+            "nbformat": 4,
+            "metadata": {},
+        }
         folder1 = tmp_path / "submission_1"
         folder1.mkdir()
         (folder1 / "notebook.ipynb").write_text(json.dumps(nb1), encoding="utf-8")

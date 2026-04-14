@@ -97,7 +97,9 @@ class TestIntegrationPipeline:
 
         # Write graded_results for export
         result_dict = graded_result_to_disk_dict(result)
-        (output_dir / "graded_results.json").write_text(json.dumps([result_dict], indent=2))
+        (output_dir / "graded_results.json").write_text(
+            json.dumps([result_dict], indent=2)
+        )
 
         # Step 3: Export
         summary = export_all(cfg)
