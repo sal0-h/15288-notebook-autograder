@@ -12,7 +12,7 @@ import tempfile
 from datetime import datetime
 from pathlib import Path
 
-from results_models import GradedResult
+from results_models import GradedResult, graded_result_to_disk_dict
 
 logger = logging.getLogger(__name__)
 
@@ -84,9 +84,7 @@ def save_results(
     log = logger_obj or logger
     path.parent.mkdir(parents=True, exist_ok=True)
     deduped = deduplicate_results(results)
-    data = [
-        r.model_dump(mode="python", by_alias=True, exclude_none=True) for r in deduped
-    ]
+    data = [graded_result_to_disk_dict(r) for r in deduped]
     # Atomic write: write to temp file, then rename (atomic on POSIX)
     fd, tmp_path = tempfile.mkstemp(dir=path.parent, suffix=".tmp")
     try:

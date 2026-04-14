@@ -11,6 +11,7 @@ from grading_models import GradingLlmResponse, QuestionGrade
 from parse_notebook import get_all_question_ids, parse_all_students, parse_notebook
 from export import export_all
 from grade import grade_student
+from results_models import graded_result_to_disk_dict
 from token_usage import TokenUsage
 
 
@@ -95,7 +96,7 @@ class TestIntegrationPipeline:
         assert result.total_max == 2
 
         # Write graded_results for export
-        result_dict = result.model_dump(mode="python", by_alias=True, exclude_none=True)
+        result_dict = graded_result_to_disk_dict(result)
         (output_dir / "graded_results.json").write_text(json.dumps([result_dict], indent=2))
 
         # Step 3: Export
