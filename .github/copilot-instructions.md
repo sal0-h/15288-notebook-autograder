@@ -1,13 +1,17 @@
 # Project Guidelines
 
+## Git Commits
+
+Never add `Co-authored-by` trailers to commit messages. Commits are authored by the developer only.
+
 ## Build and Test
 
 ```bash
 # Environment setup
 python -m venv .venv
-.venv/bin/pip install -r requirements.txt
+.venv/bin/pip install -r requirements.txt -r requirements-dev.txt
 
-# Run full test suite (220 tests)
+# Run full test suite (244 tests)
 .venv/bin/python -m pytest tests/ -q
 
 # Run a single test file
@@ -28,46 +32,53 @@ python main.py --config output/{assignment_name}/config.yaml --steps parse grade
 
 ## Architecture
 
-This is an LLM-assisted Jupyter notebook grading pipeline. The core flow is:
+LLM-assisted Jupyter notebook grading pipeline. Core flow:
 
 ```
 gather → parse → generate-rubrics → grade → calibrate → export
 ```
 
-**Assignment-scoped output model:** All runtime data lives under `output/{assignment_name}/`. The root `config.yaml` is an example template only — never the runtime source of truth. The active config is always `output/{assignment_name}/config.yaml`.
+**Assignment-scoped output model:** All runtime data lives under `output/{assignment_name}/`. The root `config.yaml` is an example template only. The active config is always `output/{assignment_name}/config.yaml`.
 
 **Module organization by responsibility:**
 
 | Layer | Modules |
 |-------|---------|
-| Config & models | `config_models.py` (AppConfig, schema, load/save, paths), `grading_models.py` (all LLM response schemas), `results_models.py` (GradedResult, Question), `token_usage.py` (TokenUsage, pricing, cost) |
+| Config & models | `config_models.py` (AppConfig, schema, load/save, paths, `load_solution_parsed`), `grading_models.py` (all LLM response schemas), `results_models.py` (GradedResult, Question), `token_usage.py` (TokenUsage, pricing, cost) |
 | LLM engine | `llm_client.py` (OpenAI client, temperature), `llm/json_runner.py` (structured output, retry, `run_jobs`, `extract_llm_questions`) |
-| Pipeline | `parse_notebook.py`, `rubric_generate.py`, `rubric_review.py`, `grade.py`, `batch_grader.py`, `genai_detection.py`, `calibrate.py` |
-| Prompt | `prompt_builder.py` (prompt construction, sanitization), `prompts/DEFAULT/*.md` (templates) |
-| Export | `export.py` (Gradescope JSON, Excel, autograder ZIP), `linter_export.py` (format linter ZIP), `gradescope_runtime.py` + `gradescope_submitters.py` (Gradescope harness) |
-| Web | `app.py` (FastAPI factory), `api/routers/` (route handlers), `api/state.py` (locks, active config) |
-| Shared | `utils.py` (logging, filename sanitization), `grading_helpers.py` (grade_only filtering), `zip_helpers.py` (ZIP archive helper) |
+| Pipeline | `parse_notebook.py`, `rubric_generate.py`, `rubric_review.py`, `grade.py` (returns `GradedResult`), `batch_grader.py`, `genai_detection.py`, `calibrate.py` |
+| Prompt | `prompt_builder.py` (prompt construction, sanitization, question type injection), `prompts/DEFAULT/*.md` (templates), `prompts/DEFAULT/question_types.yaml` (per-type grading instructions) |
+| Export | `export.py` (Gradescope JSON, Excel, autograder ZIP), `linter_export.py` + `linter_run_autograder.py.tpl` (format linter ZIP), `gradescope_runtime.py` + `gradescope_submitters.py` (Gradescope harness), `zip_helpers.py` |
+| Web | `app.py` (FastAPI factory), `api/routers/` (route handlers), `api/state.py` (locks, config cache) |
+| Shared | `utils.py` (logging, filename sanitization), `grading_helpers.py` (grade_only filtering) |
+| Tools | `tag_notebook.py` (inject question type tags into notebook cells) |
 
-**LLM calling pattern:** All four LLM tasks (grading, rubric gen, rubric review, genai detection) use the same pipeline: `execute_llm_task()` → `complete_structured()` (OpenAI Responses API) → `postprocess` callback → optional `fallback_factory` on exhaustion. Shared helpers: `extract_llm_questions()` for QID normalize+dedup+validate, `run_jobs()` for sequential/parallel dispatch.
+**LLM calling pattern:** All four LLM tasks (grading, rubric gen, rubric review, genai detection) use: `execute_llm_task()` → `complete_structured()` (OpenAI Responses API) → `postprocess` callback → optional `fallback_factory` on exhaustion. Shared helpers: `extract_llm_questions()` for QID normalize+dedup+validate, `run_jobs()` for sequential/parallel dispatch.
 
-**Concurrency:** `api/state.py` has three locks (`grading_lock`, `results_lock`, `rubric_lock`). Acquire in consistent order: grading → results → rubric. `batch_grader` uses `ThreadPoolExecutor` for parallel grading with a shared OpenAI client.
+**Question type tags:** Notebook cells can have `type:code`, `type:analysis`, `type:plot`, `type:open-ended`, `type:exact` in cell metadata tags. Parser extracts these into `question_type` field. `prompt_builder` and `rubric_generate` inject type-specific grading/rubric instructions from `question_types.yaml`.
+
+**Config caching:** `api/state.py` caches loaded `AppConfig`. Call `invalidate_config_cache()` after any config save operation.
+
+**Concurrency:** `api/state.py` has three locks (`grading_lock`, `results_lock`, `rubric_lock`). Acquire in consistent order: grading → results → rubric.
 
 ## Key Conventions
 
-**Question IDs** are canonical numeric strings (`"1.1"`, `"2.3"`). Always normalize with `normalize_qid()` from `config_models`. LLM postprocess functions use `extract_llm_questions()` which handles this automatically.
+**Question IDs** are canonical numeric strings (`"1.1"`, `"2.3"`). Normalize with `normalize_qid()` from `config_models`. LLM postprocess functions use `extract_llm_questions()` which handles this automatically.
 
 **Prompts** live in `prompts/{assignment_name}/` or `prompts/DEFAULT/`, loaded via `load_prompt(name, assignment_name=...)`. Never persist prompt content in config YAML.
 
-**Student content is untrusted.** Prompt injection boundaries (`<<<STUDENT_SUBMISSION>>>`) and `_sanitize_student_text()` must stay intact. Student text that contains `<<<`/`>>>` is replaced with `«`/`»`.
+**Student content is untrusted.** Prompt injection boundaries (`<<<STUDENT_SUBMISSION>>>`) and `_sanitize_student_text()` must stay intact.
 
-**Incremental save:** `graded_results.json` is written after every student completes, not at the end. This enables resume on crash. `batch_grader` checks existing results at startup and skips already-graded students.
+**`grade_student()` returns `GradedResult`**, not a dict. Callers should not re-validate. Usage is extracted from `result.usage` directly.
 
-**grade_only / grade_only_merge:** When `grading.grade_only` is set, only those QIDs are re-graded. `GradingConfig.get_effective_groups()` filters question groups. `needs_merge()` in `grading_helpers` determines if a student needs re-grading. Merge mode seeds the result dict from existing results.
+**Incremental save:** `graded_results.json` is written atomically (temp+rename) after every student. `batch_grader` skips already-graded students on resume.
 
-**API partial payloads:** UI sends partial config updates to `/config`. Handlers must merge into existing config, never treat missing fields as null.
+**Rubric compliance:** The grading prompt requires the LLM to address every rubric criterion in its feedback. The `score` field is the **final score (points earned)**, not the deduction amount.
 
-**Export schema stability:** Gradescope JSON must have `tests` array with `name`, `score`, `max_score`, `output`, `visibility`, optional `output_format`. Do not change this shape.
+**API partial payloads:** UI sends partial config updates to `/config`. Handlers merge into existing config, never treat missing fields as null.
 
-**Testing:** All LLM calls are mocked via `unittest.mock.patch` on `llm.json_runner.complete_structured`. Tests use `tmp_path` for output isolation. Config dicts in tests use `DEFAULT_MODEL` from `config_models`.
+**Export schema stability:** Gradescope JSON must have `tests` array with `name`, `score`, `max_score`, `output`, `visibility`, optional `output_format`.
 
-**Documentation discipline:** When changing routes, locks, tests, or public behavior, update `docs/CODEBASE_GUIDE.md` in the same commit. Truth lives in code; docs must not contradict it.
+**Testing:** All LLM calls are mocked via `unittest.mock.patch` on `llm.json_runner.complete_structured`. Tests use `tmp_path` for output isolation. Shared fixtures in `conftest.py`: `sample_config`, `sample_app_config`, `sample_parsed_notebook`, `mock_openai_client`.
+
+**Documentation discipline:** When changing routes, locks, tests, or public behavior, update `docs/CODEBASE_GUIDE.md` in the same commit.

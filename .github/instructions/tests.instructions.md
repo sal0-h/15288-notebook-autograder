@@ -8,10 +8,14 @@ applyTo: "tests/test_*.py"
 
 ## Pytest Fixtures and Conftest
 
-`tests/conftest.py` adds the project root to `sys.path` for imports. Tests construct their own setup:
+`tests/conftest.py` adds the project root to `sys.path` and provides shared fixtures:
+- `sample_config` — minimal valid config dict with tmp_path-based output directories.
+- `sample_app_config` — `AppConfig` built from `sample_config`.
+- `sample_parsed_notebook` — minimal parsed notebook dict with one section/question.
+- `mock_openai_client` — `MagicMock()` for tests that call LLM functions.
 - Use pytest's built-in `tmp_path` for temporary assignment directories.
-- Build minimal config dicts inline with required fields (e.g. `model`, `grading.question_groups`, `rubrics`); use `DEFAULT_MODEL` from utils.
-- Mock OpenAI via `unittest.mock.patch` on the relevant client or completion methods.
+- Build minimal config dicts inline with required fields (e.g. `model`, `grading.question_groups`, `rubrics`); use `DEFAULT_MODEL` from `config_models`.
+- Mock OpenAI via `unittest.mock.patch` on `llm.json_runner.complete_structured`.
 
 Fixtures ensure tests are isolated and do not pollute the real `output/` directory.
 
