@@ -232,10 +232,24 @@ def run_genai_detection(
             )
         )
 
+    log.info(
+        "GenAI detection: %d students queued, %d skipped, model=%s, workers=%d",
+        len(jobs),
+        students_skipped,
+        model,
+        workers,
+    )
+
     def _run_job(
         job: _DetectionJob,
     ) -> tuple[int, dict[str, dict[str, Any]] | None, int, int, list[str]]:
         local_errors: list[str] = []
+        log.info(
+            "GenAI detection - %s: checking %d questions (model=%s)",
+            job.student_name,
+            len(job.to_check),
+            job.model,
+        )
 
         def _on_exhausted(
             last_err: BaseException | None,
@@ -265,6 +279,7 @@ def run_genai_detection(
         )
 
         if not raw:
+            log.warning("GenAI detection - %s: no results returned", job.student_name)
             return (job.index, None, 0, 0, local_errors)
 
         updated = dict(job.questions)
@@ -283,6 +298,12 @@ def run_genai_detection(
             if entry.suspicious_genai:
                 flagged += 1
 
+        log.info(
+            "GenAI detection - %s complete: %d/%d flagged",
+            job.student_name,
+            flagged,
+            len(job.to_check),
+        )
         return (job.index, updated, 1, flagged, local_errors)
 
     for idx, updated, processed, flagged, local_errors in run_jobs(
@@ -301,6 +322,13 @@ def run_genai_detection(
         )
 
     save_results(graded_path, results)
+    log.info(
+        "GenAI detection complete: %d students processed, %d questions flagged, %d skipped, %d errors",
+        students_processed,
+        questions_flagged,
+        students_skipped,
+        len(errors),
+    )
     return {
         "students_processed": students_processed,
         "questions_flagged": questions_flagged,
