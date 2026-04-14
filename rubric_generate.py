@@ -53,10 +53,17 @@ def _postprocess_rubric_generate(
     return built
 
 
-def build_rubric_group_prompt(group: list[str], solution_parsed: dict) -> str:
+def build_rubric_group_prompt(
+    group: list[str],
+    solution_parsed: dict,
+    assignment_name: str | None = None,
+) -> str:
     """Build the user prompt for one question group."""
+    from prompt_builder import _load_question_type_instructions
+
     parts: list[str] = []
     max_output_chars = 2000
+    type_instructions = _load_question_type_instructions(assignment_name)
 
     for qid in group:
         sol_q = get_question_data(solution_parsed, qid)
@@ -64,6 +71,13 @@ def build_rubric_group_prompt(group: list[str], solution_parsed: dict) -> str:
         q_md = (sol_q or {}).get("question_markdown", f"Question {qid}")
 
         block = f"--- QUESTION {qid} ({pts} pts) ---\n{q_md}\n\n"
+
+        # Inject question-type instruction so rubric criteria match grading behavior
+        q_type = (sol_q or {}).get("question_type", "mixed")
+        type_hint = type_instructions.get(q_type, "").strip()
+        if type_hint:
+            block += f"{type_hint}\n\n"
+
         if sol_q:
             if sol_q.get("answer_code_concat"):
                 block += f"REFERENCE CODE:\n{truncate_output(sol_q['answer_code_concat'], max_output_chars)}\n\n"
@@ -110,7 +124,9 @@ def generate_one_group(
     if not group:
         return (idx, group, rubrics_for_group, usage, had_error)
 
-    user_content = build_rubric_group_prompt(group, solution_parsed)
+    user_content = build_rubric_group_prompt(
+        group, solution_parsed, assignment_name=config.assignment_name
+    )
     messages = [
         {"role": "system", "content": rubric_prompt},
         {"role": "user", "content": user_content},
