@@ -148,8 +148,7 @@ def test_build_group_prompt_includes_rubric_from_plain_dicts():
 
 
 def test_build_genai_detection_user_message_none_when_empty():
+    from genai_detection import build_genai_detection_user_message
+
     student = {"sections": {"1": {"questions": {"1.1": {"question_markdown": ""}}}}}
-    assert (
-        prompt_builder.build_genai_detection_user_message(["1.1"], student, 8000)
-        is None
-    )
+    assert build_genai_detection_user_message(["1.1"], student, 8000) is None
