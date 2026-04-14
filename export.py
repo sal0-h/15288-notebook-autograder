@@ -95,6 +95,18 @@ SETUP_SH = """#!/bin/bash
 """
 
 
+def _linter_test_entry(summary: str) -> dict:
+    """Wrap a linter summary string into a 0-pt Gradescope test entry."""
+    return {
+        "name": "Notebook Format Lint",
+        "score": 0,
+        "max_score": 0,
+        "output": summary,
+        "output_format": "md",
+        "visibility": "visible",
+    }
+
+
 def _build_linter_summary_test(
     student_name: str,
     parsed_dir: Path,
@@ -113,14 +125,7 @@ def _build_linter_summary_test(
                 "Cannot compute found/missing/duplicate question labels.",
             ]
         )
-        return {
-            "name": "Notebook Format Lint",
-            "score": 0,
-            "max_score": 0,
-            "output": summary,
-            "output_format": "md",
-            "visibility": "visible",
-        }
+        return _linter_test_entry(summary)
 
     parsed = json.loads(parsed_path.read_text(encoding="utf-8"))
     found_set: set[str] = set()
@@ -134,14 +139,7 @@ def _build_linter_summary_test(
     duplicates = sorted(parsed.get("duplicate_qids") or [], key=sort_key_qid)
 
     summary, _ = build_linter_summary(found, required, missing, unexpected, duplicates)
-    return {
-        "name": "Notebook Format Lint",
-        "score": 0,
-        "max_score": 0,
-        "output": summary,
-        "output_format": "md",
-        "visibility": "visible",
-    }
+    return _linter_test_entry(summary)
 
 
 def export_all(cfg: AppConfig) -> dict[str, str | int]:
