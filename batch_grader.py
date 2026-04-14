@@ -21,7 +21,7 @@ from results_models import (
     graded_usage_summary_event,
     merge_graded_usage,
 )
-from llm.json_runner import run_parallel_map
+from llm.json_runner import run_jobs
 from prompt_builder import validate_question_groups
 from results_store import load_results, save_results, update_student
 from utils import (
@@ -319,7 +319,7 @@ def grade_all_students(
                 "index": i + 1,
                 "total": len(student_files),
             }
-        for i, student_name, status, result, error in run_parallel_map(
+        for i, student_name, status, result, error in run_jobs(
             to_grade_with_merge,
             _grade_one,
             max_workers=workers,

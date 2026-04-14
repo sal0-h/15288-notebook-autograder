@@ -14,14 +14,12 @@ from config_models import (
     AppConfig,
     DEFAULT_MODEL,
     RubricEntry,
-    RubricGroupLlmResponse,
     RubricItem,
-    normalize_qid,
 )
+from grading_models import RubricGroupLlmResponse, usage_cost_usd
 from grading_helpers import filter_groups_by_grade_only
-from grading_models import usage_cost_usd
-from llm.json_runner import MAX_JSON_LLM_ATTEMPTS, execute_llm_task, run_parallel_map
-from results_models import TokenUsage
+from llm.json_runner import MAX_JSON_LLM_ATTEMPTS, execute_llm_task, extract_llm_questions, run_jobs
+from token_usage import TokenUsage
 from prompt_builder import get_question_data, load_prompt, truncate_output
 from utils import (
     get_assignment_output_paths,
@@ -38,12 +36,13 @@ def _postprocess_rubric_generate(
     group: tuple[str, ...],
 ) -> dict[str, RubricEntry]:
     assert isinstance(parsed, RubricGroupLlmResponse)
+    by_qid = extract_llm_questions(
+        parsed.questions,
+        expected_qids=group,
+        get_qid=lambda q: q.question_id,
+    )
     built: dict[str, RubricEntry] = {}
-    for q in parsed.questions:
-        try:
-            qid = normalize_qid(q.question_id)
-        except ValueError:
-            continue
+    for qid, q in by_qid.items():
         raw = {
             "points": q.points,
             "items": [
@@ -52,11 +51,6 @@ def _postprocess_rubric_generate(
             ],
         }
         built[qid] = RubricEntry.from_llm_output(raw)
-    if set(built) != set(group):
-        raise ValueError(
-            f"rubric response must include each question in the group; "
-            f"expected {sorted(group)}, got {sorted(built)}"
-        )
     return built
 
 
@@ -253,70 +247,34 @@ def generate_rubrics(
         if group
     ]
 
-    if workers <= 1 or len(to_process) <= 1:
-        for job in to_process:
-            idx, group = job.idx, job.group
-            logger.info(
-                "Rubric generation progress: group %d/%d (%s)",
-                idx + 1,
-                total,
-                group,
-            )
-            if progress_callback:
-                progress_callback(
-                    idx + 1,
-                    total,
-                    group,
-                    {q: e.model_dump() for q, e in rubrics.items()},
-                )
-            _, _, rubrics_for_group, usage, had_error = generate_one_group(job)
-            rubrics.update(rubrics_for_group)
-            usage_total = usage_total.merged(usage)
-            if had_error:
-                groups_failed += 1
-            if progress_callback:
-                progress_callback(
-                    idx + 1,
-                    total,
-                    group,
-                    {q: e.model_dump() for q, e in rubrics.items()},
-                )
-    else:
+    if workers > 1 and len(to_process) > 1:
         logger.info(
             "Rubric generation started in parallel: %d groups, %d workers, model=%s",
             len(to_process),
             workers,
             model,
         )
-        if progress_callback:
-            for idx, group in enumerate(groups):
-                if group:
-                    progress_callback(idx + 1, total, group, {})
-        for (
-            idx,
+    for (
+        idx,
+        group,
+        rubrics_for_group,
+        usage,
+        had_error,
+    ) in run_jobs(to_process, generate_one_group, max_workers=workers):
+        with rubrics_lock:
+            rubrics.update(rubrics_for_group)
+            rubrics_snapshot = {q: e.model_dump() for q, e in rubrics.items()}
+        usage_total = usage_total.merged(usage)
+        if had_error:
+            groups_failed += 1
+        logger.info(
+            "Rubric generation progress: group %d/%d complete (%s)",
+            idx + 1,
+            total,
             group,
-            rubrics_for_group,
-            usage,
-            had_error,
-        ) in run_parallel_map(
-            to_process,
-            generate_one_group,
-            max_workers=workers,
-        ):
-            with rubrics_lock:
-                rubrics.update(rubrics_for_group)
-                rubrics_snapshot = {q: e.model_dump() for q, e in rubrics.items()}
-            usage_total = usage_total.merged(usage)
-            if had_error:
-                groups_failed += 1
-            logger.info(
-                "Rubric generation progress: group %d/%d complete (%s)",
-                idx + 1,
-                total,
-                group,
-            )
-            if progress_callback:
-                progress_callback(idx + 1, total, group, rubrics_snapshot)
+        )
+        if progress_callback:
+            progress_callback(idx + 1, total, group, rubrics_snapshot)
 
     if usage_total.has_tokens():
         cost = usage_cost_usd(usage_total, model)

@@ -13,12 +13,11 @@ from config_models import (
     AppConfig,
     DEFAULT_MODEL,
     RubricEntry,
-    RubricReviewResponse,
-    normalize_qid,
     sanitize_llm_text,
 )
+from grading_models import RubricReviewResponse
 from grading_helpers import filter_groups_by_grade_only
-from llm.json_runner import MAX_JSON_LLM_ATTEMPTS, execute_llm_task, run_parallel_map
+from llm.json_runner import MAX_JSON_LLM_ATTEMPTS, execute_llm_task, extract_llm_questions, run_jobs
 from prompt_builder import get_question_data, load_prompt
 from utils import (
     get_job_logger,
@@ -50,16 +49,14 @@ def _postprocess_rubric_review(
     group_rubrics: dict[str, dict],
 ) -> dict[str, RubricEntry]:
     assert isinstance(parsed, RubricReviewResponse)
+    by_qid = extract_llm_questions(
+        parsed.questions,
+        expected_qids=list(group_rubrics.keys()),
+        get_qid=lambda q: q.question_id,
+    )
     revised: dict[str, RubricEntry] = {}
-    gr = group_rubrics
-    for q in parsed.questions:
-        try:
-            qid = normalize_qid(q.question_id)
-        except ValueError:
-            continue
-        if qid not in gr:
-            continue
-        original = RubricEntry.model_validate(gr[qid])
+    for qid, q in by_qid.items():
+        original = RubricEntry.model_validate(group_rubrics[qid])
         if len(q.items) != len(original.items):
             revised[qid] = original
             continue
@@ -193,27 +190,18 @@ def review_rubrics(
     ]
     groups_reviewed = len(to_process)
 
-    if workers <= 1 or len(to_process) <= 1:
-        for job in to_process:
-            result = review_one_group(job)
-            revised_in_pass += len(result)
-            revised.update(result)
-    else:
+    if workers > 1 and len(to_process) > 1:
         logger.info(
             "Rubric review started in parallel: %d groups, %d workers, model=%s",
             len(to_process),
             workers,
             model,
         )
-        review_lock = threading.Lock()
-        for result in run_parallel_map(
-            to_process,
-            review_one_group,
-            max_workers=workers,
-        ):
-            with review_lock:
-                revised_in_pass += len(result)
-                revised.update(result)
+    review_lock = threading.Lock()
+    for result in run_jobs(to_process, review_one_group, max_workers=workers):
+        with review_lock:
+            revised_in_pass += len(result)
+            revised.update(result)
 
     logger.info(
         "Rubric review complete — %d groups reviewed, %d questions revised in pass",

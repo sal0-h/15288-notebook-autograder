@@ -7,7 +7,7 @@ from pathlib import Path
 from openai import OpenAI
 from pydantic import BaseModel
 
-from config_models import AppConfig, DEFAULT_MODEL, normalize_qid
+from config_models import AppConfig, DEFAULT_MODEL
 from grading_helpers import (
     grade_only_list,
     effective_groups,
@@ -23,15 +23,16 @@ from grading_models import (
 from llm.json_runner import (
     MAX_JSON_LLM_ATTEMPTS,
     execute_llm_task,
+    extract_llm_questions,
 )
 from results_models import TokenUsage
-from results_models import GradedResult, graded_result_to_disk_dict
 from prompt_builder import (
     build_group_prompt,
     get_question_data,
     load_prompt,
     validate_question_groups,
 )
+from results_models import GradedResult
 from config_models import load_app_config
 from utils import (
     get_openai_client,
@@ -88,27 +89,15 @@ def _postprocess_grade_group(
     group: tuple[str, ...],
 ) -> list[QuestionGrade]:
     assert isinstance(parsed, GradingLlmResponse)
-    out: list[QuestionGrade] = []
-    seen: set[str] = set()
-    for item in parsed.grades:
-        try:
-            qid = normalize_qid(item.question_id)
-        except ValueError:
-            continue
-        if qid in seen:
-            continue
-        seen.add(qid)
-        out.append(
-            item.model_copy(
-                update={
-                    "question_id": qid,
-                }
-            )
-        )
-    missing = [q for q in group if q not in seen]
-    if missing:
-        raise ValueError(f"LLM response missing questions: {missing}")
-    return out
+    by_qid = extract_llm_questions(
+        parsed.grades,
+        expected_qids=group,
+        get_qid=lambda g: g.question_id,
+    )
+    return [
+        item.model_copy(update={"question_id": qid})
+        for qid, item in by_qid.items()
+    ]
 
 
 # ---------------------------------------------------------------------------

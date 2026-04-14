@@ -9,14 +9,14 @@ from typing import Any
 from openai import OpenAI
 from pydantic import BaseModel
 
-from config_models import AppConfig, normalize_qid
+from config_models import AppConfig
 from grading_models import (
     NO_SUBMISSION,
     SKIP_FEEDBACKS,
     GenaiLlmResponse,
     GenaiQuestionResult,
 )
-from llm.json_runner import MAX_JSON_LLM_ATTEMPTS, execute_llm_task, run_parallel_map
+from llm.json_runner import MAX_JSON_LLM_ATTEMPTS, execute_llm_task, extract_llm_questions, run_jobs
 from prompt_builder import build_genai_detection_user_message, load_prompt
 from results_models import GradedResult
 from results_store import load_results, save_results
@@ -61,21 +61,15 @@ def _postprocess_genai_detection(
     expected_qids: tuple[str, ...],
 ) -> list[GenaiQuestionResult]:
     assert isinstance(parsed, GenaiLlmResponse)
-    out: list[GenaiQuestionResult] = []
-    seen: set[str] = set()
-    for item in parsed.results:
-        try:
-            qid = normalize_qid(str(item.question_id))
-        except ValueError:
-            continue
-        if qid in seen:
-            continue
-        seen.add(qid)
-        out.append(item.model_copy(update={"question_id": qid}))
-    missing = [q for q in expected_qids if q not in seen]
-    if missing:
-        raise ValueError(f"GenAI detection response missing keys: {missing}")
-    return out
+    by_qid = extract_llm_questions(
+        parsed.results,
+        expected_qids=expected_qids,
+        get_qid=lambda item: str(item.question_id),
+    )
+    return [
+        item.model_copy(update={"question_id": qid})
+        for qid, item in by_qid.items()
+    ]
 
 
 def run_genai_detection(
@@ -240,33 +234,20 @@ def run_genai_detection(
 
         return (job.index, updated, 1, flagged, local_errors)
 
-    if workers <= 1 or len(jobs) <= 1:
-        for job in jobs:
-            idx, updated, processed, flagged, local_errors = _run_job(job)
-            errors.extend(local_errors)
-            if updated is None:
-                continue
-            students_processed += processed
-            questions_flagged += flagged
-            row = results[idx]
-            results[idx] = GradedResult.model_validate(
-                {**row.model_dump(mode="python"), "questions": updated}
-            )
-    else:
-        for idx, updated, processed, flagged, local_errors in run_parallel_map(
-            jobs,
-            _run_job,
-            max_workers=workers,
-        ):
-            errors.extend(local_errors)
-            if updated is None:
-                continue
-            students_processed += processed
-            questions_flagged += flagged
-            row = results[idx]
-            results[idx] = GradedResult.model_validate(
-                {**row.model_dump(mode="python"), "questions": updated}
-            )
+    for idx, updated, processed, flagged, local_errors in run_jobs(
+        jobs,
+        _run_job,
+        max_workers=workers,
+    ):
+        errors.extend(local_errors)
+        if updated is None:
+            continue
+        students_processed += processed
+        questions_flagged += flagged
+        row = results[idx]
+        results[idx] = GradedResult.model_validate(
+            {**row.model_dump(mode="python"), "questions": updated}
+        )
 
     save_results(graded_path, results)
     return {
