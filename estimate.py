@@ -3,7 +3,7 @@
 import json
 from typing import Any
 
-from config_models import AppConfig, DEFAULT_MODEL
+from config_models import AppConfig, DEFAULT_MODEL, load_solution_parsed
 from grading_helpers import effective_groups
 from token_usage import TokenUsage, usage_cost_usd
 from prompt_builder import build_group_prompt, estimate_tokens, load_prompt
@@ -51,12 +51,11 @@ def _tokens_from_messages(messages: list, model: str) -> int:
 
 def estimate_rubrics(config: AppConfig) -> dict:
     """Estimate tokens and cost for rubric generation."""
-    paths = get_assignment_output_paths(config)
-    solution_path = paths.solution_parsed
-    if not solution_path.exists():
+    try:
+        solution_parsed = load_solution_parsed(config)
+    except FileNotFoundError:
         return _estimate_error("Run parse first")
 
-    solution_parsed = json.loads(solution_path.read_text(encoding="utf-8"))
     grading_config = config.grading
     groups = effective_groups(grading_config)
     model = config.rubric_model or config.model or DEFAULT_MODEL
@@ -100,14 +99,16 @@ def estimate_rubrics(config: AppConfig) -> dict:
 def estimate_grade(config: AppConfig, student_name: str | None = None) -> dict:
     """Estimate tokens and cost for grading. If student_name is None, estimates pending bulk grading only."""
     paths = get_assignment_output_paths(config)
-    solution_path = paths.solution_parsed
     parsed_dir = paths.parsed_dir
-    if not solution_path.exists():
+    
+    try:
+        solution_parsed = load_solution_parsed(config)
+    except FileNotFoundError:
         return _estimate_error("Run parse first")
+    
     if not parsed_dir.exists():
         return _estimate_error("No parsed files. Run parse first.")
 
-    solution_parsed = json.loads(solution_path.read_text(encoding="utf-8"))
     grading_config = config.grading
     groups = effective_groups(grading_config)
 

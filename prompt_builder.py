@@ -121,6 +121,17 @@ def get_question_data(parsed: dict | ParsedNotebook, qid: str) -> dict | None:
     return None
 
 
+def build_genai_detection_user_message(
+    qids: list[str],
+    student_parsed: dict,
+    max_code_chars: int,
+) -> str | None:
+    """Moved to ``genai_detection.py``. Re-exported for backward compatibility."""
+    from genai_detection import build_genai_detection_user_message as _impl
+
+    return _impl(qids, student_parsed, max_code_chars)
+
+
 def validate_question_groups(
     groups: list[list[str]], solution_parsed: dict | ParsedNotebook
 ) -> list[str]:
