@@ -244,6 +244,3 @@ def extract_llm_questions(
         raise ValueError(f"LLM response missing questions: {missing}")
     return out
 
-
-# Backward-compatible aliases
-run_parallel_map = run_jobs

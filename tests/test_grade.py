@@ -17,7 +17,7 @@ from prompt_builder import (
 )
 from grade import compute_totals_from_questions, grade_student
 from batch_grader import grade_all_students
-from results_models import TokenUsage
+from token_usage import TokenUsage
 
 
 def _grade_response(*grades: tuple[str, float, str]) -> tuple:

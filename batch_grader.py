@@ -14,8 +14,8 @@ from grading_helpers import (
     effective_groups,
     needs_merge,
 )
-from results_models import (
-    GradedResult,
+from results_models import GradedResult
+from token_usage import (
     TokenUsage,
     detach_usage_from_graded_result,
     graded_usage_summary_event,

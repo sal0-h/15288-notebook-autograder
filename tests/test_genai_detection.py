@@ -9,7 +9,7 @@ import pytest
 from config_models import default_config, ensure_app_config
 from genai_detection import run_genai_detection
 from grading_models import GenaiLlmResponse, GenaiQuestionResult
-from results_models import TokenUsage
+from token_usage import TokenUsage
 
 
 def _minimal_parsed_student(qid: str = "1.1") -> dict:

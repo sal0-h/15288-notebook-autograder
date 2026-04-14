@@ -1,6 +1,6 @@
-"""Tests for results_models token usage utilities."""
+"""Tests for token usage utilities."""
 
-from results_models import (
+from token_usage import (
     GRADED_RESULT_USAGE_KEY,
     TokenUsage,
     detach_usage_from_graded_result,

@@ -1,8 +1,4 @@
-"""On-disk result schemas: graded results, parsed notebooks.
-
-Re-exports TokenUsage and usage helpers from token_usage for backward
-compatibility — new code should import from token_usage directly.
-"""
+"""On-disk result schemas: graded results, parsed notebooks."""
 
 from __future__ import annotations
 
@@ -10,15 +6,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
-# Re-export from token_usage for backward compatibility — new code should
-# import directly from token_usage.
-from token_usage import (  # noqa: F401
-    GRADED_RESULT_USAGE_KEY,
-    TokenUsage,
-    detach_usage_from_graded_result,
-    graded_usage_summary_event,
-    merge_graded_usage,
-)
+from token_usage import GRADED_RESULT_USAGE_KEY
 
 
 class Question(BaseModel):

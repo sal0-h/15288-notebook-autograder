@@ -199,17 +199,6 @@ class RubricEntry(BaseModel):
         return self
 
 
-# Rubric LLM response models moved to grading_models.py — re-export for
-# backward compatibility.
-from grading_models import (  # noqa: F401
-    RubricGroupLlmResponse,
-    RubricQuestionLlm,
-    RubricReviewItem,
-    RubricReviewQuestion,
-    RubricReviewResponse,
-)
-
-
 class AppConfig(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
