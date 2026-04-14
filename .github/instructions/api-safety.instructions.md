@@ -27,9 +27,9 @@ These boundaries prevent prompt-injection attacks where student code or output c
 ## Thread-Safety for Grading and Results
 
 Concurrent API requests can trigger simultaneous grading runs. Protect shared state:
-- Use `_grading_lock` before starting a new grading job (prevents duplicate or conflicting runs).
-- Use `_results_lock` when reading or writing `graded_results.json` (prevents partial-read corruption).
-- Use `_rubric_lock` when generating or updating rubrics.
+- Use `grading_lock` before starting a new grading job (prevents duplicate or conflicting runs).
+- Use `results_lock` when reading or writing `graded_results.json` (prevents partial-read corruption).
+- Use `rubric_lock` when generating or updating rubrics.
 
 Always acquire locks in a consistent order to avoid deadlocks: grading → results → rubric.
 
@@ -45,6 +45,8 @@ Without this, logs from different assignments will be mixed and hard to audit.
 ## Config Source of Truth
 
 The authoritative config for a live assignment is always `output/{assignment_name}/config.yaml`, not the root example. API read and write operations must target the assignment-scoped file.
+
+Config is cached in `api/state.py` via `get_active_app_config()`. After any save operation, call `state.invalidate_config_cache()` to ensure the next read reflects changes.
 
 ## Prompt Loading and Persistence
 

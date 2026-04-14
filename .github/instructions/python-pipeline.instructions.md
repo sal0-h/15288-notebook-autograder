@@ -15,7 +15,7 @@ Each pipeline module should have one clear responsibility:
 - **batch_grader.py**: Orchestrate sequential or parallel grading across students.
 - **export.py**: Write Gradescope JSON, Excel, and autograder artifacts.
 
-Keep modules focused. Share behavior across modules via **utils.py** (config I/O, logging) and **grading_helpers.py** (grade_only filtering; re-exported by utils).
+Keep modules focused. Share behavior across modules via **config_models.py** (config I/O, paths, `load_solution_parsed`), **utils.py** (logging, filename sanitization), and **grading_helpers.py** (grade_only filtering).
 
 ## Assignment-Scoped Artifacts
 
