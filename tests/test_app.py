@@ -13,10 +13,17 @@ from starlette.datastructures import UploadFile as StarletteUploadFile
 
 from api import state
 
-from api.constants import DEFAULT_UPLOAD_MB
+from api.helpers import resolve_solution_notebook_path
+from api.routers.pipeline_routes import DEFAULT_UPLOAD_MB
 from app import app
-from config_models import default_config
-from utils import DEFAULT_MODEL, ensure_app_config
+from config_models import (
+    DEFAULT_MODEL,
+    RubricEntry,
+    RubricItem,
+    default_config,
+    ensure_app_config,
+)
+from results_models import GradedResult
 
 
 def _active_assignment_pair(config_like: dict) -> tuple[dict, object]:
@@ -28,12 +35,9 @@ def _active_assignment_pair(config_like: dict) -> tuple[dict, object]:
 
 @contextmanager
 def patch_active_assignment(config_like: dict):
-    """Patch both active config accessors (routes use ``get_active_app_config`` for pipeline)."""
-    d, app = _active_assignment_pair(config_like)
-    with (
-        patch("api.state.get_active_config", return_value=d),
-        patch("api.state.get_active_app_config", return_value=app),
-    ):
+    """Patch active assignment accessor used by routes."""
+    _, app = _active_assignment_pair(config_like)
+    with patch("api.state.get_active_app_config", return_value=app):
         yield
 
 
@@ -79,6 +83,41 @@ def _full_config(tmp_path):
         "grading": {"question_groups": [["1.1"]], "grade_only": None},
         "rubrics": {},
     }
+
+
+class TestResolveSolutionNotebookPath:
+    def test_empty_or_whitespace_returns_none(self, tmp_path):
+        assert resolve_solution_notebook_path(tmp_path, "") is None
+        assert resolve_solution_notebook_path(tmp_path, None) is None
+        assert resolve_solution_notebook_path(tmp_path, "   ") is None
+
+    def test_relative_resolves_under_project_root(self, tmp_path):
+        nb = tmp_path / "output" / "Lab" / "sol.ipynb"
+        nb.parent.mkdir(parents=True)
+        nb.write_text("{}", encoding="utf-8")
+        got = resolve_solution_notebook_path(tmp_path, "output/Lab/sol.ipynb")
+        assert got is not None
+        assert got.resolve() == nb.resolve()
+
+
+class TestParseSolution:
+    def test_parse_solution_empty_notebook_path_returns_404(self, client, tmp_path):
+        with (
+            patch.object(state, "PROJECT_ROOT", tmp_path),
+            patch(
+                "api.state.get_active_app_config",
+                return_value=ensure_app_config(
+                    {
+                        **default_config("EmptySol"),
+                        "assignment_name": "EmptySol",
+                        "solution_notebook": "",
+                    }
+                ),
+            ),
+        ):
+            r = client.post("/parse-solution")
+        assert r.status_code == 404
+        assert "not set" in r.json()["detail"].lower()
 
 
 class TestPathTraversal:
@@ -159,8 +198,10 @@ class TestConfigEndpoints:
             patch.object(state, "PROJECT_ROOT", tmp_path),
             patch("api.routers.config_routes.save_config") as mock_save,
             patch(
-                "api.routers.config_routes.load_config",
-                return_value={"assignment_name": "NewLab", "model": DEFAULT_MODEL},
+                "api.routers.config_routes.load_app_config",
+                return_value=ensure_app_config(
+                    {"assignment_name": "NewLab", "model": DEFAULT_MODEL}
+                ),
             ),
         ):
             r = client.post("/load-or-create", json={"assignment_name": "NewLab"})
@@ -179,8 +220,10 @@ class TestConfigEndpoints:
         with (
             patch.object(state, "PROJECT_ROOT", tmp_path),
             patch(
-                "api.routers.config_routes.load_config",
-                return_value={"assignment_name": "ExistingLab", "model": DEFAULT_MODEL},
+                "api.routers.config_routes.load_app_config",
+                return_value=ensure_app_config(
+                    {"assignment_name": "ExistingLab", "model": DEFAULT_MODEL}
+                ),
             ) as mock_load,
         ):
             r = client.post("/load-or-create", json={"assignment_name": "ExistingLab"})
@@ -217,7 +260,10 @@ class TestConfigEndpoints:
         }
 
         with (
-            patch("api.state.get_active_config", return_value=existing),
+            patch(
+                "api.state.get_active_app_config",
+                return_value=ensure_app_config(existing),
+            ),
             patch.object(
                 state,
                 "_active_config_path",
@@ -267,7 +313,10 @@ class TestConfigEndpoints:
         }
 
         with (
-            patch("api.state.get_active_config", return_value=existing),
+            patch(
+                "api.state.get_active_app_config",
+                return_value=ensure_app_config(existing),
+            ),
             patch.object(
                 state,
                 "_active_config_path",
@@ -296,7 +345,7 @@ class TestConfigEndpoints:
                 Path("output/Test/config.yaml"),
             ),
             patch(
-                "api.routers.config_routes.load_config",
+                "api.routers.config_routes.load_app_config",
                 side_effect=ValueError("bad yaml"),
             ),
         ):
@@ -311,7 +360,9 @@ class TestConfigEndpoints:
                 "_active_config_path",
                 Path("output/Test/config.yaml"),
             ),
-            patch("api.state.get_active_config", side_effect=ValueError("bad yaml")),
+            patch(
+                "api.state.get_active_app_config", side_effect=ValueError("bad yaml")
+            ),
             patch("api.routers.config_routes.save_config") as mock_save,
         ):
             r = client.put(
@@ -389,9 +440,8 @@ class TestGradingLock:
         cfg = _full_config(tmp_path)
         mock_lock = MagicMock()
         mock_lock.acquire.return_value = False
-        d, app = _active_assignment_pair(cfg)
+        _, app = _active_assignment_pair(cfg)
         with (
-            patch("api.state.get_active_config", return_value=d),
             patch("api.state.get_active_app_config", return_value=app),
             patch.object(state, "grading_lock", mock_lock),
         ):
@@ -446,16 +496,16 @@ class TestGradeOneMerge:
             "grade_only_merge": True,
         }
 
-        returned = {
-            "student_name": "Alice",
-            "questions": {
+        returned = GradedResult(
+            student_name="Alice",
+            questions={
                 "1.1": {"score": 2, "max": 2, "feedback": "ok"},
                 "1.2": {"score": 2, "max": 2, "feedback": "new"},
             },
-            "total_score": 4,
-            "total_max": 4,
-            "summary_feedback": "Full marks.",
-        }
+            total_score=4,
+            total_max=4,
+            summary_feedback="Full marks.",
+        )
 
         with (
             patch_active_assignment(cfg),
@@ -470,8 +520,8 @@ class TestGradeOneMerge:
         assert mock_grade_student.called
         call_args = mock_grade_student.call_args[0]
         # merge_into is the 6th positional argument in api_grade_one call.
-        assert call_args[5]["student_name"] == "Alice"
-        assert call_args[5]["questions"]["1.2"]["feedback"] == "old"
+        assert call_args[5].student_name == "Alice"
+        assert call_args[5].questions["1.2"].feedback == "old"
 
     def test_grade_one_does_not_persist_internal_usage(self, client, tmp_path):
         parsed_dir = tmp_path / "parsed"
@@ -498,14 +548,14 @@ class TestGradeOneMerge:
         cfg["output_dir"] = str(output_dir)
         cfg["grading"] = {"question_groups": [["1.1"]], "grade_only": None}
 
-        graded_with_usage = {
-            "student_name": "Alice",
-            "questions": {"1.1": {"score": 2, "max": 2, "feedback": "ok"}},
-            "total_score": 2,
-            "total_max": 2,
-            "summary_feedback": "Full marks.",
-            "_usage": {"prompt_tokens": 11, "completion_tokens": 7},
-        }
+        graded_with_usage = GradedResult(
+            student_name="Alice",
+            questions={"1.1": {"score": 2, "max": 2, "feedback": "ok"}},
+            total_score=2,
+            total_max=2,
+            summary_feedback="Full marks.",
+            usage={"prompt_tokens": 11, "completion_tokens": 7},
+        )
 
         with (
             patch_active_assignment(cfg),
@@ -569,13 +619,13 @@ class TestGradeOneMerge:
             "grade_only_merge": True,
         }
 
-        returned = {
-            "student_name": "Alice",
-            "questions": {"1.1": {"score": 2, "max": 2, "feedback": "new"}},
-            "total_score": 2,
-            "total_max": 2,
-            "summary_feedback": "Full marks.",
-        }
+        returned = GradedResult(
+            student_name="Alice",
+            questions={"1.1": {"score": 2, "max": 2, "feedback": "new"}},
+            total_score=2,
+            total_max=2,
+            summary_feedback="Full marks.",
+        )
 
         mock_lock = MagicMock()
         mock_lock.__enter__.return_value = None
@@ -601,7 +651,10 @@ class TestRubricsEndpoints:
                 "items": [{"description": "Check plot.", "deduction": 2.0}],
             }
         }
-        with patch("api.state.get_active_config", return_value=mock_config):
+        with patch(
+            "api.state.get_active_app_config",
+            return_value=ensure_app_config(mock_config),
+        ):
             r = client.get("/rubrics")
         assert r.status_code == 200
         assert r.json() == {
@@ -615,7 +668,10 @@ class TestRubricsEndpoints:
         cfg = _full_config(tmp_path)
         cfg["rubrics"] = {}
         with (
-            patch("api.state.get_active_config", return_value=cfg),
+            patch(
+                "api.state.get_active_app_config",
+                return_value=ensure_app_config(cfg),
+            ),
             patch("api.routers.rubric_routes.save_config") as mock_save,
         ):
             r = client.put(
@@ -654,10 +710,10 @@ class TestRubricsEndpoints:
             patch(
                 "api.routers.rubric_routes.generate_rubrics",
                 return_value={
-                    "1.1": {
-                        "points": 2,
-                        "items": [{"description": "ok", "deduction": 2.0}],
-                    }
+                    "1.1": RubricEntry(
+                        points=2,
+                        items=[RubricItem(description="ok", deduction=2.0)],
+                    )
                 },
             ),
             patch("api.routers.rubric_routes.save_config"),
@@ -778,3 +834,29 @@ class TestExportEndpoint:
             r = client.post("/export")
         assert r.status_code == 200
         assert r.json().get("students") == 1
+
+
+class TestDetectGenai:
+    def test_post_detect_genai_returns_summary(self, client, mock_config, tmp_path):
+        out = tmp_path / "output"
+        out.mkdir(parents=True, exist_ok=True)
+        (out / "graded_results.json").write_text("[]")
+        mock_config["output_dir"] = str(out)
+        with (
+            patch_active_assignment(mock_config),
+            patch(
+                "api.routers.grade_routes.run_genai_detection",
+                return_value={
+                    "students_processed": 0,
+                    "questions_flagged": 0,
+                    "students_skipped": 0,
+                    "errors": [],
+                    "graded_results_path": str(out / "graded_results.json"),
+                },
+            ),
+        ):
+            r = client.post("/detect-genai")
+        assert r.status_code == 200
+        data = r.json()
+        assert data["students_processed"] == 0
+        assert "graded_results_path" in data

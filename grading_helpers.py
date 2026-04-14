@@ -1,11 +1,15 @@
-"""Grading config helpers: grade_only filtering, merge logic, effective groups."""
+"""Grading config helpers: grade_only filtering, merge logic, effective groups.
+
+Most logic now lives on GradingConfig methods. This module provides free-standing
+functions for callers that pass a GradingConfig (or groups + grade_only lists)
+rather than calling methods directly.
+"""
 
 from __future__ import annotations
 
-from typing import Any
-
-from config_models import get_config_field
+from config_models import GradingConfig
 from grading_models import GRADING_FAILED, SKIP_FEEDBACKS
+from results_models import GradedResult
 
 
 def filter_groups_by_grade_only(
@@ -22,39 +26,28 @@ def filter_groups_by_grade_only(
     ]
 
 
-def grade_only_list(grading_config: dict | Any) -> list[str] | None:
+def grade_only_list(grading_config: GradingConfig) -> list[str] | None:
     """Return grade_only list from grading config, or None."""
-    grade_only = get_config_field(grading_config, "grade_only")
-    return grade_only if grade_only else None
+    return grading_config.get_grade_only()
 
 
-def effective_groups(grading_config: dict | Any) -> list[list[str]]:
+def effective_groups(grading_config: GradingConfig) -> list[list[str]]:
     """Return question groups filtered by grade_only when set."""
-    groups = get_config_field(grading_config, "question_groups", [])
-    return filter_groups_by_grade_only(groups, grade_only_list(grading_config))
+    return grading_config.get_effective_groups()
 
 
-def is_grade_only_merge_enabled(grading_config: dict | Any) -> bool:
-    """True if grade_only_merge is on and grade_only is set."""
-    return bool(
-        get_config_field(grading_config, "grade_only_merge")
-        and grade_only_list(grading_config)
-    )
-
-
-def needs_merge(existing_result: dict | None, grade_only: list[str] | None) -> bool:
+def needs_merge(
+    existing_result: GradedResult | None, grade_only: list[str] | None
+) -> bool:
     """True if we need to (re)grade for grade_only (missing or retryable feedback)."""
     if not grade_only:
         return False
-    if not existing_result:
+    if existing_result is None:
         return True
-    questions = existing_result.get("questions", {})
     retryable = {SKIP_FEEDBACKS[0], GRADING_FAILED}
     for qid in set(grade_only):
-        if qid not in questions:
-            return True
-        feedback = (questions[qid].get("feedback") or "").strip()
-        if feedback in retryable:
+        q = existing_result.questions.get(qid)
+        if q is None or (q.feedback or "").strip() in retryable:
             return True
     return False
 
@@ -63,9 +56,3 @@ def skipped_feedback(grade_only: list[str] | None) -> str:
     """Canonical feedback for skipped questions (grade_only vs not)."""
     return SKIP_FEEDBACKS[0] if grade_only else SKIP_FEEDBACKS[1]
 
-
-# Backward-compatible aliases
-get_active_grade_only = grade_only_list
-get_effective_question_groups = effective_groups
-needs_grade_only_merge = needs_merge
-get_skipped_feedback = skipped_feedback

@@ -10,4 +10,5 @@ archive1
 archive2
 LabTest*
 HW*
-temp_scripts
+temp_scripts*.db
+*.sqlite3

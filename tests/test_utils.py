@@ -1,4 +1,4 @@
-"""Tests for utils.py: load_config, save_config, path resolution."""
+"""Tests for utils.py: load_app_config, save_config, path resolution."""
 
 import logging
 
@@ -7,17 +7,16 @@ from pathlib import Path
 import pytest
 import utils
 
+from config_models import AppConfig, AssignmentOutputPaths, ensure_app_config, get_assignment_output_paths, load_app_config
 from utils import (
-    AssignmentOutputPaths,
-    AppConfig,
-    app_config_to_yaml_data,
-    ensure_app_config,
-    get_assignment_output_paths,
-    load_app_config,
-    load_config,
+    sanitize_filename_component,
     save_config,
     setup_assignment_logging,
 )
+
+
+def _load_config_dict(config_path):
+    return load_app_config(config_path).model_dump(mode="python")
 
 
 class TestLoadConfig:
@@ -40,7 +39,7 @@ grading:
         archive = tmp_path / "archive"
         archive.mkdir()
         (archive / "sol.ipynb").write_text("{}", encoding="utf-8")
-        cfg = load_config(config_path)
+        cfg = _load_config_dict(config_path)
         assert "solution_notebook" in cfg
         assert (
             "archive" in cfg["solution_notebook"]
@@ -62,7 +61,7 @@ grading:
 """,
             encoding="utf-8",
         )
-        cfg = load_config(config_path)
+        cfg = _load_config_dict(config_path)
         assert "LabTest_2" in cfg["output_dir"]
         assert "submissions" in cfg["submissions_dir"]
         assert "parsed" in cfg["parsed_dir"]
@@ -82,13 +81,13 @@ grading:
 """,
             encoding="utf-8",
         )
-        cfg = load_config(config_path)
+        cfg = _load_config_dict(config_path)
         assert ".." not in cfg["output_dir"]
 
     def test_missing_config_raises_by_default(self, tmp_path):
         missing = tmp_path / "output" / "Missing" / "config.yaml"
         with pytest.raises(FileNotFoundError):
-            load_config(missing)
+            load_app_config(missing)
 
 
 class TestSaveConfig:
@@ -109,9 +108,9 @@ grading:
             encoding="utf-8",
         )
         (tmp_path / "sol.ipynb").write_text("{}", encoding="utf-8")
-        cfg = load_config(config_path)
+        cfg = _load_config_dict(config_path)
         save_config(cfg, config_path)
-        cfg2 = load_config(config_path)
+        cfg2 = _load_config_dict(config_path)
         assert cfg2.get("assignment_name") == cfg.get("assignment_name")
         assert "submissions" in str(cfg2.get("submissions_dir", ""))
 
@@ -120,7 +119,7 @@ grading:
         cfg = AppConfig(assignment_name="LabTest_3_S26")
 
         save_config(cfg, config_path)
-        loaded = load_config(config_path)
+        loaded = _load_config_dict(config_path)
 
         assert loaded["assignment_name"] == "LabTest_3_S26"
 
@@ -142,7 +141,7 @@ grading:
 
     def test_app_config_to_yaml_data_returns_plain_dict(self):
         cfg = AppConfig(assignment_name="Demo")
-        data = app_config_to_yaml_data(cfg)
+        data = cfg.model_dump(mode="python", exclude_none=True)
 
         assert isinstance(data, dict)
         assert data["assignment_name"] == "Demo"
@@ -178,7 +177,7 @@ output_dir: output
         }
 
         save_config(cfg, config_path)
-        root_cfg = load_config(config_path)
+        root_cfg = _load_config_dict(config_path)
         assert root_cfg["assignment_name"] == "Lab #1"
 
     def test_save_config_with_explicit_assignment_config_path(self, tmp_path):
@@ -244,7 +243,7 @@ output_dir: output
         }
 
         save_config(cfg, config_path)
-        loaded = load_config(config_path)
+        loaded = _load_config_dict(config_path)
 
         assert loaded["rubric_review"] is True
         assert loaded["include_reference_in_grading"] is True
@@ -291,6 +290,8 @@ output_dir: output
 
 class TestOpenAIClientConfig:
     def test_get_openai_client_uses_httpx_limits_and_timeout(self, monkeypatch):
+        import llm_client
+
         monkeypatch.setenv("key", "")
         monkeypatch.setenv("OPENAI_API_KEY", "test-key")
         captured = {}
@@ -304,10 +305,10 @@ class TestOpenAIClientConfig:
             captured["openai_kwargs"] = kwargs
             return "openai-client"
 
-        monkeypatch.setattr(utils.httpx, "Client", fake_httpx_client)
-        monkeypatch.setattr(utils, "OpenAI", fake_openai)
+        monkeypatch.setattr(llm_client.httpx, "Client", fake_httpx_client)
+        monkeypatch.setattr(llm_client, "OpenAI", fake_openai)
 
-        client = utils.get_openai_client(
+        client = llm_client.get_openai_client(
             max_retries=7,
             max_connections=11,
             max_keepalive_connections=9,
@@ -323,6 +324,15 @@ class TestOpenAIClientConfig:
         assert captured["openai_kwargs"]["api_key"] == "test-key"
         assert captured["openai_kwargs"]["max_retries"] == 7
         assert captured["openai_kwargs"]["http_client"] == "http-client"
+
+
+class TestSanitizeFilenameComponent:
+    def test_strips_forbidden_chars(self):
+        assert sanitize_filename_component('a/b:c*d?e"f<g>h|i') == "abcdefghi"
+
+    def test_if_empty(self):
+        assert sanitize_filename_component("///", if_empty="x") == "x"
+        assert sanitize_filename_component("Alice", if_empty="x") == "Alice"
 
 
 class TestAssignmentOutputPaths:
@@ -343,7 +353,7 @@ class TestAssignmentOutputPaths:
         assert paths.gradescope_dir == tmp_path / "gradescope"
 
     def test_accepts_dict_config(self, tmp_path):
-        cfg = {
+        raw = {
             "assignment_name": "HW1",
             "model": "gpt-4.1-mini",
             "solution_notebook": "",
@@ -359,7 +369,7 @@ class TestAssignmentOutputPaths:
             "rubrics": {},
         }
 
-        paths = get_assignment_output_paths(cfg)
+        paths = get_assignment_output_paths(ensure_app_config(raw))
 
         assert isinstance(paths, AssignmentOutputPaths)
         assert paths.output_dir == tmp_path

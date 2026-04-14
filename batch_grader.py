@@ -8,29 +8,60 @@ from typing import Generator
 
 from openai import OpenAI
 
-from llm.types import TokenUsage
-from llm.usage_helpers import (
-    detach_usage_from_graded_result,
-    graded_usage_summary_event,
-    merge_graded_usage,
+from config_models import AppConfig, DEFAULT_MODEL, load_solution_parsed
+from grading_helpers import (
+    grade_only_list,
+    effective_groups,
+    needs_merge,
 )
-from llm.parallel import iter_unordered_parallel_results
+from results_models import GradedResult, graded_result_to_disk_dict
+from token_usage import (
+    TokenUsage,
+    graded_usage_summary_event,
+)
+from llm.json_runner import run_jobs
 from prompt_builder import validate_question_groups
-from results_store import load_results_with_backup, save_results, update_student
+from results_store import load_results, save_results, update_student
 from utils import (
-    AppConfig,
-    ensure_app_config,
-    DEFAULT_MODEL,
-    get_active_grade_only,
-    get_effective_question_groups,
     get_openai_client,
-    is_grade_only_merge_enabled,
-    needs_grade_only_merge,
     get_job_logger,
     get_assignment_output_paths,
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _emit_working_event(student_name: str, index: int, total: int) -> dict:
+    """Emit a 'working' status event for a student."""
+    return {
+        "student": student_name,
+        "status": "working",
+        "result": None,
+        "error": None,
+        "index": index + 1,
+        "total": total,
+    }
+
+
+def _emit_usage_summary(
+    usage_total: TokenUsage, model: str, graded_count: int, logger_obj: logging.Logger
+) -> dict | None:
+    """
+    Emit a usage summary event if usage data exists; log it.
+    Returns the event dict or None if no tokens were tracked.
+    """
+    if not usage_total.has_tokens():
+        return None
+    cost_evt = graded_usage_summary_event(usage_total, model)
+    logger_obj.info(
+        "Grading complete: %d students, %d tokens (%.0f in / %.0f out), ~$%.4f",
+        graded_count,
+        usage_total.total_tokens,
+        usage_total.prompt_tokens,
+        usage_total.completion_tokens,
+        cost_evt["cost_usd"],
+    )
+    return cost_evt
 
 
 @dataclass(frozen=True)
@@ -41,7 +72,7 @@ class GradeQueue:
     solution_parsed: dict
     student_files: list[Path]
     to_grade: list[tuple[int, Path]]
-    results: list[dict]
+    results: list[GradedResult]
     results_by_name: dict[str, int]
     out_path: Path
     ungrouped: list[str]
@@ -49,51 +80,33 @@ class GradeQueue:
 
 
 def load_grade_queue(
-    config: AppConfig | dict, logger_obj: logging.Logger | None = None
+    cfg: AppConfig, logger_obj: logging.Logger | None = None
 ) -> GradeQueue:
     """
     Load solution + parsed students + existing results and compute the grade queue.
     Raises FileNotFoundError if solution_parsed.json is missing.
     """
-    cfg = ensure_app_config(config)
+    solution_parsed = load_solution_parsed(cfg)
     paths = get_assignment_output_paths(cfg)
-    solution_path = paths.solution_parsed
-    if not solution_path.exists():
-        raise FileNotFoundError(
-            f"Solution parsed not found: {solution_path}. Run the parse step first."
-        )
-    solution_parsed = json.loads(solution_path.read_text(encoding="utf-8"))
     parsed_dir = paths.parsed_dir
     student_files = sorted(parsed_dir.glob("*.json")) if parsed_dir.exists() else []
     out_path = paths.graded_results
-    raw = load_results_with_backup(out_path, logger_obj=logger_obj)
+    results: list[GradedResult] = load_results(out_path, logger_obj=logger_obj)
     grading_config = cfg.grading
 
-    if isinstance(raw, list):
-        results: list[dict] = raw
-        already_graded = {
-            r["student_name"]
-            for r in raw
-            if isinstance(r, dict) and "student_name" in r
-        }
-        results_by_name = {
-            r["student_name"]: idx
-            for idx, r in enumerate(raw)
-            if isinstance(r, dict) and "student_name" in r
-        }
-    else:
-        results = []
-        already_graded = set()
-        results_by_name = {}
+    already_graded = {r.student_name for r in results if r.student_name}
+    results_by_name = {
+        r.student_name: idx for idx, r in enumerate(results) if r.student_name
+    }
 
-    grade_only_merge = is_grade_only_merge_enabled(grading_config)
-    grade_only = get_active_grade_only(grading_config)
+    grade_only_merge = grading_config.grade_only_merge
+    grade_only = grade_only_list(grading_config)
 
     if grade_only_merge:
         to_grade = [
             (i, path)
             for i, path in enumerate(student_files)
-            if needs_grade_only_merge(
+            if needs_merge(
                 (
                     results[results_by_name[path.stem]]
                     if path.stem in results_by_name
@@ -109,7 +122,7 @@ def load_grade_queue(
             if path.stem not in already_graded
         ]
 
-    groups = get_effective_question_groups(grading_config)
+    groups = effective_groups(grading_config)
     ungrouped = validate_question_groups(groups, solution_parsed)
 
     return GradeQueue(
@@ -126,7 +139,7 @@ def load_grade_queue(
 
 
 def grade_all_students(
-    config: AppConfig | dict,
+    cfg: AppConfig,
     client: OpenAI | None = None,
     results_lock=None,
 ) -> Generator[dict, None, None]:
@@ -135,8 +148,7 @@ def grade_all_students(
     Yields progress events; saves graded_results.json after each student.
     When results_lock is provided (e.g. from app), uses it for thread-safe writes.
     """
-    logger = get_job_logger(config, __name__)
-    cfg = ensure_app_config(config)
+    logger = get_job_logger(cfg, __name__)
 
     # Import here to avoid circular dependency (grade imports batch_grader for main())
     from grade import grade_student  # noqa: PLC0415
@@ -168,9 +180,9 @@ def grade_all_students(
     ungrouped = gq.ungrouped
     grade_only_merge = gq.grade_only_merge
     grading_config = cfg.grading
-    grade_only = get_active_grade_only(grading_config)
+    grade_only = grade_only_list(grading_config)
 
-    def _store_result(student_name: str, result: dict) -> None:
+    def _store_result(student_name: str, result: GradedResult) -> None:
         """Update results list/index and persist — call with lock held if parallel."""
         update_student(results, student_name, result, logger_obj=logger)
         if student_name not in results_by_name:
@@ -228,17 +240,10 @@ def grade_all_students(
         graded_count = 0
         for i, path in to_grade:
             student_name = path.stem
-            yield {
-                "student": student_name,
-                "status": "working",
-                "result": None,
-                "error": None,
-                "index": i + 1,
-                "total": len(student_files),
-            }
+            yield _emit_working_event(student_name, i, len(student_files))
             try:
                 student_parsed = json.loads(path.read_text(encoding="utf-8"))
-                merge_into = (
+                existing = (
                     results[results_by_name[student_name]]
                     if student_name in results_by_name and grade_only_merge
                     else None
@@ -249,20 +254,26 @@ def grade_all_students(
                     cfg,
                     client,
                     ungrouped=ungrouped,
-                    merge_into=merge_into,
+                    merge_into=existing if existing else None,
                 )
-                usage_total = merge_graded_usage(usage_total, result)
-                result, _ = detach_usage_from_graded_result(result)
+                if result.usage:
+                    usage_total = usage_total.merged(
+                        TokenUsage.from_json_dict(result.usage)
+                    )
+                stored = result.model_copy(update={"usage": None})
                 if results_lock:
                     with results_lock:
-                        _store_result(student_name, result)
+                        _store_result(student_name, stored)
                 else:
-                    _store_result(student_name, result)
+                    _store_result(student_name, stored)
                 graded_count += 1
+                result_dict = stored.model_dump(
+                    mode="python", by_alias=True, exclude_none=True
+                )
                 yield {
                     "student": student_name,
                     "status": "done",
-                    "result": result,
+                    "result": result_dict,
                     "error": None,
                     "index": i + 1,
                     "total": len(student_files),
@@ -279,21 +290,13 @@ def grade_all_students(
                 }
 
         # Final usage summary
-        if usage_total.has_tokens():
-            cost_evt = graded_usage_summary_event(usage_total, model)
-            logger.info(
-                "Grading complete: %d students, %d tokens (%.0f in / %.0f out), ~$%.4f",
-                graded_count,
-                usage_total.total_tokens,
-                usage_total.prompt_tokens,
-                usage_total.completion_tokens,
-                cost_evt["cost_usd"],
-            )
-            yield cost_evt
+        summary_evt = _emit_usage_summary(usage_total, model, graded_count, logger)
+        if summary_evt:
+            yield summary_evt
     else:
         # Parallel grading — shared client is thread-safe (httpx.Client); connection pooling reduces latency
         def _grade_one(args):
-            i, path, merge_into = args
+            i, path, existing = args
             student_name = path.stem
             try:
                 student_parsed = json.loads(path.read_text(encoding="utf-8"))
@@ -303,7 +306,7 @@ def grade_all_students(
                     cfg,
                     client,
                     ungrouped=ungrouped,
-                    merge_into=merge_into,
+                    merge_into=existing if existing else None,
                 )
                 return (i, student_name, "done", result, None)
             except Exception as e:
@@ -324,15 +327,8 @@ def grade_all_students(
             for i, path in to_grade
         ]
         for i, path in to_grade:
-            yield {
-                "student": path.stem,
-                "status": "working",
-                "result": None,
-                "error": None,
-                "index": i + 1,
-                "total": len(student_files),
-            }
-        for i, student_name, status, result, error in iter_unordered_parallel_results(
+            yield _emit_working_event(path.stem, i, len(student_files))
+        for i, student_name, status, result, error in run_jobs(
             to_grade_with_merge,
             _grade_one,
             max_workers=workers,
@@ -343,32 +339,31 @@ def grade_all_students(
                         "Worker returned done without result for %s", student_name
                     )
                     continue
-                usage_total = merge_graded_usage(usage_total, result)
-                result, _ = detach_usage_from_graded_result(result)
-                assert result is not None  # status == "done" always has a dict result
+                if result.usage:
+                    usage_total = usage_total.merged(
+                        TokenUsage.from_json_dict(result.usage)
+                    )
+                stored = result.model_copy(update={"usage": None})
                 if results_lock:
                     with results_lock:
-                        _store_result(student_name, result)
+                        _store_result(student_name, stored)
                 else:
-                    _store_result(student_name, result)
+                    _store_result(student_name, stored)
                 graded_count += 1
+            result_dict = (
+                graded_result_to_disk_dict(stored)
+                if status == "done" and result is not None
+                else None
+            )
             yield {
                 "student": student_name,
                 "status": status,
-                "result": result,
+                "result": result_dict,
                 "error": error,
                 "index": i + 1,
                 "total": len(student_files),
             }
 
-        if usage_total.has_tokens():
-            cost_evt = graded_usage_summary_event(usage_total, model)
-            logger.info(
-                "Grading complete: %d students, %d tokens (%.0f in / %.0f out), ~$%.4f",
-                graded_count,
-                usage_total.total_tokens,
-                usage_total.prompt_tokens,
-                usage_total.completion_tokens,
-                cost_evt["cost_usd"],
-            )
-            yield cost_evt
+        summary_evt = _emit_usage_summary(usage_total, model, graded_count, logger)
+        if summary_evt:
+            yield summary_evt

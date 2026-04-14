@@ -17,13 +17,18 @@ from pydantic import ValidationError
 
 from config_models import default_config
 from parse_notebook import get_all_question_ids, get_total_points
-from pipeline_runner import run_calibrate_step, run_export, run_gather, run_parse
+from pipeline_runner import (
+    run_calibrate_step,
+    run_export,
+    run_gather,
+    run_genai_detection,
+    run_parse,
+)
+from config_models import load_app_config, sanitize_assignment_name
 from utils import (
     get_assignment_output_paths,
-    load_app_config,
     save_config,
     setup_assignment_logging,
-    sanitize_assignment_name,
 )
 
 # -----------------------------------------------------------------------------
@@ -83,7 +88,15 @@ Examples:
     parser.add_argument(
         "--steps",
         nargs="+",
-        choices=["gather", "parse", "generate-rubrics", "grade", "calibrate", "export"],
+        choices=[
+            "gather",
+            "parse",
+            "generate-rubrics",
+            "grade",
+            "detect-genai",
+            "calibrate",
+            "export",
+        ],
         default=["parse", "grade", "export"],
         help="Pipeline steps to run (default: parse grade export)",
     )
@@ -176,11 +189,11 @@ Examples:
             )
 
     if "generate-rubrics" in steps:
-        from rubric import generate_rubrics
+        from rubric_generate import generate_rubrics
 
         rubrics = generate_rubrics(cfg)
         merged = cfg.model_dump(mode="python")
-        merged["rubrics"] = rubrics
+        merged["rubrics"] = {qid: e.model_dump() for qid, e in rubrics.items()}
         save_config(merged, config_path)
         cfg = load_app_config(config_path)
         print(f"Generate rubrics: {len(rubrics)} questions")
@@ -195,6 +208,16 @@ Examples:
             elif evt["status"] == "error":
                 print(f"  ✗ {evt['student']}: {evt['error']}")
         print("Grade: done")
+
+    if "detect-genai" in steps:
+        summary = run_genai_detection(cfg)
+        print(
+            f"GenAI detection: {summary['students_processed']} students processed, "
+            f"{summary['questions_flagged']} question(s) flagged, "
+            f"{summary['students_skipped']} skipped"
+        )
+        for err in summary.get("errors") or []:
+            logging.warning("%s", err)
 
     if "calibrate" in steps:
         flagged = run_calibrate_step(cfg)

@@ -5,6 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException
 
 from api import state
+from api.helpers import require_active_config
 from api.validation import parse_student_name_path_param
 from pipeline_runner import run_estimate_grade, run_estimate_rubrics
 
@@ -22,14 +23,14 @@ def _estimate_or_http_error(result: dict) -> dict:
 @router.get("/estimate/rubrics")
 def api_estimate_rubrics():
     """Estimate tokens and cost for rubric generation."""
-    cfg = state.get_active_app_config()
+    cfg = require_active_config()
     return _estimate_or_http_error(run_estimate_rubrics(cfg))
 
 
 @router.get("/estimate/grade")
 def api_estimate_grade_all():
     """Estimate tokens and cost for grading all students."""
-    cfg = state.get_active_app_config()
+    cfg = require_active_config()
     return _estimate_or_http_error(run_estimate_grade(cfg))
 
 
@@ -37,5 +38,5 @@ def api_estimate_grade_all():
 def api_estimate_grade_one(student_name: str):
     """Estimate tokens and cost for re-grading one student."""
     student_name = parse_student_name_path_param(student_name)
-    cfg = state.get_active_app_config()
+    cfg = require_active_config()
     return _estimate_or_http_error(run_estimate_grade(cfg, student_name=student_name))

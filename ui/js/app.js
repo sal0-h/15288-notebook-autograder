@@ -8,6 +8,11 @@ function syncPanelInert(panelEl, isActive) {
 
 function switchToTab(tabEl) {
     if (!tabEl || !tabEl.dataset.tab) return;
+    // Guard unsaved Review edits before switching away
+    if (typeof reviewDirty !== "undefined" && reviewDirty) {
+        if (!confirm("You have unsaved changes in Review. Discard?")) return;
+        reviewDirty = false;
+    }
     const tabId = tabEl.dataset.tab;
     document.querySelectorAll(".tab[data-tab]").forEach(x => {
         x.classList.toggle("active", x === tabEl);
@@ -121,6 +126,17 @@ function _populateSetupFields(cfg) {
     } else {
         rubricModelSelect.value = "";
     }
+    const genaiModelSelect = document.getElementById("setupGenaiModel");
+    const genaiModel = (setupConfig.genai_detection_model || "").trim() || "gpt-4.1-mini";
+    const hasGenaiOpt = Array.from(genaiModelSelect.options).some(o => o.value === genaiModel);
+    if (hasGenaiOpt) genaiModelSelect.value = genaiModel;
+    else {
+        const opt = document.createElement("option");
+        opt.value = genaiModel;
+        opt.textContent = genaiModel;
+        genaiModelSelect.appendChild(opt);
+        genaiModelSelect.value = genaiModel;
+    }
     document.getElementById("setupRubricReviewCheck").checked = setupConfig.rubric_review !== false;
     document.getElementById("setupIncludeReferenceCheck").checked = setupConfig.include_reference_in_grading === true;
     setupQuestionGroups = (setupConfig.grading || {}).question_groups || [];
@@ -208,6 +224,17 @@ async function doLoadAssignment() {
 }
 
 document.getElementById("setupLoadBtn").onclick = () => doLoadAssignment();
+
+document.getElementById("setupResetBtn").onclick = async () => {
+    if (!confirm("Reset all config fields to defaults? Your rubrics and graded results are NOT affected.")) return;
+    try {
+        const r = await fetchWithRetry(API + "/config/default");
+        const data = await r.json();
+        _populateSetupFields(data);
+    } catch (e) {
+        alert("Failed to load defaults: " + e.message);
+    }
+};
 
 function updateOutputDirHint() {
     const name = document.getElementById("setupAssignmentName").value.trim() || "default";
@@ -384,6 +411,7 @@ document.getElementById("setupSaveBtn").onclick = async () => {
     setupConfig.assignment_name = document.getElementById("setupAssignmentName").value.trim() || setupConfig.assignment_name || "default";
     setupConfig.model = document.getElementById("setupModel").value;
     setupConfig.rubric_model = document.getElementById("setupRubricModel").value || "";
+    setupConfig.genai_detection_model = document.getElementById("setupGenaiModel").value || "gpt-4.1-mini";
     setupConfig.rubric_review = document.getElementById("setupRubricReviewCheck").checked;
     setupConfig.include_reference_in_grading = document.getElementById("setupIncludeReferenceCheck").checked;
     setupConfig.workers = Math.max(1, parseInt(document.getElementById("setupWorkersInput").value, 10) || 1);
@@ -898,9 +926,15 @@ async function pollGradeProgress() {
 
 document.getElementById("gradeBtn").onclick = async () => {
     const list = document.getElementById("gradeProgress");
+    const genaiBtn = document.getElementById("genaiDetectBtn");
+    const autoGenai = document.getElementById("genaiAutoRun");
     list.innerHTML = "";
+    // Track results for summary
+    const gradeResults = [];
+    let gradeErrors = 0;
     const btn = document.getElementById("gradeBtn");
     setLoading(btn, true, "Grading…");
+    genaiBtn.disabled = true;
     gradeStreamActive = true;
     stopGradePolling();
     try {
@@ -941,6 +975,7 @@ document.getElementById("gradeBtn").onclick = async () => {
                 list.appendChild(div);
             } else if (data.status === "done" && data.result) {
                 const r = data.result;
+                gradeResults.push({ score: r.total_score, max: r.total_max, name: r.student_name });
                 const existing = list.querySelector(`[data-student="${CSS.escape(r.student_name)}"]`);
                 const div = existing || document.createElement("div");
                 div.className = "progress-item done";
@@ -948,6 +983,7 @@ document.getElementById("gradeBtn").onclick = async () => {
                 div.innerHTML = `<span>${escHtml(r.student_name)}</span><span style="font-weight:600">${r.total_score}/${r.total_max}</span>`;
                 if (!existing) list.appendChild(div);
             } else if (data.status === "error") {
+                gradeErrors++;
                 const existing = list.querySelector(`[data-student="${CSS.escape(student)}"]`);
                 const div = existing || document.createElement("div");
                 div.className = "progress-item error";
@@ -963,6 +999,26 @@ document.getElementById("gradeBtn").onclick = async () => {
             gradeStreamActive = false;
             stopGradePolling();
             setLoading(btn, false, "Start Grading");
+            genaiBtn.disabled = false;
+            // Show grading summary banner
+            if (gradeResults.length > 0) {
+                const scores = gradeResults.map(r => r.max > 0 ? (r.score / r.max) * 100 : 0);
+                const avg = scores.reduce((a, b) => a + b, 0) / scores.length;
+                const min = Math.min(...scores);
+                const max = Math.max(...scores);
+                const pass = scores.filter(s => s >= 50).length;
+                const div = document.createElement("div");
+                div.className = "progress-item done grade-summary";
+                div.innerHTML = `<strong>Summary:</strong> ${gradeResults.length} graded`
+                    + (gradeErrors > 0 ? `, ${gradeErrors} error(s)` : "")
+                    + ` · Avg: ${avg.toFixed(1)}% · Min: ${min.toFixed(0)}% · Max: ${max.toFixed(0)}%`
+                    + ` · ≥50%: ${pass}/${gradeResults.length}`;
+                list.appendChild(div);
+                list.scrollTop = list.scrollHeight;
+            }
+            if (autoGenai && autoGenai.checked) {
+                runGenaiDetection("Auto-run after grading");
+            }
         });
         ev.onerror = () => {
             ev.close();
@@ -970,6 +1026,7 @@ document.getElementById("gradeBtn").onclick = async () => {
             gradeStreamActive = false;
             stopGradePolling();
             setLoading(btn, false, "Start Grading");
+            genaiBtn.disabled = false;
             if (list.querySelectorAll(".progress-item").length === 0) {
                 list.innerHTML = "<p class='status-warning'>Connection failed. Grading may already be in progress in another tab.</p>";
             }
@@ -980,7 +1037,62 @@ document.getElementById("gradeBtn").onclick = async () => {
         stopGradePolling();
         list.innerHTML = `<p class="status-error">Error: ${escHtml(e.message)}</p>`;
         setLoading(btn, false, "Start Grading");
+        genaiBtn.disabled = false;
     }
+};
+
+function setGenaiStatus(message, kind = "info") {
+    const el = document.getElementById("genaiStatus");
+    if (!el) return;
+    if (!message) {
+        el.textContent = "";
+        el.className = "text-muted-sm mb-2";
+        return;
+    }
+    el.textContent = message;
+    el.className = `genai-status mb-2 ${kind}`;
+}
+
+async function runGenaiDetection(sourceLabel = "Manual run") {
+    const btn = document.getElementById("genaiDetectBtn");
+    setLoading(btn, true, "Detecting…");
+    setGenaiStatus(`${sourceLabel}: running GenAI detection…`, "info");
+    try {
+        const r = await fetchWithRetry(API + "/detect-genai", { method: "POST" });
+        if (!r.ok) {
+            const err = await r.json().catch(() => ({}));
+            const detail = err.detail;
+            const msg = typeof detail === "string" ? detail : (detail ? JSON.stringify(detail) : r.statusText);
+            throw new Error(msg);
+        }
+        const data = await r.json();
+        const warnings = (data.errors && data.errors.length) ? data.errors.length : 0;
+        const msg = `GenAI detection complete: ${data.students_processed || 0} students processed, ${data.questions_flagged || 0} flag(s), ${data.students_skipped || 0} skipped${warnings ? `, ${warnings} warning(s)` : ""}.`;
+        setGenaiStatus(msg, warnings ? "info" : "success");
+
+        // Keep review list/flags in sync if the user is actively reviewing.
+        if (Array.isArray(reviewData) && reviewData.length) {
+            try {
+                await loadReviewAndCalibration();
+                if (document.getElementById("panel-review")?.classList.contains("active")) {
+                    renderStudentList();
+                    if (currentReviewIdx >= 0 && currentReviewIdx < reviewData.length) {
+                        showReviewDetail(currentReviewIdx);
+                    }
+                }
+            } catch (_) {
+                // Non-fatal: detection succeeded even if review refresh fails.
+            }
+        }
+    } catch (e) {
+        setGenaiStatus(`GenAI detection failed: ${e.message || String(e)}`, "error");
+    } finally {
+        setLoading(btn, false, "Run GenAI detection");
+    }
+}
+
+document.getElementById("genaiDetectBtn").onclick = async () => {
+    await runGenaiDetection("Manual run");
 };
 
 document.addEventListener("visibilitychange", () => {
@@ -1001,6 +1113,17 @@ let currentReviewIdx = -1;
 let currentQids = [];
 let currentQidIdx = 0;
 let reviewDirty = false;
+
+function getQuestionTypeFromParsed(studentName, qid) {
+    const p = parsedCache[studentName];
+    if (!p || !p.sections) return null;
+    for (const secData of Object.values(p.sections)) {
+        if (secData.questions && secData.questions[qid]) {
+            return secData.questions[qid].question_type || null;
+        }
+    }
+    return null;
+}
 
 function calibrationLookup() {
     const m = {};
@@ -1107,6 +1230,7 @@ function getStudentFlagReasons(s) {
         const q = qs[qid];
         if (q.requires_review) reasons.push({ qid, type: "needs_review" });
         else if ((q.confidence || "").toLowerCase() === "low") reasons.push({ qid, type: "low_confidence" });
+        if (q.suspicious_genai) reasons.push({ qid, type: "genai_suspicion" });
     }
     const lookup = calibrationLookup();
     for (const qid of gradedQids) {
@@ -1126,6 +1250,10 @@ function formatFlagReasons(reasons) {
         else if (r.type === "outlier" && !seen.has("outlier_" + r.flag_reason)) {
             label = r.flag_reason === "low" ? "outlier (below mean)" : "outlier (above mean)";
             seen.add("outlier_" + (r.flag_reason || ""));
+        }
+        else if (r.type === "genai_suspicion" && !seen.has("genai_suspicion")) {
+            label = "GenAI flag";
+            seen.add("genai_suspicion");
         }
         if (label) parts.push(label);
     }
@@ -1153,6 +1281,9 @@ function formatQuestionFlagsTitle(qid, s) {
         } else if (r.type === "outlier" && !seen.has("out")) {
             parts.push(r.flag_reason === "low" ? "outlier (below mean)" : "outlier (above mean)");
             seen.add("out");
+        } else if (r.type === "genai_suspicion" && !seen.has("ga")) {
+            parts.push("GenAI flag");
+            seen.add("ga");
         }
     }
     return parts.join(", ");
@@ -1165,11 +1296,13 @@ function getQuestionPillFlagClass(qid, s) {
     const nr = rs.some(r => r.type === "needs_review");
     const out = rs.some(r => r.type === "outlier");
     const lc = rs.some(r => r.type === "low_confidence");
-    const nTypes = (nr ? 1 : 0) + (out ? 1 : 0) + (lc ? 1 : 0);
+    const ga = rs.some(r => r.type === "genai_suspicion");
+    const nTypes = (nr ? 1 : 0) + (out ? 1 : 0) + (lc ? 1 : 0) + (ga ? 1 : 0);
     if (nTypes > 1) return " review-v2-qpill--f-multi";
     if (nr) return " review-v2-qpill--f-nr";
     if (out) return " review-v2-qpill--f-out";
     if (lc) return " review-v2-qpill--f-lc";
+    if (ga) return " review-v2-qpill--f-genai";
     return "";
 }
 
@@ -1181,11 +1314,13 @@ function passesReviewFilters(s) {
     const needOutlier = document.getElementById("reviewFilterOutlier")?.checked;
     const needLC = document.getElementById("reviewFilterLowConf")?.checked;
     const needNR = document.getElementById("reviewFilterNeedsReview")?.checked;
-    if (!needOutlier && !needLC && !needNR) return true;
+    const needGenai = document.getElementById("reviewFilterGenai")?.checked;
+    if (!needOutlier && !needLC && !needNR && !needGenai) return true;
     return Boolean(
         (needOutlier && types.has("outlier"))
         || (needLC && types.has("low_confidence"))
         || (needNR && types.has("needs_review"))
+        || (needGenai && types.has("genai_suspicion"))
     );
 }
 
@@ -1256,8 +1391,40 @@ window.recalcTotal = function() {
     if (el) el.textContent = Math.round(total * 100) / 100;
 };
 
+/** Jupyter may store image payload base64 as a string or list of fragments. */
+function normalizeNotebookBase64(raw) {
+    if (raw == null || raw === "") return "";
+    if (Array.isArray(raw)) return raw.join("");
+    return String(raw);
+}
+
+/** HTML for plot images from parse_notebook `answer_cells[].images` (mime + base64). */
+function buildReviewAnswerImagesHtml(answerCells) {
+    if (!Array.isArray(answerCells) || answerCells.length === 0) return "";
+    const parts = [];
+    let n = 0;
+    for (const cell of answerCells) {
+        const imgs = cell && cell.images;
+        if (!Array.isArray(imgs)) continue;
+        for (const img of imgs) {
+            if (!img) continue;
+            const mime = img.mime === "image/jpeg" ? "image/jpeg" : "image/png";
+            const b64 = normalizeNotebookBase64(img.base64);
+            if (!b64) continue;
+            n += 1;
+            const src = `data:${mime};base64,${b64}`;
+            parts.push(
+                `<figure class="review-v2-output-fig"><img class="review-v2-output-img" src="${src}" alt="Notebook output figure ${n}" loading="lazy"></figure>`
+            );
+        }
+    }
+    if (!parts.length) return "";
+    return `<div class="review-v2-output-images">${parts.join("")}</div>`;
+}
+
 function renderQuestionContent(qid, q, parsed, studentName) {
     let qMarkdown = "", studentCode = "", studentOutput = "", studentMd = "";
+    let answerCells = [];
     if (parsed) {
         for (const secData of Object.values(parsed.sections || {})) {
             if (secData.questions && secData.questions[qid]) {
@@ -1266,21 +1433,27 @@ function renderQuestionContent(qid, q, parsed, studentName) {
                 studentCode = pq.answer_code_concat || "";
                 studentOutput = pq.answer_text_concat || "";
                 studentMd = pq.answer_markdown_concat || "";
+                answerCells = pq.answer_cells || [];
                 break;
             }
         }
     }
+    const outputImagesHtml = buildReviewAnswerImagesHtml(answerCells);
     let html = "";
     if (qMarkdown) html += `<div class="review-v2-section"><div class="review-v2-section-label">Question</div><div class="review-v2-qstatement">${renderMarkdown(qMarkdown)}</div></div>`;
     if (studentCode) {
         html += `<div class="review-v2-section"><div class="review-v2-section-label">Student Code</div><pre class="review-v2-code"><code class="language-python">${escHtml(studentCode)}</code></pre></div>`;
     }
-    if (studentOutput) {
-        const trunc = 600;
-        const isLong = studentOutput.length > trunc;
-        const show = isLong ? studentOutput.slice(0, trunc) + "\n…" : studentOutput;
-        html += `<div class="review-v2-section"><div class="review-v2-section-label">Output</div><pre class="review-v2-output" id="reviewOutput-${qid}">${escHtml(show)}</pre>`;
-        if (isLong) html += `<button type="button" class="btn btn-secondary" style="font-size:0.8rem;padding:4px 8px" data-toggle-output="${qid}">Show all</button>`;
+    if (studentOutput || outputImagesHtml) {
+        html += `<div class="review-v2-section"><div class="review-v2-section-label">Output</div>`;
+        if (outputImagesHtml) html += outputImagesHtml;
+        if (studentOutput) {
+            const trunc = 600;
+            const isLong = studentOutput.length > trunc;
+            const show = isLong ? studentOutput.slice(0, trunc) + "\n…" : studentOutput;
+            html += `<pre class="review-v2-output" id="reviewOutput-${qid}">${escHtml(show)}</pre>`;
+            if (isLong) html += `<button type="button" class="btn btn-secondary" style="font-size:0.8rem;padding:4px 8px" data-toggle-output="${qid}">Show all</button>`;
+        }
         html += `</div>`;
     }
     if (studentMd) html += `<div class="review-v2-section"><div class="review-v2-section-label">Written Answer</div><div class="review-v2-qstatement">${renderMarkdown(studentMd)}</div></div>`;
@@ -1324,7 +1497,11 @@ function renderReviewContent() {
     const outlierBanner = outlier
         ? `<div class="outlier-banner">Outlier (${outlier.flag_reason === "high" ? "above" : "below"} mean): ${outlier.score}/${outlier.max || max}, μ ${outlier.mean} ± ${outlier.std}</div>`
         : "";
-    if (work) work.innerHTML = outlierBanner + renderQuestionContent(qid, q, parsed, s.student_name);
+    const genaiNote = (q.suspicious_genai_note || "").trim();
+    const genaiBanner = q.suspicious_genai
+        ? `<div class="genai-banner">Possible GenAI-style answer (triage only; not a conduct verdict).${genaiNote ? ` <span class="genai-banner-note">${escHtml(genaiNote)}</span>` : ""}</div>`
+        : "";
+    if (work) work.innerHTML = outlierBanner + genaiBanner + renderQuestionContent(qid, q, parsed, s.student_name);
     if (maxLive) maxLive.textContent = String(max);
     if (scoreLive) scoreLive.textContent = String(score);
     if (dedRow) {
@@ -1424,10 +1601,14 @@ function renderQPills() {
     container.innerHTML = currentQids.map((qid, i) => {
         const flagCls = getQuestionPillFlagClass(qid, s);
         const flagTitle = formatQuestionFlagsTitle(qid, s);
+        const qType = getQuestionTypeFromParsed(s.student_name, qid);
+        const typeLabel = qType && qType !== "mixed" ? `[${qType}]` : "";
+        const titleParts = [qid, typeLabel, flagTitle].filter(Boolean).join(" · ");
         const labelExtra = flagTitle ? ` — ${flagTitle}` : "";
-        const aria = `Question ${qid}${labelExtra}`;
-        const titleAttr = flagTitle ? ` title="${escHtml(`${qid}: ${flagTitle}`)}"` : "";
-        return `<button type="button" class="review-v2-qpill${i === currentQidIdx ? " active" : ""}${flagCls}" data-qidx="${i}" aria-label="${escHtml(aria)}" aria-pressed="${i === currentQidIdx ? "true" : "false"}"${titleAttr}>${escHtml(qid)}</button>`;
+        const aria = `Question ${qid}${typeLabel ? ` (${qType})` : ""}${labelExtra}`;
+        const titleAttr = ` title="${escHtml(titleParts)}"`;
+        const pillLabel = typeLabel ? `${qid} <span class="qpill-type">${escHtml(typeLabel)}</span>` : escHtml(qid);
+        return `<button type="button" class="review-v2-qpill${i === currentQidIdx ? " active" : ""}${flagCls}" data-qidx="${i}" aria-label="${escHtml(aria)}" aria-pressed="${i === currentQidIdx ? "true" : "false"}"${titleAttr}>${pillLabel}</button>`;
     }).join("");
     container.querySelectorAll(".review-v2-qpill").forEach(btn => {
         btn.onclick = () => {
@@ -1527,6 +1708,8 @@ window.regradeStudent = async function() {
     if (!confirm("Re-grade this student? This will overwrite current scores with new LLM grades.")) return;
     const btn = document.getElementById("regradeStudentBtn");
     if (!btn) return;
+    const oldScore = s.total_score;
+    const oldMax = s.total_max;
     setLoading(btn, true, "Re-grading…");
     try {
         const r = await fetchWithRetry(API + "/grade/" + encodeURIComponent(s.student_name), { method: "POST" });
@@ -1538,11 +1721,65 @@ window.regradeStudent = async function() {
             reviewData[currentReviewIdx] = data.result;
             showReviewDetail(currentReviewIdx);
             renderStudentList();
+            // Show before/after score diff
+            const newScore = data.result.total_score;
+            const newMax = data.result.total_max;
+            const diff = newScore - oldScore;
+            const diffStr = diff >= 0 ? `+${diff.toFixed(1)}` : diff.toFixed(1);
+            const saveEl = document.getElementById("reviewSaveFeedback");
+            if (saveEl) {
+                saveEl.textContent = `Re-graded: ${oldScore}/${oldMax} → ${newScore}/${newMax} (${diffStr})`;
+                saveEl.className = "review-save-feedback " + (diff >= 0 ? "status-ok" : "status-warning");
+                setTimeout(() => { saveEl.textContent = ""; saveEl.className = "review-save-feedback"; }, 8000);
+            }
         }
     } catch (e) {
         document.getElementById("reviewError").innerHTML = `<p class="status-error">Re-grade failed: ${escHtml(e.message)}</p>`;
     } finally {
         setLoading(btn, false, "Re-grade student");
+    }
+};
+
+document.getElementById("reviewBatchRegradeBtn").onclick = async function() {
+    if (!reviewData || !reviewData.length) return;
+    // Find students with needs_review or low confidence on any question
+    const flagged = reviewData.filter(s => {
+        if (!s.questions) return false;
+        return Object.values(s.questions).some(q =>
+            q.requires_review || q.confidence === "low"
+        );
+    });
+    if (!flagged.length) {
+        alert("No flagged students found (needs_review or low confidence).");
+        return;
+    }
+    if (!confirm(`Re-grade ${flagged.length} flagged student(s)? This will overwrite their current scores.`)) return;
+    const btn = document.getElementById("reviewBatchRegradeBtn");
+    setLoading(btn, true, `Re-grading 0/${flagged.length}…`);
+    const saveEl = document.getElementById("reviewSaveFeedback");
+    let done = 0, errors = 0;
+    for (const s of flagged) {
+        try {
+            const r = await fetchWithRetry(API + "/grade/" + encodeURIComponent(s.student_name), { method: "POST" });
+            const data = await r.json();
+            if (data.detail) throw new Error(data.detail);
+            if (data.result) {
+                const idx = reviewData.findIndex(x => x.student_name === s.student_name);
+                if (idx >= 0) reviewData[idx] = data.result;
+            }
+            done++;
+        } catch (e) {
+            errors++;
+        }
+        btn.textContent = `Re-grading ${done + errors}/${flagged.length}…`;
+    }
+    setLoading(btn, false, "Re-grade flagged");
+    renderStudentList();
+    if (currentReviewIdx >= 0) showReviewDetail(currentReviewIdx);
+    if (saveEl) {
+        saveEl.textContent = `Batch re-grade: ${done} succeeded, ${errors} failed (of ${flagged.length})`;
+        saveEl.className = "review-save-feedback " + (errors ? "status-warning" : "status-ok");
+        setTimeout(() => { saveEl.textContent = ""; saveEl.className = "review-save-feedback"; }, 10000);
     }
 };
 
@@ -1596,7 +1833,7 @@ document.getElementById("reviewCalibrateBtn").onclick = async () => {
 
 document.getElementById("reviewFlaggedFirst").onchange = () => renderStudentList();
 
-["reviewStudentFilter", "reviewFilterOutlier", "reviewFilterLowConf", "reviewFilterNeedsReview"].forEach(id => {
+["reviewStudentFilter", "reviewFilterOutlier", "reviewFilterLowConf", "reviewFilterNeedsReview", "reviewFilterGenai"].forEach(id => {
     const el = document.getElementById(id);
     if (!el) return;
     el.addEventListener(id === "reviewStudentFilter" ? "input" : "change", () => renderStudentList());
@@ -1625,18 +1862,57 @@ document.addEventListener("keydown", (e) => {
 });
 
 // ==================== EXPORT ====================
+function exportApiPath(suffix) {
+    return (typeof API !== "undefined" ? API : "") + suffix;
+}
+
+function initExportPanelDownloadHrefs() {
+    const linter = document.getElementById("linterZipDownload");
+    const gs = document.getElementById("autograderZipDownload");
+    if (linter) linter.href = exportApiPath("/export/linter-zip");
+    if (gs) gs.href = exportApiPath("/export/autograder-zip");
+}
+
 document.getElementById("exportBtn").onclick = async () => {
     const btn = document.getElementById("exportBtn");
     setLoading(btn, true, "Exporting…");
     document.getElementById("exportResults").innerHTML = "";
     try {
         const r = await fetchWithRetry(API + "/export", { method: "POST" });
-        const data = await r.json();
-        if (data.detail) throw new Error(data.detail);
-        document.getElementById("exportResults").innerHTML = `<p class="status-ok">✓ Exported ${data.students} students.</p><p>Gradescope JSONs: <code>${data.gradescope_dir}</code></p><p>Excel: <code>${data.excel_path}</code></p>`;
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) {
+            throw new Error(estimateErrorMessage(data, r) || r.statusText || "Export failed");
+        }
+        const n = data.students | 0;
+        const parts = [];
+        parts.push(
+            `<p class="status-ok">✓ Exported ${n} student${n === 1 ? "" : "s"}.</p>`
+        );
+        if (n > 0) {
+            parts.push(
+                `<p>Gradescope JSONs: <code>${escHtml(String(data.gradescope_dir || ""))}</code></p>`
+            );
+            parts.push(
+                `<p>Excel: <code>${escHtml(String(data.excel_path || ""))}</code></p>`
+            );
+            if (data.autograder_zip) {
+                parts.push(
+                    `<p>Gradescope autograder ZIP (refreshed with this export): <code>${escHtml(String(data.autograder_zip))}</code></p>`
+                );
+            }
+        } else {
+            parts.push(
+                `<p class="text-muted">No rows in <code>graded_results.json</code> — Gradescope JSONs, Excel, and the autograder ZIP were not regenerated.</p>`
+            );
+        }
+        document.getElementById("exportResults").innerHTML = parts.join("");
         const dl = document.getElementById("excelDownload");
-        dl.classList.remove("hidden");
-        dl.href = "/export/excel?t=" + Date.now();
+        if (n > 0 && data.excel_path) {
+            dl.classList.remove("hidden");
+            dl.href = exportApiPath("/export/excel?t=" + Date.now());
+        } else {
+            dl.classList.add("hidden");
+        }
     } catch (e) {
         document.getElementById("exportResults").innerHTML = `<p class="status-error">Error: ${escHtml(e.message)}</p>`;
     } finally {
@@ -1646,6 +1922,7 @@ document.getElementById("exportBtn").onclick = async () => {
 
 // Init
 loadRubricGroups();
+initExportPanelDownloadHrefs();
 
 async function initAssignmentSwitcher() {
     await refreshAssignmentsDropdown();

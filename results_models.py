@@ -1,4 +1,4 @@
-"""Pydantic models for on-disk JSON artifacts (graded results, parsed notebooks)."""
+"""On-disk result schemas: graded results, parsed notebooks."""
 
 from __future__ import annotations
 
@@ -6,8 +6,19 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
-# On-disk / API JSON key for token usage on graded rows (keep in sync with llm.usage_helpers).
-GRADED_RESULT_USAGE_KEY = "_usage"
+from token_usage import GRADED_RESULT_USAGE_KEY
+
+
+class Question(BaseModel):
+    """Schema for one graded question in a result."""
+
+    model_config = ConfigDict(extra="allow")  # Allow genai_detection fields
+
+    score: float
+    max: float
+    feedback: str = ""
+    confidence: str = "low"
+    requires_review: bool = False
 
 
 class GradedResult(BaseModel):
@@ -16,7 +27,7 @@ class GradedResult(BaseModel):
     model_config = ConfigDict(populate_by_name=True, extra="ignore")
 
     student_name: str
-    questions: dict[str, Any] = Field(default_factory=dict)
+    questions: dict[str, Question] = Field(default_factory=dict)
     total_score: float = 0.0
     total_max: float = 0.0
     summary_feedback: str = ""

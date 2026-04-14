@@ -1,15 +1,14 @@
 """Process-wide API state: active assignment, locks, project root."""
 
-from __future__ import annotations
-
 import logging
 import threading
 from pathlib import Path
 
 from fastapi import HTTPException
 
-from config_models import AppConfig, ensure_app_config
-from utils import load_config, setup_assignment_logging
+from config_models import AppConfig
+from config_models import load_app_config
+from utils import setup_assignment_logging
 
 logger = logging.getLogger(__name__)
 
@@ -17,6 +16,7 @@ logger = logging.getLogger(__name__)
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 _active_config_path: Path | None = None
+_cached_config: AppConfig | None = None
 
 grading_lock = threading.Lock()
 results_lock = threading.Lock()
@@ -28,35 +28,31 @@ def get_active_config_path() -> Path | None:
 
 
 def set_active_config_path(path: Path | None) -> None:
-    global _active_config_path
+    global _active_config_path, _cached_config
     _active_config_path = path
+    _cached_config = None
 
 
-def get_active_config() -> dict:
-    """Return the current assignment config as a dict (YAML/HTTP / merge-friendly).
-
-    Pipeline code should prefer ``get_active_app_config()`` to avoid dict round-trips.
-    """
-    if _active_config_path is None:
-        raise HTTPException(
-            status_code=400,
-            detail="No assignment loaded. Use Setup to load or create an assignment.",
-        )
-    return load_config(_active_config_path)
+def invalidate_config_cache() -> None:
+    """Clear cached config so the next read reloads from disk."""
+    global _cached_config
+    _cached_config = None
 
 
 def get_active_app_config() -> AppConfig:
-    """Return the active assignment as ``AppConfig`` (same validation as ``get_active_config``).
+    """Return the active assignment config, cached after first load.
 
-    Uses ``ensure_app_config(get_active_config())`` so tests that patch ``get_active_config``
-    still drive the pipeline.
+    Call :func:`invalidate_config_cache` after saving config to disk.
     """
+    global _cached_config
     if _active_config_path is None:
         raise HTTPException(
             status_code=400,
             detail="No assignment loaded. Use Setup to load or create an assignment.",
         )
-    return ensure_app_config(get_active_config())
+    if _cached_config is None:
+        _cached_config = load_app_config(_active_config_path)
+    return _cached_config
 
 
 def setup_file_logging() -> None:
@@ -64,10 +60,10 @@ def setup_file_logging() -> None:
     if _active_config_path is None:
         return
     try:
-        cfg = load_config(_active_config_path)
-        out_dir = Path(cfg.get("output_dir", "output"))
-        assignment_name = cfg.get("assignment_name", "DEFAULT")
-    except (FileNotFoundError, ValueError, OSError) as e:
+        cfg = get_active_app_config()
+        out_dir = Path(cfg.output_dir)
+        assignment_name = cfg.assignment_name or "DEFAULT"
+    except (HTTPException, FileNotFoundError, ValueError, OSError) as e:
         logger.warning(
             "Could not load config for file logging (%s): %s. Using defaults.",
             _active_config_path,

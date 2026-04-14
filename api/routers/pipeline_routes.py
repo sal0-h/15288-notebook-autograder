@@ -1,9 +1,6 @@
 """Gather and parse pipeline steps."""
 
-from __future__ import annotations
-
 import asyncio
-import json
 import tempfile
 import zipfile
 from pathlib import Path
@@ -11,10 +8,11 @@ from pathlib import Path
 from fastapi import APIRouter, File, HTTPException, UploadFile
 
 from api import state
-from api.constants import DEFAULT_UPLOAD_MB
-from pipeline_runner import run_gather, run_gather_from_folder, run_parse
+from pipeline_runner import run_gather, run_parse
 
 router = APIRouter()
+
+DEFAULT_UPLOAD_MB = 500
 
 
 @router.post("/gather")
@@ -53,17 +51,6 @@ async def api_gather(zip_file: UploadFile = File(...)):
         if tmp_path is not None:
             tmp_path.unlink(missing_ok=True)
 
-
-@router.post("/gather-from-folder")
-def api_gather_from_folder(folder_path: str):
-    """Run gather from an already-extracted folder path under project root."""
-    cfg = state.get_active_app_config()
-    try:
-        return run_gather_from_folder(cfg, folder_path, state.PROJECT_ROOT)
-    except FileNotFoundError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
 
 
 @router.post("/parse")
