@@ -40,24 +40,26 @@ ai_autograder/
 ├── estimate.py             Token and cost estimation
 ├── export.py               Gradescope JSON, Excel, autograder ZIP
 ├── gather.py               Submission extraction from Gradescope export
-├── config_models.py        AppConfig, ParsingConfig, GradingConfig, default_config
+├── config_models.py        AppConfig, ParsingConfig, GradingConfig, config I/O, paths
 ├── grade.py                Per-student and per-group grading logic
 ├── grading_helpers.py      grade_only filtering, effective_groups, needs_merge
-├── grading_models.py       Pydantic schemas for LLM response validation
+├── grading_models.py       Pydantic schemas for all LLM structured outputs
 ├── linter_export.py        Pre-deadline format linter autograder
+├── llm/
+│   ├── json_runner.py      Structured Responses API, retries, run_jobs, extract_llm_questions
+├── llm_client.py           OpenAI client creation and temperature helpers
 ├── main.py                 CLI entry point
 ├── parse_notebook.py       Notebook → structured JSON parser
 ├── genai_detection.py      Optional GenAI suspicion pass (merges flags into graded_results)
 ├── pipeline_runner.py      Thin wrappers for app endpoints (run_gather, run_parse, etc.)
-├── llm/
-│   ├── json_runner.py      Structured Responses API, retries, `run_parallel_map`
-│   └── types.py            Re-exports `TokenUsage` from `results_models`
 ├── prompt_builder.py       Prompt construction, sanitization, JSON extraction
-├── results_models.py       GradedResult, ParsedNotebook (artifact shapes)
+├── results_models.py       GradedResult, ParsedNotebook, Question (on-disk schemas)
 ├── results_store.py        load_results → list[GradedResult]; save/update coerce dict rows
-├── rubric_generate.py     Rubric LLM generation + optional review orchestration
-├── rubric_review.py      Rubric review pass (second LLM pass)
-├── utils.py                Config I/O, logging, OpenAI client (AppConfig in config_models)
+├── rubric_generate.py      Rubric LLM generation + optional review orchestration
+├── rubric_review.py        Rubric review pass (second LLM pass)
+├── token_usage.py          TokenUsage, MODEL_PRICING, cost calculation, usage helpers
+├── utils.py                Assignment-scoped logging, filename sanitization
+├── zip_helpers.py          Shared ZIP archive helper (write_to_zip)
 │
 ├── prompts/
 │   ├── DEFAULT/            Fallback prompt templates (*.md)
@@ -446,7 +448,7 @@ Flow:
 amounts — only description text. The review pass reverts any group where deductions
 no longer sum to points after the LLM's rewrite.
 
-**Parallelism:** `cfg.workers` controls parallel rubric **generation** and **review** when `workers > 1` and there is more than one group. Parallel bulk grading uses the same entrypoint: `llm.json_runner.run_parallel_map` (wraps `llm.json_runner.iter_unordered_parallel_results`).
+**Parallelism:** `cfg.workers` controls parallel rubric **generation** and **review** when `workers > 1` and there is more than one group. Parallel bulk grading uses the same entrypoint: `llm.json_runner.run_jobs` (handles both sequential and parallel dispatch internally).
 
 ---
 
@@ -469,7 +471,7 @@ burning completion budget on single-question groups.
 
 #### Per-student (`grade_student`)
 
-Iterates over all groups from `get_effective_question_groups(grading_config)` (in `grading_helpers`, re-exported by `utils`):
+Iterates over all groups from `effective_groups(grading_config)` (in `grading_helpers`) or `grading_config.get_effective_groups()`:
 
 - Groups where all questions are absent from the student's parsed output are skipped
 with `[no submission]` scores (no LLM call).
@@ -492,13 +494,13 @@ Yields progress event dicts for SSE streaming to the UI:
 
 **Resume behavior:** Reads existing `graded_results.json` at startup via `results_store.load_results_with_backup` (backs up corrupted file to `*.broken`). Students already in the file (and not in a retryable state) are skipped. The file is incrementally updated after each student via `results_store.save_results` (deduplicates by student_name).
 
-**Parallel mode:** When `workers > 1`, uses `llm.json_runner.run_parallel_map` over the student work queue (thread pool). The implementation shares the same OpenAI client object passed into `grade_all_students` across worker threads.
+**Parallel mode:** When `workers > 1`, uses `llm.json_runner.run_jobs` over the student work queue (thread pool). The implementation shares the same OpenAI client object passed into `grade_all_students` across worker threads.
 
 #### `grade_only_merge` flow
 
 When `grade_only` + `grade_only_merge` are both set:
 
-1. `needs_grade_only_merge(existing, grade_only)` (in `grading_helpers`) checks whether the specified
+1. `needs_merge(existing, grade_only)` (in `grading_helpers`) checks whether the specified
   QIDs in existing results have retryable feedback. Returns `True` if any QID
    is missing or has `[skipped - not in grade_only]` / `[grading failed after retries]`.
 2. If merge is needed, `grade_student` is called with `merge_into=existing_result`.
@@ -654,7 +656,7 @@ and normalizes them to the canonical `NO_SUBMISSION` sentinel.
 
 ### Token usage
 
-All runtime aggregation uses `results_models.TokenUsage` (also re-exported as `llm.types.TokenUsage`): combine with `.merged(other)`,
+All runtime aggregation uses `token_usage.TokenUsage`: combine with `.merged(other)`,
 test non-zero with `.has_tokens()`, sum with `.total_tokens`. Serialized JSON uses
 the same keys as the dataclass fields (`prompt_tokens`, `completion_tokens`, the
 usual OpenAI usage shape). Convert at boundaries only: `.to_json_dict()` when
@@ -771,10 +773,10 @@ Tests live in `tests/` and are run with `pytest tests/ -q`.
 | `test_results_store.py`  | `load_results`, `save_results`, `load_results_with_backup`, update_student                         |
 | `test_integration.py`    | End-to-end parse → grade → export with mocked LLM                                                  |
 | `test_queue_estimate.py` | `load_grade_queue` vs `estimate_grade` alignment                                                   |
-| `test_usage_helpers.py`  | `results_models` token usage: `detach_usage_from_graded_result`, `merge_graded_usage`, SSE summary event |
+| `test_usage_helpers.py`  | `token_usage` helpers: `detach_usage_from_graded_result`, `merge_graded_usage`, SSE summary event |
 | `test_results_models.py` | `GradedResult` / disk round-trip                                                                   |
 | `test_genai_detection.py` | Optional GenAI suspicion pass; `llm.json_runner.complete_structured` mocked; scores unchanged                      |
-| `test_json_runner.py`     | `execute_llm_task` / `run_json_llm` retries, exhaustion, fallbacks; `run_parallel_map` smoke test                               |
+| `test_json_runner.py`     | `execute_llm_task` retries, exhaustion, fallbacks; `run_jobs` smoke test; `extract_llm_questions` validation |
 
 
 LLM calls are always mocked in tests via `unittest.mock.patch`. Tests never hit
@@ -818,7 +820,7 @@ Canonical QIDs are numeric strings: `"1.1"`, `"2.3"`, etc.
 Anywhere a QID could arrive with a `Q` prefix (from LLM output, UI, YAML),
 use **`normalize_qid()`** from `config_models` (re-exported by `utils`) — e.g. grading postprocess copies each `QuestionGrade` with a normalized `question_id`.
 
-Config helpers (`get_active_grade_only`, `get_effective_question_groups` in `grading_helpers.py`, re-exported by `utils`) operate on
+Config helpers (`grade_only_list`, `effective_groups` in `grading_helpers.py`; also available as methods on `GradingConfig`) operate on
 already-canonical IDs. Do not compare raw LLM keys to config QIDs without normalizing.
 
 ### Incremental saves
@@ -895,7 +897,7 @@ recomputed from the merged result.
 ### Add a new OpenAI model
 
 Add the model name and pricing (input, output per 1M tokens) to `MODEL_PRICING` in
-`grading_models.py`. Update `temperature_for_model` in `utils.py` if the model has
+`token_usage.py`. Update `temperature_for_model` in `llm_client.py` if the model has
 a temperature restriction.
 
 ### GenAI suspicion pass (optional, second LLM call)

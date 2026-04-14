@@ -42,7 +42,7 @@ When tradeoffs conflict, use this order:
 
 ## Simplification directions (status)
 
-1. **Unify JSON LLM calls** — **Done:** `grade_group`, `rubric_generate.generate_one_group`, `rubric_review.review_one_group`, and `genai_detection.py` all use `llm.json_runner.execute_llm_task` (shared `complete_structured` → `client.responses.parse`, per-call `postprocess`, optional `fallback` / `fallback_factory`), shared `MAX_JSON_LLM_ATTEMPTS` (`llm.json_runner`), and one retry boundary (no nested duplicate loops). `llm.json_runner.run_json_llm` remains for the `JsonLlmSpec` protocol (tests). Parallel orchestration (rubric generation/review, `batch_grader`) uses `llm.json_runner.run_parallel_map` (wraps `llm.json_runner.iter_unordered_parallel_results`).
+1. **Unify JSON LLM calls** — **Done:** `grade_group`, `rubric_generate.generate_one_group`, `rubric_review.review_one_group`, and `genai_detection.py` all use `llm.json_runner.execute_llm_task` (shared `complete_structured` → `client.responses.parse`, per-call `postprocess`, optional `fallback` / `fallback_factory`), shared `MAX_JSON_LLM_ATTEMPTS` (`llm.json_runner`), and one retry boundary (no nested duplicate loops). Parallel orchestration (rubric generation/review, `batch_grader`) uses `llm.json_runner.run_jobs`.
 2. **Unify graded-results loading** — **Done:** `load_results()` delegates to `load_results_with_backup()` (corrupt JSON → `*.broken` + log + `[]`).
 3. **Unify estimate errors for the UI** — **Done:** estimate routes raise **HTTP 400** with string `detail`; `ui/js/shared.js` shows `detail` or legacy `error`.
 4. **Deprecate `.env` key `key`** — **Done:** prefer `OPENAI_API_KEY`; `key` still works with `DeprecationWarning`.

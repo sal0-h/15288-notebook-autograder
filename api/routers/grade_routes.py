@@ -16,11 +16,8 @@ from api.validation import parse_student_name_path_param
 from genai_detection import run_genai_detection
 from grading_helpers import effective_groups
 from grade import grade_student
-from results_models import (
-    GradedResult,
-    TokenUsage,
-    detach_usage_from_graded_result,
-)
+from results_models import GradedResult
+from token_usage import TokenUsage, detach_usage_from_graded_result
 from prompt_builder import validate_question_groups
 from results_store import find_student, load_results, save_results, update_student
 from utils import get_assignment_output_paths

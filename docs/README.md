@@ -59,7 +59,7 @@ Set **`OPENAI_API_KEY`** in `.env` at the repo root. Legacy **`key`** is depreca
 ### Token usage on graded results
 
 - On disk, optional usage under **`_usage`**; canonical key: **`results_models.GRADED_RESULT_USAGE_KEY`** (see **`results_models`** for merge/detach helpers).
-- Use **`results_models.TokenUsage`** in code (`llm.types` re-exports the same type).
+- Use **`token_usage.TokenUsage`** in code. Token usage helpers (`detach_usage_from_graded_result`, `merge_graded_usage`, etc.) are in `token_usage.py`.
 - Use **`detach_usage_from_graded_result(result)`** — do not hand-roll `pop("_usage")`.
 - SSE summaries: **`graded_usage_summary_event(usage, model)`**.
 

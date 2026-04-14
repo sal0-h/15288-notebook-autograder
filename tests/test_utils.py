@@ -7,10 +7,8 @@ from pathlib import Path
 import pytest
 import utils
 
-from config_models import AppConfig, ensure_app_config, load_app_config
+from config_models import AppConfig, AssignmentOutputPaths, ensure_app_config, get_assignment_output_paths, load_app_config
 from utils import (
-    AssignmentOutputPaths,
-    get_assignment_output_paths,
     sanitize_filename_component,
     save_config,
     setup_assignment_logging,

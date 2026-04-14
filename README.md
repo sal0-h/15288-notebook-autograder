@@ -89,13 +89,17 @@ Main pipeline modules:
 - estimate.py: token and cost estimation helpers.
 - genai_detection.py: optional post-grade GenAI suspicion flags merged into results.
 - llm/json_runner.py: shared structured-output LLM calls, retries, and parallel helpers.
+- llm_client.py: OpenAI client creation and model-specific helpers (temperature).
 - prompt_builder.py: prompt construction, sanitization, and JSON extraction.
-- grading_models.py: shared grading schemas and validation models.
-- utils.py: config I/O, assignment-scoped logging, OpenAI client setup, and shared helpers.
-- config_models.py: AppConfig, ParsingConfig, GradingConfig, default_config, normalize_qid.
-- grading_helpers.py: grade_only filtering, effective_groups, needs_merge (re-exported by utils).
+- grading_models.py: Pydantic schemas for all LLM structured outputs (grading, rubrics, GenAI detection).
+- utils.py: assignment-scoped logging and filename sanitization.
+- config_models.py: AppConfig, ParsingConfig, GradingConfig, config I/O, default_config, normalize_qid.
+- grading_helpers.py: grade_only filtering, effective_groups, needs_merge.
+- token_usage.py: TokenUsage, MODEL_PRICING, cost calculation, usage merge/detach helpers.
 - pipeline_runner.py: thin wrappers for app pipeline steps (run_gather, run_parse, run_export, etc.).
+- results_models.py: GradedResult, ParsedNotebook, Question (on-disk artifact schemas).
 - results_store.py: load_results, save_results, update_student, load_results_with_backup.
+- zip_helpers.py: shared ZIP archive helper (write_to_zip with Unix attributes).
 
 Supporting directories:
 

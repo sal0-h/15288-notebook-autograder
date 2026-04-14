@@ -25,7 +25,7 @@ from llm.json_runner import (
     execute_llm_task,
     extract_llm_questions,
 )
-from results_models import TokenUsage
+from token_usage import TokenUsage
 from prompt_builder import (
     build_group_prompt,
     get_question_data,

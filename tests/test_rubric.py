@@ -7,13 +7,15 @@ import pytest
 
 from config_models import (
     RubricEntry,
-    RubricGroupLlmResponse,
     RubricItem,
-    RubricQuestionLlm,
     ensure_app_config,
 )
+from grading_models import (
+    RubricGroupLlmResponse,
+    RubricQuestionLlm,
+)
 from llm.json_runner import MAX_JSON_LLM_ATTEMPTS
-from results_models import TokenUsage
+from token_usage import TokenUsage
 from rubric_generate import generate_rubrics
 
 
@@ -119,7 +121,7 @@ class TestGenerateRubrics:
             "rubric_review": True,
         }
 
-        from config_models import (
+        from grading_models import (
             RubricReviewItem,
             RubricReviewQuestion,
             RubricReviewResponse,

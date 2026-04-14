@@ -11,7 +11,7 @@ from grading_models import GradingLlmResponse, QuestionGrade
 from parse_notebook import get_all_question_ids, parse_all_students, parse_notebook
 from export import export_all
 from grade import grade_student
-from results_models import TokenUsage
+from token_usage import TokenUsage
 
 
 def _make_notebook(cells: list[dict]) -> dict:

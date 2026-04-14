@@ -1,8 +1,7 @@
 """LLM response schemas and grading constants.
 
 All Pydantic models for structured LLM outputs live here: grading responses,
-rubric generation, rubric review, and GenAI detection. Also re-exports
-pricing/cost helpers from token_usage for backward compatibility.
+rubric generation, rubric review, and GenAI detection.
 """
 
 from typing import Literal
@@ -10,10 +9,6 @@ from typing import Literal
 from pydantic import BaseModel, field_validator
 
 from config_models import RubricItem
-
-# Re-export from token_usage for backward compatibility — new code should
-# import directly from token_usage.
-from token_usage import MODEL_PRICING, usage_cost_usd  # noqa: F401
 
 # ---------------------------------------------------------------------------
 # Constants
