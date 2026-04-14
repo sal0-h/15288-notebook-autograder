@@ -60,9 +60,12 @@ def tag_notebook(
             print(f"Warning: unknown type '{tags[qid]}' for {qid}, skipping", file=sys.stderr)
             continue
 
-        # Ensure metadata and tags exist
+        # Ensure metadata and tags exist (handle tags=None from malformed notebooks)
         meta = cell.setdefault("metadata", {})
-        cell_tags = meta.setdefault("tags", [])
+        cell_tags = meta.get("tags")
+        if not isinstance(cell_tags, list):
+            cell_tags = []
+            meta["tags"] = cell_tags
 
         # Remove any existing type: tag
         cell_tags[:] = [t for t in cell_tags if not (isinstance(t, str) and t.startswith("type:"))]
