@@ -1,7 +1,5 @@
 """Gather and parse pipeline steps."""
 
-from __future__ import annotations
-
 import asyncio
 import tempfile
 import zipfile

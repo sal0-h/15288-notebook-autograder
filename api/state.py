@@ -1,7 +1,5 @@
 """Process-wide API state: active assignment, locks, project root."""
 
-from __future__ import annotations
-
 import logging
 import threading
 from pathlib import Path

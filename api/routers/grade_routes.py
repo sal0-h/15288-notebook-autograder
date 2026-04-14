@@ -1,7 +1,5 @@
 """Bulk and single-student grading."""
 
-from __future__ import annotations
-
 import asyncio
 import json
 import logging

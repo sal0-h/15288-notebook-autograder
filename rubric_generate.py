@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -23,7 +22,6 @@ from llm.json_runner import MAX_JSON_LLM_ATTEMPTS, execute_llm_task, extract_llm
 from token_usage import TokenUsage, usage_cost_usd
 from prompt_builder import get_question_data, load_prompt, truncate_output
 from utils import (
-    get_assignment_output_paths,
     get_job_logger,
     get_openai_client,
 )
