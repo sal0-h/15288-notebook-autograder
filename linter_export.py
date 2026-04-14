@@ -17,10 +17,8 @@ LINTER_SETUP_SH = """#!/bin/bash
 def _build_run_autograder(required_ids: list[str], question_regex: str) -> str:
     """Generate the run_autograder script from the template with embedded IDs and regex."""
     template = _TEMPLATE_PATH.read_text(encoding="utf-8")
-    return (
-        template
-        .replace("{required_ids}", repr(required_ids))
-        .replace("{question_regex}", repr(question_regex))
+    return template.replace("{required_ids}", repr(required_ids)).replace(
+        "{question_regex}", repr(question_regex)
     )
 
 

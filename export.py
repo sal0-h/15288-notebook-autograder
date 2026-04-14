@@ -163,7 +163,9 @@ def _export_gradescope_json(
         for qid in gs_q_cols:
             q_data = questions.get(qid)
             score, max_s, out = (
-                _extract_question_scores(q_data) if q_data is not None else (0.0, 0.0, "")
+                _extract_question_scores(q_data)
+                if q_data is not None
+                else (0.0, 0.0, "")
             )
             tests.append(
                 {
@@ -193,7 +195,9 @@ def _export_gradescope_json(
     return len(results)
 
 
-def _export_excel(results: list[GradedResult], q_cols: list[str], output_dir: Path) -> str:
+def _export_excel(
+    results: list[GradedResult], q_cols: list[str], output_dir: Path
+) -> str:
     """
     Export results to Excel (pandas DataFrame) and write to Final_Grades.xlsx.
 
@@ -207,7 +211,9 @@ def _export_excel(results: list[GradedResult], q_cols: list[str], output_dir: Pa
         }
         for qid in q_cols:
             q_data = r.questions.get(qid)
-            row[f"Q{qid}"] = "" if q_data is None else _extract_question_scores(q_data)[0]
+            row[f"Q{qid}"] = (
+                "" if q_data is None else _extract_question_scores(q_data)[0]
+            )
         row["summary_feedback"] = r.summary_feedback
         rows.append(row)
 
@@ -283,7 +289,12 @@ def export_all(cfg: AppConfig) -> dict[str, str | int]:
 
     # Export Gradescope JSON and Excel
     _export_gradescope_json(
-        results, gs_q_cols, gs_title_mapping, gradescope_dir, parsed_dir, required_qids_for_linter
+        results,
+        gs_q_cols,
+        gs_title_mapping,
+        gradescope_dir,
+        parsed_dir,
+        required_qids_for_linter,
     )
     excel_path = _export_excel(results, q_cols, output_dir)
 
@@ -346,7 +357,9 @@ def export_autograder_zip(config: AppConfig) -> Path:
             mod_path = _REPO_ROOT / mod
             write_to_zip(zf, mod, mod_path.read_text(encoding="utf-8"))
         if manifest:
-            write_to_zip(zf, "precomputed_manifest.json", json.dumps(manifest, indent=2))
+            write_to_zip(
+                zf, "precomputed_manifest.json", json.dumps(manifest, indent=2)
+            )
         map_path = output_dir / "student_name_map.json"
         if map_path.exists():
             zf.write(map_path, arcname="student_name_map.json")

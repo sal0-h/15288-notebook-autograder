@@ -53,7 +53,9 @@ class TestGradingConfig:
         assert gc.get_effective_groups() == [["1.1", "1.2"], ["2.1"]]
 
     def test_effective_groups_with_grade_only(self):
-        gc = GradingConfig(question_groups=[["1.1", "1.2"], ["2.1"]], grade_only=["1.1"])
+        gc = GradingConfig(
+            question_groups=[["1.1", "1.2"], ["2.1"]], grade_only=["1.1"]
+        )
         groups = gc.get_effective_groups()
         assert groups == [["1.1"]]
 

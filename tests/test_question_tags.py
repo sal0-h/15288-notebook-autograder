@@ -27,7 +27,13 @@ def _question_cell(qid: str, pts: int = 5, tags: list[str] | None = None) -> dic
 
 
 def _code_cell(code: str = "x = 1") -> dict:
-    return {"cell_type": "code", "metadata": {}, "source": [code], "outputs": [], "execution_count": 1}
+    return {
+        "cell_type": "code",
+        "metadata": {},
+        "source": [code],
+        "outputs": [],
+        "execution_count": 1,
+    }
 
 
 class TestParserTagExtraction:
@@ -37,7 +43,9 @@ class TestParserTagExtraction:
         nb = _make_notebook(cells)
         nb_path = tmp_path / "test.ipynb"
         nb_path.write_text(json.dumps(nb))
-        cfg = ensure_app_config({"model": DEFAULT_MODEL, "grading": {"question_groups": []}})
+        cfg = ensure_app_config(
+            {"model": DEFAULT_MODEL, "grading": {"question_groups": []}}
+        )
         return parse_notebook(nb_path, cfg)
 
     def test_extracts_type_tag(self, tmp_path):
@@ -124,14 +132,40 @@ class TestPromptTypeInjection:
     def test_type_instruction_injected_for_tagged_question(self):
         from prompt_builder import build_group_prompt
 
-        sol = {"sections": {"1": {"questions": {"1.1": {
-            "points": 5, "question_markdown": "Q1.1", "question_type": "open-ended",
-            "answer_code_concat": "", "answer_text_concat": "", "answer_markdown_concat": "", "answer_cells": []
-        }}}}}
-        stu = {"sections": {"1": {"questions": {"1.1": {
-            "points": 5, "question_markdown": "Q1.1", "question_type": "open-ended",
-            "answer_code_concat": "x=1", "answer_text_concat": "", "answer_markdown_concat": "", "answer_cells": []
-        }}}}}
+        sol = {
+            "sections": {
+                "1": {
+                    "questions": {
+                        "1.1": {
+                            "points": 5,
+                            "question_markdown": "Q1.1",
+                            "question_type": "open-ended",
+                            "answer_code_concat": "",
+                            "answer_text_concat": "",
+                            "answer_markdown_concat": "",
+                            "answer_cells": [],
+                        }
+                    }
+                }
+            }
+        }
+        stu = {
+            "sections": {
+                "1": {
+                    "questions": {
+                        "1.1": {
+                            "points": 5,
+                            "question_markdown": "Q1.1",
+                            "question_type": "open-ended",
+                            "answer_code_concat": "x=1",
+                            "answer_text_concat": "",
+                            "answer_markdown_concat": "",
+                            "answer_cells": [],
+                        }
+                    }
+                }
+            }
+        }
 
         messages, _ = build_group_prompt(["1.1"], sol, stu, "system prompt")
         # The user message content should contain the open-ended instruction
@@ -143,14 +177,40 @@ class TestPromptTypeInjection:
     def test_mixed_type_no_extra_instruction(self):
         from prompt_builder import build_group_prompt
 
-        sol = {"sections": {"1": {"questions": {"1.1": {
-            "points": 5, "question_markdown": "Q1.1", "question_type": "mixed",
-            "answer_code_concat": "", "answer_text_concat": "", "answer_markdown_concat": "", "answer_cells": []
-        }}}}}
-        stu = {"sections": {"1": {"questions": {"1.1": {
-            "points": 5, "question_markdown": "Q1.1", "question_type": "mixed",
-            "answer_code_concat": "x=1", "answer_text_concat": "", "answer_markdown_concat": "", "answer_cells": []
-        }}}}}
+        sol = {
+            "sections": {
+                "1": {
+                    "questions": {
+                        "1.1": {
+                            "points": 5,
+                            "question_markdown": "Q1.1",
+                            "question_type": "mixed",
+                            "answer_code_concat": "",
+                            "answer_text_concat": "",
+                            "answer_markdown_concat": "",
+                            "answer_cells": [],
+                        }
+                    }
+                }
+            }
+        }
+        stu = {
+            "sections": {
+                "1": {
+                    "questions": {
+                        "1.1": {
+                            "points": 5,
+                            "question_markdown": "Q1.1",
+                            "question_type": "mixed",
+                            "answer_code_concat": "x=1",
+                            "answer_text_concat": "",
+                            "answer_markdown_concat": "",
+                            "answer_cells": [],
+                        }
+                    }
+                }
+            }
+        }
 
         messages, _ = build_group_prompt(["1.1"], sol, stu, "system prompt")
         user_content = messages[1]["content"]
