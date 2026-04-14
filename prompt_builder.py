@@ -18,18 +18,32 @@ TOKENS_PER_IMAGE = 1_000  # typical matplotlib plot at high detail
 _enc_cache: dict[str, object] = {}
 _enc_lock = threading.Lock()
 
-_question_type_instructions: dict[str, str] | None = None
+_question_type_cache: dict[str, dict[str, str]] = {}
 
 
-def _load_question_type_instructions() -> dict[str, str]:
-    global _question_type_instructions
-    if _question_type_instructions is None:
-        path = Path(__file__).resolve().parent / "prompts" / "DEFAULT" / "question_types.yaml"
-        if path.exists():
-            _question_type_instructions = _yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-        else:
-            _question_type_instructions = {}
-    return _question_type_instructions
+def _load_question_type_instructions(assignment_name: str | None = None) -> dict[str, str]:
+    """Load question type instructions, checking assignment-specific dir first."""
+    cache_key = assignment_name or "_DEFAULT_"
+    if cache_key in _question_type_cache:
+        return _question_type_cache[cache_key]
+
+    base_dir = Path(__file__).resolve().parent / "prompts"
+    result: dict[str, str] = {}
+
+    # Load DEFAULT first as base
+    default_path = base_dir / "DEFAULT" / "question_types.yaml"
+    if default_path.exists():
+        result = _yaml.safe_load(default_path.read_text(encoding="utf-8")) or {}
+
+    # Override with assignment-specific if it exists
+    if assignment_name:
+        assignment_path = base_dir / assignment_name / "question_types.yaml"
+        if assignment_path.exists():
+            overrides = _yaml.safe_load(assignment_path.read_text(encoding="utf-8")) or {}
+            result.update(overrides)
+
+    _question_type_cache[cache_key] = result
+    return result
 
 
 def _grading_body_char_cap(max_prompt_tokens: int) -> int:
@@ -279,6 +293,7 @@ def build_group_prompt(
     max_prompt_tokens: int = 80_000,
     rubrics: dict | None = None,
     include_reference: bool = False,
+    assignment_name: str | None = None,
 ) -> tuple[list[dict], dict[str, int]]:
     """
     Build messages for one question group with inline image labeling.
@@ -316,7 +331,7 @@ def build_group_prompt(
 
         # Inject question-type grading instruction if available
         q_type = (sol_q or stu_q or {}).get("question_type", "mixed")
-        type_instructions = _load_question_type_instructions()
+        type_instructions = _load_question_type_instructions(assignment_name)
         type_hint = type_instructions.get(q_type, "").strip()
         if type_hint:
             q_header += f"\n{type_hint}\n"

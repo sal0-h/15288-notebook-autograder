@@ -128,6 +128,7 @@ def grade_group(
         max_prompt_tokens=config.max_prompt_tokens,
         rubrics=config.rubrics,
         include_reference=config.include_reference_in_grading,
+        assignment_name=config.assignment_name,
     )
 
     ctx = f" [{student_name}]" if student_name else ""
