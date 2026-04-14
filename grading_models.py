@@ -1,9 +1,18 @@
-"""Pydantic models and constants for the grading engine."""
+"""LLM response schemas and grading constants.
+
+All Pydantic models for structured LLM outputs live here: grading, rubric
+generation, rubric review, and GenAI detection.
+"""
 
 from typing import Literal
 
-from config_models import DEFAULT_MODEL
 from pydantic import BaseModel, field_validator
+
+from config_models import RubricItem
+
+# Re-export from token_usage for backward compatibility — new code should
+# import directly from token_usage.
+from token_usage import MODEL_PRICING, usage_cost_usd  # noqa: F401
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -14,33 +23,6 @@ NO_SUBMISSION = "[no submission]"
 LLM_PARSE_ERROR = "[parse error in LLM response]"
 LLM_NOT_RETURNED = "[not returned by LLM]"
 GRADING_FAILED = "[grading failed after retries]"
-
-# Pricing per 1M tokens (input, output). From docs/OPENAI_VISION_MODELS.md
-MODEL_PRICING = {
-    "gpt-5-nano": (0.05, 0.40),
-    "gpt-5-nano-2025-08-07": (0.05, 0.40),
-    "gpt-4o-mini": (0.15, 0.60),
-    "gpt-5-mini": (0.25, 2.00),
-    "gpt-5-mini-2025-08-07": (0.25, 2.00),
-    "gpt-4.1-mini": (0.40, 1.60),
-    "gpt-4.1-mini-2025-04-14": (0.40, 1.60),
-    "gpt-5": (1.25, 10.00),
-    "gpt-4.1": (2.00, 8.00),
-    "gpt-4.1-2025-04-14": (2.00, 8.00),
-    "gpt-5.2": (1.75, 14.00),
-    "gpt-4o": (2.50, 10.00),
-    "gpt-4-turbo": (10.00, 30.00),
-}
-
-
-def usage_cost_usd(usage, model: str) -> float:
-    """Approximate USD cost for recorded usage at the given model's rates."""
-    prompt = getattr(usage, "prompt_tokens", 0)
-    completion = getattr(usage, "completion_tokens", 0)
-    pt = int(prompt or 0)
-    ct = int(completion or 0)
-    inp, out = MODEL_PRICING.get(model, MODEL_PRICING[DEFAULT_MODEL])
-    return (pt / 1e6 * inp) + (ct / 1e6 * out)
 
 
 # ---------------------------------------------------------------------------
@@ -119,3 +101,41 @@ class GenaiLlmResponse(BaseModel):
     """GenAI-detection completion payload — one object per student."""
 
     results: list[GenaiQuestionResult]
+
+
+# ---------------------------------------------------------------------------
+# Rubric LLM response models (structured outputs via Responses API)
+# ---------------------------------------------------------------------------
+
+
+class RubricQuestionLlm(BaseModel):
+    """Per-question rubric as emitted by the LLM."""
+
+    question_id: str
+    points: int
+    items: list[RubricItem]
+
+
+class RubricGroupLlmResponse(BaseModel):
+    """Rubric-generation completion payload."""
+
+    questions: list[RubricQuestionLlm]
+
+
+class RubricReviewItem(BaseModel):
+    """Single criterion description as emitted by the review LLM."""
+
+    description: str
+
+
+class RubricReviewQuestion(BaseModel):
+    """Per-question review output (descriptions only — structure is locked)."""
+
+    question_id: str
+    items: list[RubricReviewItem]
+
+
+class RubricReviewResponse(BaseModel):
+    """Rubric-review completion payload."""
+
+    questions: list[RubricReviewQuestion]

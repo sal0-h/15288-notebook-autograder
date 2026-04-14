@@ -176,42 +176,15 @@ class RubricEntry(BaseModel):
         return self
 
 
-# ---------------------------------------------------------------------------
-# Structured-output response models (list-based; used by rubric_generate / rubric_review)
-# ---------------------------------------------------------------------------
-
-
-class RubricQuestionLlm(BaseModel):
-    """Per-question rubric as emitted by the LLM."""
-
-    question_id: str
-    points: int
-    items: list[RubricItem]
-
-
-class RubricGroupLlmResponse(BaseModel):
-    """Rubric-generation completion payload."""
-
-    questions: list[RubricQuestionLlm]
-
-
-class RubricReviewItem(BaseModel):
-    """Single criterion description as emitted by the review LLM."""
-
-    description: str
-
-
-class RubricReviewQuestion(BaseModel):
-    """Per-question review output (descriptions only — structure is locked)."""
-
-    question_id: str
-    items: list[RubricReviewItem]
-
-
-class RubricReviewResponse(BaseModel):
-    """Rubric-review completion payload."""
-
-    questions: list[RubricReviewQuestion]
+# Rubric LLM response models moved to grading_models.py — re-export for
+# backward compatibility.
+from grading_models import (  # noqa: F401
+    RubricGroupLlmResponse,
+    RubricQuestionLlm,
+    RubricReviewItem,
+    RubricReviewQuestion,
+    RubricReviewResponse,
+)
 
 
 class AppConfig(BaseModel):
