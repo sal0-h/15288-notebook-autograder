@@ -109,7 +109,6 @@ def gather_submissions(
         out_dir.mkdir(parents=True, exist_ok=True)
 
         seen_names: set[str] = set()
-        used_output_names: set[str] = {p.name for p in out_dir.glob("*.ipynb")}
         results: list[dict] = []
         student_name_map: dict[str, str] = {}  # normalized_name → stem (without .ipynb)
         submitter_stem_map: dict[str, str] = (
@@ -152,14 +151,7 @@ def gather_submissions(
                 if_empty="unknown_student",
             )
             safe_name = f"{base_stem}.ipynb"
-            stem_only = base_stem  # Store stem without .ipynb extension
-
-            if safe_name in used_output_names:
-                suffix = 2
-                while f"{base_stem}_{suffix}.ipynb" in used_output_names:
-                    suffix += 1
-                safe_name = f"{base_stem}_{suffix}.ipynb"
-                stem_only = f"{base_stem}_{suffix}"
+            stem_only = base_stem
 
             status = "duplicate" if student_name in seen_names else "ok"
             seen_names.add(student_name)
@@ -183,7 +175,6 @@ def gather_submissions(
 
                 if status == "ok":
                     shutil.copy2(nb_path, out_dir / safe_name)
-                    used_output_names.add(safe_name)
                     normalized = "".join(
                         c for c in student_name.strip().lower() if c.isalnum()
                     )

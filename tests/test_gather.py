@@ -155,8 +155,8 @@ class TestGatherFromFolder:
         assert stem_map_path.exists()
         assert json.loads(stem_map_path.read_text(encoding="utf-8")) == {}
 
-    def test_map_handles_collision_suffixes(self, tmp_path):
-        """When sanitized names collide, map entries use the collision-suffixed stems."""
+    def test_duplicate_sanitized_name_overwrites(self, tmp_path):
+        """When sanitized names collide, the last submission wins (overwrite)."""
         meta = {
             "submission_1": {":submitters": [{":name": "A/B"}]},
             "submission_2": {":submitters": [{":name": "AB"}]},
@@ -164,26 +164,22 @@ class TestGatherFromFolder:
         (tmp_path / "submission_metadata.yml").write_text(
             yaml.dump(meta), encoding="utf-8"
         )
-        nb = {"cells": [], "nbformat": 4, "metadata": {}}
-        for key in ("submission_1", "submission_2"):
-            folder = tmp_path / key
-            folder.mkdir()
-            (folder / "notebook.ipynb").write_text(json.dumps(nb), encoding="utf-8")
+        nb1 = {"cells": [{"cell_type": "code", "source": ["first"], "metadata": {}, "outputs": []}], "nbformat": 4, "metadata": {}}
+        nb2 = {"cells": [{"cell_type": "code", "source": ["second"], "metadata": {}, "outputs": []}], "nbformat": 4, "metadata": {}}
+        folder1 = tmp_path / "submission_1"
+        folder1.mkdir()
+        (folder1 / "notebook.ipynb").write_text(json.dumps(nb1), encoding="utf-8")
+        folder2 = tmp_path / "submission_2"
+        folder2.mkdir()
+        (folder2 / "notebook.ipynb").write_text(json.dumps(nb2), encoding="utf-8")
 
         out = tmp_path / "out"
         result = gather_submissions(tmp_path, out, from_zip=False)
 
-        names = sorted(r["filename"] for r in result if r["status"] == "ok")
-        assert names == ["AB.ipynb", "AB_2.ipynb"]
+        # Both sanitize to AB.ipynb — second overwrites first
         assert (out / "AB.ipynb").exists()
-        assert (out / "AB_2.ipynb").exists()
-
-        # Verify both map entries point to the correct stems
-        map_path = out.parent / "student_name_map.json"
-        map_data = json.loads(map_path.read_text(encoding="utf-8"))
-        # Both normalize to "ab" (alphanumeric only)
-        assert "ab" in map_data
-        assert map_data["ab"] in ["AB", "AB_2"]
+        content = json.loads((out / "AB.ipynb").read_text(encoding="utf-8"))
+        assert content["cells"][0]["source"] == ["second"]
 
     def test_submitter_stem_map_with_gradescope_ids(self, tmp_path):
         meta = {
