@@ -23,6 +23,7 @@ from config_models import (
     default_config,
     ensure_app_config,
 )
+from results_models import GradedResult
 
 
 def _active_assignment_pair(config_like: dict) -> tuple[dict, object]:
@@ -495,16 +496,16 @@ class TestGradeOneMerge:
             "grade_only_merge": True,
         }
 
-        returned = {
-            "student_name": "Alice",
-            "questions": {
+        returned = GradedResult(
+            student_name="Alice",
+            questions={
                 "1.1": {"score": 2, "max": 2, "feedback": "ok"},
                 "1.2": {"score": 2, "max": 2, "feedback": "new"},
             },
-            "total_score": 4,
-            "total_max": 4,
-            "summary_feedback": "Full marks.",
-        }
+            total_score=4,
+            total_max=4,
+            summary_feedback="Full marks.",
+        )
 
         with (
             patch_active_assignment(cfg),
@@ -519,8 +520,8 @@ class TestGradeOneMerge:
         assert mock_grade_student.called
         call_args = mock_grade_student.call_args[0]
         # merge_into is the 6th positional argument in api_grade_one call.
-        assert call_args[5]["student_name"] == "Alice"
-        assert call_args[5]["questions"]["1.2"]["feedback"] == "old"
+        assert call_args[5].student_name == "Alice"
+        assert call_args[5].questions["1.2"].feedback == "old"
 
     def test_grade_one_does_not_persist_internal_usage(self, client, tmp_path):
         parsed_dir = tmp_path / "parsed"
@@ -547,14 +548,14 @@ class TestGradeOneMerge:
         cfg["output_dir"] = str(output_dir)
         cfg["grading"] = {"question_groups": [["1.1"]], "grade_only": None}
 
-        graded_with_usage = {
-            "student_name": "Alice",
-            "questions": {"1.1": {"score": 2, "max": 2, "feedback": "ok"}},
-            "total_score": 2,
-            "total_max": 2,
-            "summary_feedback": "Full marks.",
-            "_usage": {"prompt_tokens": 11, "completion_tokens": 7},
-        }
+        graded_with_usage = GradedResult(
+            student_name="Alice",
+            questions={"1.1": {"score": 2, "max": 2, "feedback": "ok"}},
+            total_score=2,
+            total_max=2,
+            summary_feedback="Full marks.",
+            usage={"prompt_tokens": 11, "completion_tokens": 7},
+        )
 
         with (
             patch_active_assignment(cfg),
@@ -618,13 +619,13 @@ class TestGradeOneMerge:
             "grade_only_merge": True,
         }
 
-        returned = {
-            "student_name": "Alice",
-            "questions": {"1.1": {"score": 2, "max": 2, "feedback": "new"}},
-            "total_score": 2,
-            "total_max": 2,
-            "summary_feedback": "Full marks.",
-        }
+        returned = GradedResult(
+            student_name="Alice",
+            questions={"1.1": {"score": 2, "max": 2, "feedback": "new"}},
+            total_score=2,
+            total_max=2,
+            summary_feedback="Full marks.",
+        )
 
         mock_lock = MagicMock()
         mock_lock.__enter__.return_value = None

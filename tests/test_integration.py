@@ -91,11 +91,12 @@ class TestIntegrationPipeline:
             result = grade_student(
                 student_parsed, solution_parsed, cfg, client=MagicMock()
             )
-        assert result["total_score"] == 2
-        assert result["total_max"] == 2
+        assert result.total_score == 2
+        assert result.total_max == 2
 
         # Write graded_results for export
-        (output_dir / "graded_results.json").write_text(json.dumps([result], indent=2))
+        result_dict = result.model_dump(mode="python", by_alias=True, exclude_none=True)
+        (output_dir / "graded_results.json").write_text(json.dumps([result_dict], indent=2))
 
         # Step 3: Export
         summary = export_all(cfg)
