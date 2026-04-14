@@ -292,6 +292,8 @@ output_dir: output
 
 class TestOpenAIClientConfig:
     def test_get_openai_client_uses_httpx_limits_and_timeout(self, monkeypatch):
+        import llm_client
+
         monkeypatch.setenv("key", "")
         monkeypatch.setenv("OPENAI_API_KEY", "test-key")
         captured = {}
@@ -305,10 +307,10 @@ class TestOpenAIClientConfig:
             captured["openai_kwargs"] = kwargs
             return "openai-client"
 
-        monkeypatch.setattr(utils.httpx, "Client", fake_httpx_client)
-        monkeypatch.setattr(utils, "OpenAI", fake_openai)
+        monkeypatch.setattr(llm_client.httpx, "Client", fake_httpx_client)
+        monkeypatch.setattr(llm_client, "OpenAI", fake_openai)
 
-        client = utils.get_openai_client(
+        client = llm_client.get_openai_client(
             max_retries=7,
             max_connections=11,
             max_keepalive_connections=9,

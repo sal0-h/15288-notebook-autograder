@@ -1,23 +1,20 @@
-"""Shared utilities for the AI Autograder pipeline."""
+"""Shared utilities: assignment logging and filename sanitization."""
 
-from __future__ import annotations  # Enables forward refs in union type annotations.
+from __future__ import annotations
 
 import logging
-import os
-import re
 import threading
-import warnings
-from dataclasses import dataclass
 from pathlib import Path
-import httpx
-import yaml
-from dotenv import load_dotenv
 
 from config_models import (
     AppConfig,
-    ensure_app_config,
 )
-from openai import OpenAI
+
+# Re-export for backward compatibility — new code should import directly from
+# config_models (save_config, AssignmentOutputPaths, get_assignment_output_paths)
+# or llm_client (get_openai_client, temperature_for_model).
+from config_models import save_config, AssignmentOutputPaths, get_assignment_output_paths  # noqa: F401
+from llm_client import get_openai_client, temperature_for_model  # noqa: F401
 
 # Windows path reserved characters; stripped by ``sanitize_filename_component``.
 # Also embedded in ``export.RUN_AUTOGRADER`` (must stay in sync).
@@ -80,116 +77,3 @@ def get_job_logger(config: AppConfig, module_name: str) -> logging.Logger:
     assignment_name = config.assignment_name or "DEFAULT"
     return logging.getLogger(f"autograder.{assignment_name}.{module_name}")
 
-
-def save_config(config: dict | AppConfig, config_path: Path) -> None:
-    """Save config to config_path (the assignment config at output/{name}/config.yaml).
-
-    Writes all fields. Relativizes solution_notebook against the project root
-    (config_path.parent.parent.parent).
-    """
-    validated = ensure_app_config(config)
-    cfg = validated.model_dump(mode="python", exclude_none=True)
-    cfg["output_dir"] = "output"
-    cfg.pop("submissions_dir", None)
-    cfg.pop("parsed_dir", None)
-
-    config_path = Path(config_path).resolve()
-    project_root = config_path.parent.parent.parent
-
-    # Relativize solution_notebook for portability
-    sol = cfg.get("solution_notebook", "")
-    if sol:
-        sol_path = Path(sol)
-        if sol_path.is_absolute():
-            try:
-                cfg["solution_notebook"] = str(sol_path.relative_to(project_root))
-            except ValueError:
-                pass
-
-    out_cfg = cfg
-    config_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(config_path, "w", encoding="utf-8") as f:
-        yaml.dump(out_cfg, f, default_flow_style=False, allow_unicode=True)
-
-
-@dataclass(frozen=True)
-class AssignmentOutputPaths:
-    """Canonical assignment-scoped runtime paths."""
-
-    output_dir: Path
-    parsed_dir: Path
-    solution_parsed: Path
-    graded_results: Path
-    gradescope_dir: Path
-
-
-def get_assignment_output_paths(config: AppConfig) -> AssignmentOutputPaths:
-    """Return canonical assignment-scoped output paths.
-
-    Centralizing these paths avoids subtle mismatches across pipeline modules.
-    """
-    output_dir = Path(config.output_dir)
-    return AssignmentOutputPaths(
-        output_dir=output_dir,
-        parsed_dir=Path(config.parsed_dir),
-        solution_parsed=output_dir / "solution_parsed.json",
-        graded_results=output_dir / "graded_results.json",
-        gradescope_dir=output_dir / "gradescope",
-    )
-
-
-# ---------------------------------------------------------------------------
-# OpenAI client
-# ---------------------------------------------------------------------------
-
-
-# GPT-5 reasoning models only support temperature=1. Others can use 0 for deterministic output.
-def temperature_for_model(model: str) -> float:
-    """Use 0 when model supports it (deterministic); else 1. GPT-5 family only supports 1."""
-    if model.startswith("gpt-5"):
-        return 1.0
-    return 0.0
-
-
-def get_openai_client(
-    max_retries: int = 5,
-    *,
-    max_connections: int = 20,
-    max_keepalive_connections: int = 20,
-    connect_timeout_s: float = 10.0,
-    read_timeout_s: float = 120.0,
-    write_timeout_s: float = 30.0,
-    pool_timeout_s: float = 30.0,
-) -> OpenAI:
-    """Initialize OpenAI client with .env key, with SDK-level retries.
-
-    Prefer ``OPENAI_API_KEY``. The legacy ``key`` env var is deprecated and will be
-    removed in a future release.
-    """
-    load_dotenv()
-    api_key = os.environ.get("OPENAI_API_KEY")
-    if not api_key and os.environ.get("key"):
-        warnings.warn(
-            "Using 'key' in .env is deprecated; set OPENAI_API_KEY instead.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        api_key = os.environ.get("key")
-    if not api_key:
-        raise ValueError("API key not found. Set OPENAI_API_KEY in .env.")
-    limits = httpx.Limits(
-        max_connections=max(1, int(max_connections)),
-        max_keepalive_connections=max(1, int(max_keepalive_connections)),
-    )
-    timeout = httpx.Timeout(
-        connect=connect_timeout_s,
-        read=read_timeout_s,
-        write=write_timeout_s,
-        pool=pool_timeout_s,
-    )
-    http_client = httpx.Client(limits=limits, timeout=timeout)
-    return OpenAI(
-        api_key=api_key,
-        max_retries=max_retries,
-        http_client=http_client,
-    )
