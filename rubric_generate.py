@@ -15,6 +15,7 @@ from config_models import (
     DEFAULT_MODEL,
     RubricEntry,
     RubricItem,
+    load_solution_parsed,
 )
 from grading_models import RubricGroupLlmResponse
 from grading_helpers import filter_groups_by_grade_only
@@ -191,18 +192,11 @@ def generate_rubrics(
     from rubric_review import review_rubrics
 
     logger = get_job_logger(config, __name__)
-    paths = get_assignment_output_paths(config)
-    solution_path = paths.solution_parsed
-
-    if not solution_path.exists():
-        raise FileNotFoundError(
-            f"Solution parsed not found: {solution_path}. Run the parse step first."
-        )
+    solution_parsed = load_solution_parsed(config)
 
     if client is None:
         client = get_openai_client()
 
-    solution_parsed = json.loads(solution_path.read_text(encoding="utf-8"))
     grading_config = config.grading
     all_groups: list[list[str]] = grading_config.question_groups
     grade_only: list[str] | None = grading_config.grade_only
