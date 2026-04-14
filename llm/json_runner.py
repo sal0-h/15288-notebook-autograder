@@ -12,7 +12,7 @@ from openai import OpenAI
 from pydantic import BaseModel
 
 from results_models import TokenUsage
-from utils import temperature_for_model
+from llm_client import temperature_for_model
 
 T_out = TypeVar("T_out", covariant=True)
 _T = TypeVar("_T")

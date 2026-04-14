@@ -1,11 +1,9 @@
-"""Pydantic config models and QID helpers for the AI Autograder.
-
-Extracted from utils.py to separate config schema from I/O, logging, and client setup.
-"""
+"""Pydantic config models, QID helpers, and config I/O for the AI Autograder."""
 
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -313,3 +311,69 @@ def load_app_config(config_path: Path, *, require_exists: bool = True) -> AppCon
     cfg["parsed_dir"] = str(assignment_root / "parsed")
     cfg["assignment_name"] = assignment_name
     return ensure_app_config(cfg)
+
+
+# ---------------------------------------------------------------------------
+# Config Save
+# ---------------------------------------------------------------------------
+
+
+def save_config(config: dict | AppConfig, config_path: Path) -> None:
+    """Save config to config_path (the assignment config at output/{name}/config.yaml).
+
+    Writes all fields. Relativizes solution_notebook against the project root
+    (config_path.parent.parent.parent).
+    """
+    validated = ensure_app_config(config)
+    cfg = validated.model_dump(mode="python", exclude_none=True)
+    cfg["output_dir"] = "output"
+    cfg.pop("submissions_dir", None)
+    cfg.pop("parsed_dir", None)
+
+    config_path = Path(config_path).resolve()
+    project_root = config_path.parent.parent.parent
+
+    # Relativize solution_notebook for portability
+    sol = cfg.get("solution_notebook", "")
+    if sol:
+        sol_path = Path(sol)
+        if sol_path.is_absolute():
+            try:
+                cfg["solution_notebook"] = str(sol_path.relative_to(project_root))
+            except ValueError:
+                pass
+
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(config_path, "w", encoding="utf-8") as f:
+        yaml.dump(cfg, f, default_flow_style=False, allow_unicode=True)
+
+
+# ---------------------------------------------------------------------------
+# Assignment Output Paths
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class AssignmentOutputPaths:
+    """Canonical assignment-scoped runtime paths."""
+
+    output_dir: Path
+    parsed_dir: Path
+    solution_parsed: Path
+    graded_results: Path
+    gradescope_dir: Path
+
+
+def get_assignment_output_paths(config: AppConfig) -> AssignmentOutputPaths:
+    """Return canonical assignment-scoped output paths.
+
+    Centralizing these paths avoids subtle mismatches across pipeline modules.
+    """
+    output_dir = Path(config.output_dir)
+    return AssignmentOutputPaths(
+        output_dir=output_dir,
+        parsed_dir=Path(config.parsed_dir),
+        solution_parsed=output_dir / "solution_parsed.json",
+        graded_results=output_dir / "graded_results.json",
+        gradescope_dir=output_dir / "gradescope",
+    )
