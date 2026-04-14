@@ -6,7 +6,10 @@ responsible for constructing ``GradedResult`` before calling into this module.
 
 import json
 import logging
+import os
 import shutil
+import tempfile
+from datetime import datetime
 from pathlib import Path
 
 from results_models import GradedResult
@@ -24,7 +27,9 @@ def load_results_with_backup(
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError:
-        backup_path = path.parent / f"{path.name}.broken"
+        # Use timestamped backup to avoid overwriting previous backups
+        ts = datetime.now().strftime("%Y%m%dT%H%M%S")
+        backup_path = path.parent / f"{path.name}.broken.{ts}"
         try:
             shutil.copy2(path, backup_path)
             log.error(
@@ -72,14 +77,28 @@ def save_results(
     results: list[GradedResult],
     logger_obj: logging.Logger | None = None,
 ) -> None:
-    """Write results to graded_results.json. Deduplicates by student_name."""
+    """Write results to graded_results.json atomically. Deduplicates by student_name.
+
+    Uses temp-file-then-rename to prevent half-written files on crash.
+    """
     log = logger_obj or logger
     path.parent.mkdir(parents=True, exist_ok=True)
     deduped = deduplicate_results(results)
     data = [
         r.model_dump(mode="python", by_alias=True, exclude_none=True) for r in deduped
     ]
-    path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    # Atomic write: write to temp file, then rename (atomic on POSIX)
+    fd, tmp_path = tempfile.mkstemp(dir=path.parent, suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+        os.replace(tmp_path, path)
+    except BaseException:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
     log.info("Saved %d graded result entries to %s", len(deduped), path)
 
 
