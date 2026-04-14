@@ -637,7 +637,7 @@ execute_llm_task(..., response_model=GradingLlmResponse, postprocess=_postproces
   → _postprocess_grade_group(GradingLlmResponse)
       → normalize each row’s question_id; dedupe by canonical QID
       → check all group QIDs present → raise ValueError → retry if any missing
-  → return list[QuestionGrade]  →  _process_group_result builds per-student question dicts
+  → return list[QuestionGrade]  →  _store_group_grades builds per-student question dicts
 ```
 
 ### Feedback sentinel constants
@@ -777,6 +777,9 @@ Tests live in `tests/` and are run with `pytest tests/ -q`.
 | `test_results_models.py` | `GradedResult` / disk round-trip                                                                   |
 | `test_genai_detection.py` | Optional GenAI suspicion pass; `llm.json_runner.complete_structured` mocked; scores unchanged                      |
 | `test_json_runner.py`     | `execute_llm_task` retries, exhaustion, fallbacks; `run_jobs` smoke test; `extract_llm_questions` validation |
+| `test_batch_grader.py`    | `load_grade_queue` resume logic, skip-already-graded behavior                                      |
+| `test_config_models.py`   | `normalize_qid`, config load/save round-trip, `GradingConfig` methods, `load_solution_parsed`      |
+| `test_question_tags.py`   | Tag extraction in parser, `tag_notebook` script injection, prompt type instruction injection        |
 
 
 LLM calls are always mocked in tests via `unittest.mock.patch`. Tests never hit
@@ -903,5 +906,5 @@ a temperature restriction.
 ### GenAI suspicion pass (optional, second LLM call)
 
 - **Purpose:** Triage only — flag answers that may look LLM-assisted; **never** changes scores (see `DECISIONS.md`).
-- **Code:** `genai_detection.py` — `llm.json_runner.execute_llm_task` with `response_model=GenaiLlmResponse` (`results: list[GenaiQuestionResult]`), post-process `_postprocess_genai_detection` → `list[GenaiQuestionResult]` (normalized `question_id`, completeness check), and `fallback_factory` on exhaustion (logs, returns empty list, skips student). Requires every `expected_qid` in the batch (attempt budget `llm.json_runner.MAX_JSON_LLM_ATTEMPTS`, structured logging via `get_job_logger`). User message built by `prompt_builder.build_genai_detection_user_message`. Reads `graded_results.json` + `parsed/*.json`, system prompt `prompts/DEFAULT/genai_detection_system.md`. Merges `suspicious_genai` / `suspicious_genai_note`; re-runs overwrite prior flags.
+- **Code:** `genai_detection.py` — `llm.json_runner.execute_llm_task` with `response_model=GenaiLlmResponse` (`results: list[GenaiQuestionResult]`), post-process `_postprocess_genai_detection` → `list[GenaiQuestionResult]` (normalized `question_id`, completeness check), and `fallback_factory` on exhaustion (logs, returns empty list, skips student). Requires every `expected_qid` in the batch (attempt budget `llm.json_runner.MAX_JSON_LLM_ATTEMPTS`, structured logging via `get_job_logger`). User message built by `genai_detection.build_genai_detection_user_message`. Reads `graded_results.json` + `parsed/*.json`, system prompt `prompts/DEFAULT/genai_detection_system.md`. Merges `suspicious_genai` / `suspicious_genai_note`; re-runs overwrite prior flags.
 - **Invoke:** `python main.py --steps detect-genai`, `POST /detect-genai`, or **Run GenAI detection** on the Grade tab (blocked while bulk grading holds `grading_lock`; writes use `results_lock`).

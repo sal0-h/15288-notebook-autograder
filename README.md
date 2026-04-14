@@ -319,7 +319,6 @@ Setup helpers:
 Pipeline:
 
 - POST /gather
-- POST /gather-from-folder
 - POST /parse
 - GET /generate-rubrics
 - POST /generate-rubrics

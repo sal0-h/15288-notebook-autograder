@@ -252,9 +252,9 @@ def parse_notebook(nb_path: Path, config: AppConfig) -> dict:
                 ensure_section(sec_id)
 
             # Extract question type from cell metadata tags (e.g., ["type:analysis"])
-            cell_tags = cell.get("metadata", {}).get("tags", [])
+            cell_tags = cell.get("metadata", {}).get("tags") or []
             question_type = "mixed"
-            for tag in cell_tags:
+            for tag in cell_tags if isinstance(cell_tags, list) else []:
                 if isinstance(tag, str) and tag.startswith("type:"):
                     candidate = tag[5:].strip().lower()
                     if candidate in VALID_QUESTION_TYPES:
