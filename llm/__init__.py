@@ -7,7 +7,7 @@ for tests and callers that still use the :class:`llm.json_runner.JsonLlmSpec`
 protocol. Parallel fan-out uses :func:`llm.json_runner.run_parallel_map`.
 """
 
-from grading_models import usage_cost_usd
+from token_usage import usage_cost_usd
 from llm.json_runner import (
     MAX_JSON_LLM_ATTEMPTS,
     MAX_VALIDATION_RETRIES,
@@ -20,7 +20,7 @@ from llm.json_runner import (
     run_json_llm,
     run_parallel_map,
 )
-from results_models import (
+from token_usage import (
     GRADED_RESULT_USAGE_KEY,
     TokenUsage,
     detach_usage_from_graded_result,
