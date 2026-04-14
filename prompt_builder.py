@@ -126,12 +126,13 @@ def build_genai_detection_user_message(
     student_parsed: dict,
     max_code_chars: int,
 ) -> str | None:
-    """Build user message for optional GenAI suspicion pass (question + markdown + code only).
+    """Build user message for optional GenAI suspicion pass.
 
+    Includes question text, markdown answer, code, and code output (truncated).
     Returns ``None`` if there is no substantive content to analyze for any listed qid.
     """
     parts: list[str] = [
-        "Analyze the following questions. "
+        "Analyze the following student answers for possible GenAI-assisted writing. "
         'Return a JSON object with a "results" array, one entry per question ID.\n'
     ]
     listed: list[str] = []
@@ -143,8 +144,11 @@ def build_genai_detection_user_message(
         q_text = (qd.get("question_markdown") or "").strip()
         md_ans = (qd.get("answer_markdown_concat") or "").strip()
         code = (qd.get("answer_code_concat") or "").strip()
+        output = (qd.get("answer_text_concat") or "").strip()
         if len(code) > cap:
             code = truncate_output(code, cap)
+        if len(output) > cap // 2:
+            output = truncate_output(output, cap // 2)
         if not q_text and not md_ans and not code:
             continue
         listed.append(qid)
@@ -155,6 +159,8 @@ def build_genai_detection_user_message(
             block.append("Student markdown answer:\n" + _sanitize_student_text(md_ans))
         if code:
             block.append("Student code:\n" + _sanitize_student_text(code))
+        if output:
+            block.append("Code output:\n" + _sanitize_student_text(output))
         parts.append("\n\n".join(block))
     if not listed:
         return None
