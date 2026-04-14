@@ -1,6 +1,5 @@
 """LLM-based per-group and per-student grading logic."""
 
-import json
 import logging
 from pathlib import Path
 
