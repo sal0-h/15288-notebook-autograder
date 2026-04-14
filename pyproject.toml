@@ -1,3 +1,12 @@
+[project]
+name = "ai-autograder"
+version = "1.0.0"
+description = "LLM-assisted grading pipeline for Jupyter notebook assignments"
+requires-python = ">=3.11"
+
 [tool.black]
 line-length = 88
 target-version = ["py311"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

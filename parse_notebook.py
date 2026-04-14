@@ -180,6 +180,12 @@ def parse_notebook(nb_path: Path, config: AppConfig) -> dict:
             qid = f"{sec_id}.{qnum}"
 
             if current_section != sec_id:
+                logger.info(
+                    "Question %s implies section %s (previous was %s) — creating implicitly",
+                    qid,
+                    sec_id,
+                    current_section,
+                )
                 current_section = sec_id
                 ensure_section(sec_id)
 
@@ -229,6 +235,11 @@ def parse_notebook(nb_path: Path, config: AppConfig) -> dict:
                 dupes = result.setdefault("duplicate_qids", [])
                 if qid not in dupes:
                     dupes.append(qid)
+                logger.warning(
+                    "Duplicate question ID %s in %s — last occurrence wins",
+                    qid,
+                    nb_path.name,
+                )
             seen_qids.add(qid)
 
             result["sections"][sec_id]["questions"][qid] = q_obj

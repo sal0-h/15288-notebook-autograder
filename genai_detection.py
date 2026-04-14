@@ -17,11 +17,62 @@ from grading_models import (
     GenaiQuestionResult,
 )
 from llm.json_runner import MAX_JSON_LLM_ATTEMPTS, execute_llm_task, extract_llm_questions, run_jobs
-from prompt_builder import build_genai_detection_user_message, load_prompt
+from prompt_builder import (
+    _sanitize_student_text,
+    get_question_data,
+    load_prompt,
+    truncate_output,
+)
 from results_models import GradedResult
 from results_store import load_results, save_results
 from utils import get_assignment_output_paths, get_job_logger, get_openai_client
 
+
+def build_genai_detection_user_message(
+    qids: list[str],
+    student_parsed: dict,
+    max_code_chars: int,
+) -> str | None:
+    """Build user message for optional GenAI suspicion pass.
+
+    Includes question text, markdown answer, code, and code output (truncated).
+    Returns ``None`` if there is no substantive content to analyze for any listed qid.
+    """
+    parts: list[str] = [
+        "Analyze the following student answers for possible GenAI-assisted writing. "
+        'Return a JSON object with a "results" array, one entry per question ID.\n'
+    ]
+    listed: list[str] = []
+    cap = max(1024, int(max_code_chars))
+    for qid in qids:
+        qd = get_question_data(student_parsed, qid)
+        if not qd:
+            continue
+        q_text = (qd.get("question_markdown") or "").strip()
+        md_ans = (qd.get("answer_markdown_concat") or "").strip()
+        code = (qd.get("answer_code_concat") or "").strip()
+        output = (qd.get("answer_text_concat") or "").strip()
+        if len(code) > cap:
+            code = truncate_output(code, cap)
+        if len(output) > cap // 2:
+            output = truncate_output(output, cap // 2)
+        if not q_text and not md_ans and not code:
+            continue
+        listed.append(qid)
+        block = [f"--- QUESTION {qid} ---"]
+        if q_text:
+            block.append("Question text:\n" + _sanitize_student_text(q_text))
+        if md_ans:
+            block.append("Student markdown answer:\n" + _sanitize_student_text(md_ans))
+        if code:
+            block.append("Student code:\n" + _sanitize_student_text(code))
+        if output:
+            block.append("Code output:\n" + _sanitize_student_text(output))
+        parts.append("\n\n".join(block))
+    if not listed:
+        return None
+    parts.insert(1, f"Question IDs: {', '.join(listed)}\n")
+    return "\n\n".join(parts)
 
 @dataclass(frozen=True)
 class _DetectionJob:
