@@ -34,6 +34,7 @@
             <label for="setupAssignmentName"><strong>Assignment name</strong></label>
             <input type="text" id="setupAssignmentName" class="input-assignment-name" placeholder="e.g. LabTest_3_S26" autocomplete="off">
             <button type="button" class="btn" id="setupLoadBtn" title="If output/{name}/config.yaml exists, loads it; otherwise creates the folder and a default config.">Load / Create</button>
+            <button type="button" class="btn btn-secondary" id="setupResetBtn" title="Reset all config fields to default values">Reset to defaults</button>
             <span class="status-ok text-muted-xs" id="setupOutputDirHint"></span>
         </div>
         <div class="mb-2 flex-row-gap10 flex-wrap setup-assignment-switcher">
@@ -185,7 +186,7 @@
         </div>
         <div class="mb-2 flex-row-gap10">
             <button type="button" class="btn" id="rubricGenerateBtn">Generate Rubrics</button>
-            <span id="rubricEstimate" class="status-ok text-muted-sm"></span>
+            <span id="rubricEstimate" class="status-ok" style="font-size:0.9rem;font-weight:500"></span>
             <button type="button" class="btn btn-secondary" id="rubricSaveBtn" disabled>Save Rubrics</button>
             <button type="button" class="btn btn-secondary" id="rubricClearBtn">Clear All Rubrics</button>
         </div>
@@ -204,7 +205,7 @@
             <button type="button" class="btn btn-secondary btn-align-start" id="genaiDetectBtn" title="Optional: run a separate cheap-model pass to flag possible GenAI-style answers. Does not change scores.">Run GenAI detection</button>
             <label class="review-flagged-inline mb-0"><input type="checkbox" id="genaiAutoRun"> Auto-run after grading</label>
             <div class="grade-estimate-block">
-                <span id="gradeEstimate" class="status-ok text-muted-sm"></span>
+                <span id="gradeEstimate" class="status-ok" style="font-size:0.9rem;font-weight:500"></span>
                 <p id="gradeQueueHint" class="text-muted-sm mb-0 hidden" role="status"></p>
             </div>
         </div>
@@ -219,6 +220,7 @@
             <div class="review-chrome-actions">
                 <button type="button" class="btn btn-secondary btn-sm" id="reviewLoadBtn">Load results</button>
                 <button type="button" class="btn btn-secondary btn-sm" id="reviewCalibrateBtn">Calibrate</button>
+                <button type="button" class="btn btn-secondary btn-sm" id="reviewBatchRegradeBtn" title="Re-grade all students flagged as needs-review">Re-grade flagged</button>
                 <label class="review-flagged-inline"><input type="checkbox" id="reviewFlaggedFirst"> Flagged first</label>
             </div>
         </div>
