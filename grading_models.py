@@ -1,7 +1,8 @@
 """LLM response schemas and grading constants.
 
-All Pydantic models for structured LLM outputs live here: grading, rubric
-generation, rubric review, and GenAI detection.
+All Pydantic models for structured LLM outputs live here: grading responses,
+rubric generation, rubric review, and GenAI detection. Also re-exports
+pricing/cost helpers from token_usage for backward compatibility.
 """
 
 from typing import Literal

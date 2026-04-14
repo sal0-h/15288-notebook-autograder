@@ -1,4 +1,9 @@
-"""Pydantic config models, QID helpers, and config I/O for the AI Autograder."""
+"""Assignment configuration: schema, loading, saving, and path resolution.
+
+Central module for all config-related types (AppConfig, GradingConfig,
+ParsingConfig, RubricEntry) and I/O (load_app_config, save_config). Also
+provides AssignmentOutputPaths for canonical runtime paths.
+"""
 
 from __future__ import annotations
 
