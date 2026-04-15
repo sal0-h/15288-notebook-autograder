@@ -7,10 +7,6 @@ from pathlib import Path
 import pandas as pd
 
 from config_models import AppConfig, sort_key_qid, load_app_config
-from gradescope_submitters import (
-    MANIFEST_SCHEMA_VERSION,
-    submitter_key_to_results_filename,
-)
 from linter_export import build_linter_summary
 from parse_notebook import get_all_question_ids
 from results_models import GradedResult, Question
@@ -21,7 +17,7 @@ from utils import (
 from zip_helpers import write_to_zip
 
 _REPO_ROOT = Path(__file__).resolve().parent
-_GRADESCOPE_PY_MODULES = ("gradescope_submitters.py", "gradescope_runtime.py")
+_GRADESCOPE_PY_MODULES = ("gradescope_runtime.py",)
 
 RUN_AUTOGRADER = """#!/usr/bin/env python3
 import sys
@@ -41,52 +37,6 @@ def _extract_question_scores(q: Question | dict) -> tuple[float, float, str]:
             str(q.get("feedback", "")),
         )
     return (float(q.score), float(q.max), str(q.feedback or ""))
-
-
-def _stem_to_submitter_key_map(stem_map: dict[str, str]) -> dict[str, str]:
-    """Invert submitter_key → notebook stem (stem is graded ``student_name`` / file stem)."""
-    out: dict[str, str] = {}
-    for key, stem in stem_map.items():
-        prev = out.get(stem)
-        if prev is not None and prev != key:
-            raise ValueError(
-                f"submitter_stem_map maps multiple keys to the same stem {stem!r}: "
-                f"{prev!r} vs {key!r}"
-            )
-        out[stem] = key
-    return out
-
-
-def build_precomputed_manifest(
-    submitter_stem_map: dict[str, str],
-    gradescope_json_stems: list[str],
-    *,
-    assignment_id: int | None,
-    course_id: int | None,
-) -> dict | None:
-    """
-    Build ``precomputed_manifest.json`` payload for the autograder ZIP.
-
-    Returns None when there is no id-level map or no matching graded stems.
-    """
-    if not submitter_stem_map:
-        return None
-    stem_to_key = _stem_to_submitter_key_map(submitter_stem_map)
-    entries: dict[str, dict[str, str]] = {}
-    for stem in gradescope_json_stems:
-        key = stem_to_key.get(stem)
-        if not key:
-            continue
-        fname = f"{submitter_key_to_results_filename(key)}.json"
-        entries[key] = {"file": f"results/{fname}", "display_name": stem}
-    if not entries:
-        return None
-    return {
-        "schema_version": MANIFEST_SCHEMA_VERSION,
-        "assignment_id": assignment_id,
-        "course_id": course_id,
-        "entries": entries,
-    }
 
 
 # Gradescope expects these at the root of the autograder zip
@@ -338,45 +288,18 @@ def export_autograder_zip(config: AppConfig) -> Path:
     if not json_files:
         raise FileNotFoundError(f"No JSON files in {gradescope_dir}. Run export first.")
 
-    stem_map_path = output_dir / "submitter_stem_map.json"
-    submitter_stem_map: dict[str, str] = {}
-    if stem_map_path.is_file():
-        loaded = json.loads(stem_map_path.read_text(encoding="utf-8"))
-        if isinstance(loaded, dict):
-            submitter_stem_map = {str(k): str(v) for k, v in loaded.items()}
-
-    stems = [p.stem for p in json_files]
-    manifest = build_precomputed_manifest(
-        submitter_stem_map,
-        stems,
-        assignment_id=config.gradescope_assignment_id,
-        course_id=config.gradescope_course_id,
-    )
-    stem_to_key = (
-        _stem_to_submitter_key_map(submitter_stem_map) if submitter_stem_map else {}
-    )
-
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
         write_to_zip(zf, "setup.sh", SETUP_SH, executable=True)
         write_to_zip(zf, "run_autograder", RUN_AUTOGRADER, executable=True)
         for mod in _GRADESCOPE_PY_MODULES:
             mod_path = _REPO_ROOT / mod
             write_to_zip(zf, mod, mod_path.read_text(encoding="utf-8"))
-        if manifest:
-            write_to_zip(
-                zf, "precomputed_manifest.json", json.dumps(manifest, indent=2)
-            )
-        map_path = output_dir / "student_name_map.json"
-        if map_path.exists():
-            zf.write(map_path, arcname="student_name_map.json")
+        # Bundle email→stem map for student lookup
+        email_map_path = output_dir / "email_stem_map.json"
+        if email_map_path.exists():
+            zf.write(email_map_path, arcname="email_stem_map.json")
         for jf in json_files:
-            human_arc = f"results/{jf.name}"
-            zf.write(jf, arcname=human_arc)
-            key = stem_to_key.get(jf.stem)
-            if key:
-                id_arc = f"results/{submitter_key_to_results_filename(key)}.json"
-                if id_arc != human_arc:
-                    zf.write(jf, arcname=id_arc)
+            zf.write(jf, arcname=f"results/{jf.name}")
 
     return zip_path
 

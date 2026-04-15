@@ -8,7 +8,6 @@ from pathlib import Path
 import yaml  # Used for Gradescope submission_metadata.yml (Ruby-style keys)
 
 from config_models import load_app_config as _load_app_config
-from gradescope_submitters import submitter_key_from_yaml_submitters
 from utils import sanitize_filename_component
 
 
@@ -110,10 +109,7 @@ def gather_submissions(
 
         seen_names: set[str] = set()
         results: list[dict] = []
-        student_name_map: dict[str, str] = {}  # normalized_name → stem (without .ipynb)
-        submitter_stem_map: dict[str, str] = (
-            {}
-        )  # Gradescope submitter key → stem (needs :id in YAML)
+        email_stem_map: dict[str, str] = {}  # email → notebook stem
 
         for sub_key, sub_data in data.items():
             if not isinstance(sub_data, dict):
@@ -158,29 +154,15 @@ def gather_submissions(
 
             msg = "" if status == "ok" else f"Duplicate submitter: {student_name}"
             if status == "ok":
+                shutil.copy2(nb_path, out_dir / safe_name)
+                # Map email → stem for Gradescope autograder lookup
                 submitters = (
                     sub_data.get(":submitters") if isinstance(sub_data, dict) else None
                 ) or []
-                sk = submitter_key_from_yaml_submitters(
-                    submitters if isinstance(submitters, list) else []
-                )
-                if sk:
-                    prev = submitter_stem_map.get(sk)
-                    if prev is not None and prev != stem_only:
-                        status = "duplicate"
-                        msg = (
-                            f"Submitter id key {sk!r} already mapped to {prev!r}, "
-                            f"conflicts with {stem_only!r}"
-                        )
-
-                if status == "ok":
-                    shutil.copy2(nb_path, out_dir / safe_name)
-                    normalized = "".join(
-                        c for c in student_name.strip().lower() if c.isalnum()
-                    )
-                    student_name_map[normalized] = stem_only
-                    if sk:
-                        submitter_stem_map[sk] = stem_only
+                if submitters:
+                    email = (submitters[0].get(":email") or "").strip().lower()
+                    if email:
+                        email_stem_map[email] = stem_only
 
             results.append(
                 _result_entry(
@@ -191,16 +173,12 @@ def gather_submissions(
                 )
             )
 
-        # Persist metadata map to parent directory (output/{assignment_name})
+        # Persist email→stem map for autograder ZIP
         import json
 
-        map_path = out_dir.parent / "student_name_map.json"
+        map_path = out_dir.parent / "email_stem_map.json"
         with open(map_path, "w", encoding="utf-8") as f:
-            json.dump(student_name_map, f, indent=2)
-
-        stem_map_path = out_dir.parent / "submitter_stem_map.json"
-        with open(stem_map_path, "w", encoding="utf-8") as f:
-            json.dump(submitter_stem_map, f, indent=2)
+            json.dump(email_stem_map, f, indent=2)
 
         return results
     finally:
