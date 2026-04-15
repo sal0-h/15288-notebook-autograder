@@ -48,21 +48,25 @@ def main() -> None:
         email = (users[0].get("email") or "").strip().lower()
 
     if not email:
-        name = (users[0].get("name", "") if users else "")
+        name = users[0].get("name", "") if users else ""
         OUT_PATH.write_text(
-            json.dumps(error_response(
-                f"No email found in submission metadata. Cannot look up results. (name={name!r})"
-            )),
+            json.dumps(
+                error_response(
+                    f"No email found in submission metadata. Cannot look up results. (name={name!r})"
+                )
+            ),
             encoding="utf-8",
         )
         return
 
     if not EMAIL_MAP_PATH.is_file():
         OUT_PATH.write_text(
-            json.dumps(error_response(
-                "email_stem_map.json not found in autograder package. "
-                "Re-run export and re-upload the autograder ZIP."
-            )),
+            json.dumps(
+                error_response(
+                    "email_stem_map.json not found in autograder package. "
+                    "Re-run export and re-upload the autograder ZIP."
+                )
+            ),
             encoding="utf-8",
         )
         return
@@ -72,10 +76,12 @@ def main() -> None:
     if not stem:
         print(f"email lookup miss: {email!r} not in email_stem_map", file=sys.stderr)
         OUT_PATH.write_text(
-            json.dumps(error_response(
-                f"No pre-computed results for {email}. "
-                "The instructor may need to re-run export and re-upload the autograder ZIP."
-            )),
+            json.dumps(
+                error_response(
+                    f"No pre-computed results for {email}. "
+                    "The instructor may need to re-run export and re-upload the autograder ZIP."
+                )
+            ),
             encoding="utf-8",
         )
         return
@@ -84,10 +90,12 @@ def main() -> None:
     if not result_path.is_file():
         print(f"result file missing: {result_path}", file=sys.stderr)
         OUT_PATH.write_text(
-            json.dumps(error_response(
-                f"Result file for {email} not found in package. "
-                "Re-run export and re-upload the autograder ZIP."
-            )),
+            json.dumps(
+                error_response(
+                    f"Result file for {email} not found in package. "
+                    "Re-run export and re-upload the autograder ZIP."
+                )
+            ),
             encoding="utf-8",
         )
         return

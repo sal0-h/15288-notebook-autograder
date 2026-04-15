@@ -13,10 +13,10 @@ from config_models import (
     ensure_app_config,
     get_assignment_output_paths,
     load_app_config,
+    save_config,
 )
 from utils import (
     sanitize_filename_component,
-    save_config,
     setup_assignment_logging,
 )
 

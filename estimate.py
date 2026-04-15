@@ -4,14 +4,11 @@ import json
 from typing import Any
 
 from config_models import AppConfig, DEFAULT_MODEL, load_solution_parsed
-from grading_helpers import effective_groups
 from token_usage import TokenUsage, usage_cost_usd
 from prompt_builder import build_group_prompt, estimate_tokens, load_prompt
 from rubric_generate import build_rubric_group_prompt
 from batch_grader import load_grade_queue
-from utils import (
-    get_assignment_output_paths,
-)
+from config_models import get_assignment_output_paths
 
 RUBRIC_SYSTEM_LEN = 800  # approx chars
 RUBRIC_REVIEW_SYSTEM_LEN = 700  # approx chars for review pass
@@ -57,7 +54,7 @@ def estimate_rubrics(config: AppConfig) -> dict:
         return _estimate_error("Run parse first")
 
     grading_config = config.grading
-    groups = effective_groups(grading_config)
+    groups = grading_config.get_effective_groups()
     model = config.rubric_model or config.model or DEFAULT_MODEL
 
     prompt_tokens = estimate_tokens(" " * RUBRIC_SYSTEM_LEN, 0, model)
@@ -110,7 +107,7 @@ def estimate_grade(config: AppConfig, student_name: str | None = None) -> dict:
         return _estimate_error("No parsed files. Run parse first.")
 
     grading_config = config.grading
-    groups = effective_groups(grading_config)
+    groups = grading_config.get_effective_groups()
 
     model = config.model or DEFAULT_MODEL
 

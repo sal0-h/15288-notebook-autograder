@@ -34,6 +34,17 @@ def require_active_config() -> AppConfig:
         raise HTTPException(status_code=500, detail=f"Failed to load config: {e}")
 
 
+def deep_merge(base: dict, override: dict) -> dict:
+    """Recursively merge override into base. Returns new dict."""
+    merged = dict(base or {})
+    for k, v in (override or {}).items():
+        if isinstance(v, dict) and isinstance(merged.get(k), dict):
+            merged[k] = deep_merge(merged[k], v)
+        else:
+            merged[k] = v
+    return merged
+
+
 def safe_path(base: Path, user_input: str) -> Path:
     """Resolve path and ensure it stays under base. Raises HTTPException on path traversal."""
     base_resolved = base.resolve()

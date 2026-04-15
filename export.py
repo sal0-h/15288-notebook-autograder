@@ -10,10 +10,8 @@ from config_models import AppConfig, sort_key_qid, load_app_config
 from linter_export import build_linter_summary
 from parse_notebook import get_all_question_ids
 from results_models import GradedResult, Question
-from utils import (
-    get_assignment_output_paths,
-    sanitize_filename_component,
-)
+from config_models import get_assignment_output_paths
+from utils import sanitize_filename_component
 from zip_helpers import write_to_zip
 
 _REPO_ROOT = Path(__file__).resolve().parent

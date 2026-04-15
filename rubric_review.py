@@ -24,10 +24,8 @@ from llm.json_runner import (
     run_jobs,
 )
 from prompt_builder import get_question_data, load_prompt
-from utils import (
-    get_job_logger,
-    get_openai_client,
-)
+from llm_client import get_openai_client
+from utils import get_job_logger
 
 
 @dataclass(frozen=True)

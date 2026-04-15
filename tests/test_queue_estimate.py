@@ -13,7 +13,7 @@ import pytest
 from batch_grader import load_grade_queue
 from config_models import AppConfig, default_config, ensure_app_config
 from estimate import estimate_grade
-from utils import get_assignment_output_paths
+from config_models import get_assignment_output_paths
 
 
 def _make_solution(qids: list[str]) -> dict:

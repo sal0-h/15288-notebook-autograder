@@ -28,7 +28,9 @@ from prompt_builder import (
 )
 from results_models import GradedResult
 from results_store import load_results, save_results
-from utils import get_assignment_output_paths, get_job_logger, get_openai_client
+from config_models import get_assignment_output_paths
+from llm_client import get_openai_client
+from utils import get_job_logger
 
 
 def build_genai_detection_user_message(
