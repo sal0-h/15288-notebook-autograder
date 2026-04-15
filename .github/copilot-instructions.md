@@ -53,7 +53,7 @@ gather → parse → generate-rubrics → grade → calibrate → export
 | LLM engine | `llm_client.py` (OpenAI client, temperature), `llm/json_runner.py` (structured output, retry, `run_jobs`, `extract_llm_questions`) |
 | Pipeline | `parse_notebook.py`, `rubric_generate.py`, `rubric_review.py`, `grade.py` (returns `GradedResult`), `batch_grader.py`, `genai_detection.py`, `calibrate.py` |
 | Prompt | `prompt_builder.py` (prompt construction, sanitization, question type injection), `prompts/DEFAULT/*.md` (templates), `prompts/DEFAULT/question_types.yaml` (per-type grading instructions) |
-| Export | `export.py` (Gradescope JSON, Excel, autograder ZIP), `linter_export.py` + `linter_run_autograder.py.tpl` (format linter ZIP), `gradescope_runtime.py` + `gradescope_submitters.py` (Gradescope harness), `zip_helpers.py` |
+| Export | `export.py` (Gradescope JSON, Excel, autograder ZIP), `linter_export.py` + `linter_run_autograder.py.tpl` (format linter ZIP), `gradescope_runtime.py` (Gradescope harness, email-based lookup), `zip_helpers.py` |
 | Web | `app.py` (FastAPI factory), `api/routers/` (route handlers), `api/state.py` (locks, config cache) |
 | Shared | `utils.py` (logging, filename sanitization), `grading_helpers.py` (grade_only filtering) |
 | Tools | `tag_notebook.py` (inject question type tags into notebook cells) |
