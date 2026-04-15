@@ -42,7 +42,7 @@ ai_autograder/
 ├── gather.py               Submission extraction from Gradescope export
 ├── config_models.py        AppConfig, ParsingConfig, GradingConfig, config I/O, paths
 ├── grade.py                Per-student and per-group grading logic
-├── grading_helpers.py      grade_only filtering, effective_groups, needs_merge
+├── grading_helpers.py      grade_only filtering, needs_merge, skipped_feedback
 ├── grading_models.py       Pydantic schemas for all LLM structured outputs
 ├── linter_export.py        Pre-deadline format linter autograder
 ├── llm/
@@ -88,10 +88,10 @@ ai_autograder/
 | `main.py`            | CLI, config write, pipeline orchestration                            | All pipeline modules                                               |
 | `app.py`             | FastAPI app factory; includes routers from `api/routers/`          | `api.state`, router modules                                        |
 | `config_models.py`   | AppConfig, ParsingConfig, GradingConfig, default_config              | nothing (leaf)                                                     |
-| `grading_helpers.py` | grade_only filtering, effective_groups, needs_merge                  | grading_models                                                     |
+| `grading_helpers.py` | grade_only filtering, needs_merge, skipped_feedback                  | grading_models                                                     |
 | `pipeline_runner.py` | Thin wrappers for gather, parse, calibrate, export, estimate, genai | gather, parse_notebook, calibrate, export, estimate, `genai_detection` |
 | `results_store.py`   | load_results, save_results, update_student, load_results_with_backup | nothing (leaf)                                                     |
-| `utils.py`           | Config load/save, logging, OpenAI client                             | config_models                                                      |
+| `utils.py`           | Assignment-scoped logging, filename sanitization                     | config_models                                                      |
 | `grading_models.py`  | LLM response Pydantic schemas, constants                             | nothing (leaf)                                                     |
 | `prompt_builder.py`  | Prompt loading, token counting, sanitization, JSON parsing           | `utils`                                                            |
 | `parse_notebook.py`  | Notebook → parsed JSON                                               | `utils`                                                            |
@@ -115,7 +115,7 @@ Prefer these surfaces when adding features so CLI and web app stay aligned:
 - **CLI:** `[main.py](../main.py)` — uses `[pipeline_runner.py](../pipeline_runner.py)` for gather, parse, calibrate, and export (same calls as HTTP routes).
 - **HTTP:** `[app.py](../app.py)` and `[api/routers/](../api/routers/)` — load config via `[api/state.py](../api/state.py)` (`get_active_app_config()` for pipeline work); call `pipeline_runner`, `batch_grader`, `grade`, `export`, etc.
 - **Shared step wrappers:** `[pipeline_runner.py](../pipeline_runner.py)` (`run_gather`, `run_parse`, `run_export`, …).
-- **Config I/O:** `[utils.load_config](../utils.py)` / `load_app_config` for assignment YAML; `[ensure_app_config](../config_models.py)` at dict/`AppConfig` boundaries.
+- **Config I/O:** `load_app_config` / `save_config` in `config_models.py` for assignment YAML; `ensure_app_config` at dict/`AppConfig` boundaries.
 
 ---
 
@@ -141,31 +141,22 @@ Contains everything else — model choice, tokenizer budgets, rubrics, question 
 parsing regexes, etc. This is written by the pipeline and should not be hand-edited
 while grading is running.
 
-### Loading logic (`utils.load_config`)
+### Loading logic (`load_app_config`)
 
-`load_config(config_path: Path)` requires an explicit path to the assignment config.
+`load_app_config(config_path: Path)` in `config_models.py` requires an explicit path to the assignment config.
 
 ```
 config_path must point to output/{assignment_name}/config.yaml
-  → load that file directly as the assignment config
+  → load YAML as dict
   → infer project_root as config_path.parent.parent.parent
   → resolve relative paths against project_root
-  → normalize derived paths like output_dir, submissions_dir, parsed_dir
+  → normalize derived paths (output_dir, submissions_dir, parsed_dir)
+  → validate via ensure_app_config → return AppConfig
 ```
 
-After resolution, relative paths (`solution_notebook`, `submissions_dir`, etc.) are
-resolved against the project root. Defaults are filled in via `merge_partial_config_dict`
-in `config_models` (same defaults as `AppConfig`).
-
-The merged dict is validated via `ensure_app_config(cfg)` (same coercion rules as
-everywhere else), then returned as a plain dict with `model_dump()` for
-YAML/HTTP and other dict-shaped consumers.
-
-`**load_app_config(config_path)**` runs the same load path but returns `**AppConfig**`
-directly (no dict round-trip). Prefer it inside the grading/pipeline stack. The web
-app exposes `**get_active_app_config()**` in `api.state` for routes that call
-`pipeline_runner` / `batch_grader` / export; `**get_active_config()**` remains a dict
-for merge-heavy endpoints (e.g. `PUT /config`). See [docs/README.md](README.md).
+The web app caches the loaded `AppConfig` via `get_active_app_config()` in `api.state`
+(call `invalidate_config_cache()` after saving). Config is saved with `save_config()`
+from `config_models.py`.
 
 ### `AppConfig` schema (`config_models.py`)
 
@@ -468,7 +459,7 @@ burning completion budget on single-question groups.
 
 #### Per-student (`grade_student`)
 
-Iterates over all groups from `effective_groups(grading_config)` (in `grading_helpers`) or `grading_config.get_effective_groups()`:
+Iterates over all groups from `grading_config.get_effective_groups()`:
 
 - Groups where all questions are absent from the student's parsed output are skipped
 with `[no submission]` scores (no LLM call).
@@ -531,7 +522,7 @@ of 2 scores per question is required before statistics are computed.
 
 - Reads `graded_results.json`.
 - Writes `output/gradescope/{StudentName}.json` in Gradescope autograder format
-(array of `{name, score, max_score, output, visibility}` test entries).
+(array of `{name, number, score, max_score, status, output, output_format, visibility}` test entries; visibility defaults to `after_published`).
 - Applies `cfg.gradescope_title_mapping` to rename QID labels in Gradescope output.
 - If `grade_only` is set, only those QIDs appear in the Gradescope output.
 - Writes `Final_Grades.xlsx` with one row per student and one column per question.
@@ -704,7 +695,7 @@ deep-merged with defaults and existing config before saving:
   `solution_notebook = ""` to avoid stale cross-assignment paths.
 3. Deep-merge `default_config("default")`, existing config, and incoming payload.
 4. Validate via `ensure_app_config(merged)` (same coercion as the rest of the pipeline).
-5. Save via `save_config(app_config_to_yaml_data(validated), ...)`.
+5. Save via `save_config(validated.model_dump(mode="python"), config_path)` and call `state.invalidate_config_cache()`.
 
 The UI sends only the fields the user changed; the merge preserves everything else.
 
@@ -811,9 +802,9 @@ grade_student(cfg: AppConfig | dict)  # accepts both for flexibility
 Canonical QIDs are numeric strings: `"1.1"`, `"2.3"`, etc.
 
 Anywhere a QID could arrive with a `Q` prefix (from LLM output, UI, YAML),
-use **`normalize_qid()`** from `config_models` (re-exported by `utils`) — e.g. grading postprocess copies each `QuestionGrade` with a normalized `question_id`.
+use **`normalize_qid()`** from `config_models` — e.g. grading postprocess copies each `QuestionGrade` with a normalized `question_id`.
 
-Config helpers (`grade_only_list`, `effective_groups` in `grading_helpers.py`; also available as methods on `GradingConfig`) operate on
+Config helpers (`filter_groups_by_grade_only`, `needs_merge` in `grading_helpers.py`; `get_grade_only()` and `get_effective_groups()` as methods on `GradingConfig`) operate on
 already-canonical IDs. Do not compare raw LLM keys to config QIDs without normalizing.
 
 ### Incremental saves
