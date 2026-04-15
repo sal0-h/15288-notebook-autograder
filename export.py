@@ -170,11 +170,12 @@ def _export_gradescope_json(
             tests.append(
                 {
                     "name": gs_title_mapping.get(qid, qid),
+                    "number": qid,
                     "score": score,
                     "max_score": max_s,
                     "output": out,
                     "output_format": "md",
-                    "visibility": "visible",
+                    "visibility": "after_published",
                 }
             )
 
@@ -185,7 +186,12 @@ def _export_gradescope_json(
             )
         )
 
-        gs_data = {"tests": tests}
+        gs_data = {
+            "output": f"**{student_name}** — {r.total_score}/{r.total_max}",
+            "output_format": "md",
+            "visibility": "after_published",
+            "tests": tests,
+        }
         safe_name = sanitize_filename_component(
             student_name, if_empty="unknown_student"
         )
