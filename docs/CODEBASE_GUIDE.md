@@ -348,16 +348,13 @@ the student name as the filename stem (e.g. `Alice Smith.ipynb`).
 
 Writes next to the assignment output root (parent of `submissions/`):
 
-- `student_name_map.json` — normalized display name → notebook stem (legacy autograder lookup).
-- `submitter_stem_map.json` — canonical Gradescope submitter id key → notebook stem when every
-  `:submitter` row includes `:id` (matches autograder `submission_metadata.json` `users[].id`).
+- `email_stem_map.json` — student email → notebook stem (used by Gradescope autograder for lookup).
 
 Handles:
 
 - ZIP input (extracts first, then processes)
 - `assignment_*_export` subdirectory layout from Gradescope
 - Missing and duplicate submissions (returned in result dicts with appropriate status)
-- Conflicting duplicate Gradescope submitter ids mapping to different stems (reported as duplicate)
 
 Does **not** modify `config.yaml`.
 
@@ -542,21 +539,15 @@ of 2 scores per question is required before statistics are computed.
 `export_autograder_zip`:
 
 - Bundles all per-student JSONs from `gradescope/` into a Gradescope autograder ZIP under
-`results/{stem}.json` (human-readable stem), plus **`results/{id_key}.json`** copies when
-`submitter_stem_map.json` maps Gradescope submitter keys to those stems.
-- Includes **`precomputed_manifest.json`** (schema version 1) when the stem map yields at least
-one entry: `entries[submitter_key] → { file, display_name }`, optional `assignment_id` /
-`course_id` from config (`gradescope_assignment_id`, `gradescope_course_id`) for runtime
-mismatch detection against `submission_metadata.json`.
-- Ships **`gradescope_runtime.py`** and **`gradescope_submitters.py`** at the ZIP root; the thin
-`run_autograder` adds `/autograder/source` to `sys.path` and calls `gradescope_runtime.main()`.
-- Runtime lookup order: manifest + canonical submitter key (sorted `users[].id`), then id-keyed
-file under `results/`, then legacy **`student_name_map.json`** normalized-name path.
-- ZIP entries for `setup.sh` and `run_autograder` use `create_system=3` (Unix) and
-`external_attr = 0o755 << 16` to set executable bits for Gradescope.
+`results/{stem}.json`.
+- Includes **`email_stem_map.json`** mapping student emails to notebook stems for runtime lookup.
+- Ships **`gradescope_runtime.py`** at the ZIP root; the thin `run_autograder` adds
+`/autograder/source` to `sys.path` and calls `gradescope_runtime.main()`.
+- Runtime lookup: reads `users[0].email` from `submission_metadata.json`, looks up stem in
+`email_stem_map.json`, copies `results/{stem}.json` to output.
+- ZIP entries for `setup.sh` and `run_autograder` use Unix executable bits via `zip_helpers.write_to_zip`.
 
-**Modules:** `gradescope_submitters.py` (canonical keys, manifest schema constant),
-`gradescope_runtime.py` (Gradescope-side resolver).
+**Module:** `gradescope_runtime.py` (Gradescope-side email-based resolver).
 
 ---
 
@@ -764,8 +755,7 @@ Tests live in `tests/` and are run with `pytest tests/ -q`.
 | `test_grade.py`          | `grade_student` and `grade_group` logic including `grade_only`, merge, skip, retry                 |
 | `test_rubric.py`         | Rubric generation and review pass logic                                                            |
 | `test_export.py`         | Excel and Gradescope JSON output, `gradescope_title_mapping`, autograder ZIP layout                  |
-| `test_gather.py`         | Submission extraction from metadata, `submitter_stem_map.json`                                     |
-| `test_gradescope_submitters.py` | Canonical submitter keys, manifest build, `gradescope_runtime` resolution                     |
+| `test_gather.py`         | Submission extraction from metadata, `email_stem_map.json`                                           |
 | `test_calibrate.py`      | Z-score computation and outlier flagging                                                           |
 | `test_app.py`            | FastAPI endpoints including config CRUD, `POST /parse-solution`, grading SSE, export downloads      |
 | `test_prompt_builder.py` | Prompt construction, sanitization, token budgeting                                                 |
