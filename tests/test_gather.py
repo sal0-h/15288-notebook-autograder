@@ -11,7 +11,6 @@ from gather import (
     get_student_name,
     load_submission_metadata,
 )
-from gradescope_submitters import submitter_key_from_yaml_submitters
 
 # ---------------------------------------------------------------------------
 # get_student_name (Gradescope export uses Ruby-style YAML keys)
@@ -124,9 +123,15 @@ class TestGatherFromFolder:
         assert len(result) == 1
         assert result[0]["status"] == "missing"
 
-    def test_persists_deterministic_name_map(self, tmp_path):
-        """gather_submissions creates student_name_map.json for export-time lookup."""
-        meta = {"submission_1": {":submitters": [{":name": "Alice Johnson"}]}}
+    def test_persists_email_stem_map(self, tmp_path):
+        """gather_submissions creates email_stem_map.json for autograder lookup."""
+        meta = {
+            "submission_1": {
+                ":submitters": [
+                    {":name": "Alice Johnson", ":email": "alice@example.com"}
+                ]
+            }
+        }
         (tmp_path / "submission_metadata.yml").write_text(
             yaml.dump(meta), encoding="utf-8"
         )
@@ -142,18 +147,11 @@ class TestGatherFromFolder:
 
         assert len(result) == 1
         assert result[0]["status"] == "ok"
-        assert result[0]["filename"] == "Alice Johnson.ipynb"
-        assert (out / "Alice Johnson.ipynb").exists()
 
-        # Verify map was persisted
-        map_path = out.parent / "student_name_map.json"
+        map_path = out.parent / "email_stem_map.json"
         assert map_path.exists()
         map_data = json.loads(map_path.read_text(encoding="utf-8"))
-        # Normalized name should map to the output stem (without .ipynb)
-        assert map_data["alicejohnson"] == "Alice Johnson"
-        stem_map_path = out.parent / "submitter_stem_map.json"
-        assert stem_map_path.exists()
-        assert json.loads(stem_map_path.read_text(encoding="utf-8")) == {}
+        assert map_data["alice@example.com"] == "Alice Johnson"
 
     def test_duplicate_sanitized_name_overwrites(self, tmp_path):
         """When sanitized names collide, the last submission wins (overwrite)."""
@@ -202,27 +200,3 @@ class TestGatherFromFolder:
         assert (out / "AB.ipynb").exists()
         content = json.loads((out / "AB.ipynb").read_text(encoding="utf-8"))
         assert content["cells"][0]["source"] == ["second"]
-
-    def test_submitter_stem_map_with_gradescope_ids(self, tmp_path):
-        meta = {
-            "submission_1": {
-                ":submitters": [{":name": "Alice", ":id": 4242}],
-            },
-        }
-        (tmp_path / "submission_metadata.yml").write_text(
-            yaml.dump(meta), encoding="utf-8"
-        )
-        folder = tmp_path / "submission_1"
-        folder.mkdir()
-        nb = {"cells": [], "nbformat": 4, "metadata": {}}
-        (folder / "nb.ipynb").write_text(json.dumps(nb), encoding="utf-8")
-        out = tmp_path / "out"
-        gather_submissions(tmp_path, out, from_zip=False)
-        stem_map = json.loads(
-            (out.parent / "submitter_stem_map.json").read_text(encoding="utf-8")
-        )
-        assert stem_map["4242"] == "Alice"
-        assert (
-            submitter_key_from_yaml_submitters(meta["submission_1"][":submitters"])
-            == "4242"
-        )
