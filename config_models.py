@@ -219,10 +219,6 @@ class AppConfig(BaseModel):
     genai_detection_model: str = "gpt-4.1-mini"
     genai_detection_max_code_chars: int = 12_000
     gradescope_title_mapping: dict[str, str] = Field(default_factory=dict)
-    # Optional: set to the Gradescope assignment/course shown in submission_metadata.json
-    # so the autograder ZIP rejects mismatched uploads (wrong assignment package).
-    gradescope_assignment_id: int | None = None
-    gradescope_course_id: int | None = None
     parsing: ParsingConfig = Field(default_factory=ParsingConfig)
     grading: GradingConfig = Field(default_factory=GradingConfig)
 

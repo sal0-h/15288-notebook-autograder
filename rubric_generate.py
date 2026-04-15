@@ -26,10 +26,8 @@ from llm.json_runner import (
 )
 from token_usage import TokenUsage, usage_cost_usd
 from prompt_builder import get_question_data, load_prompt, truncate_output
-from utils import (
-    get_job_logger,
-    get_openai_client,
-)
+from llm_client import get_openai_client
+from utils import get_job_logger
 
 GENERATION_FAILED = "[generation failed]"
 

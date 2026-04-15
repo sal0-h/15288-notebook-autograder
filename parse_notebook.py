@@ -319,7 +319,8 @@ def parse_all_students(config: AppConfig) -> tuple[dict | None, list[dict]]:
         solution_parsed is None if solution notebook not found.
         verification_report is a list of per-student dicts with status, questions_found, etc.
     """
-    from utils import get_assignment_output_paths, get_job_logger
+    from config_models import get_assignment_output_paths
+    from utils import get_job_logger
 
     logger = get_job_logger(config, __name__)
 

@@ -19,7 +19,7 @@ from dotenv import load_dotenv
 
 from batch_grader import load_grade_queue
 from config_models import load_app_config
-from utils import get_assignment_output_paths
+from config_models import get_assignment_output_paths
 
 
 def _ok(msg: str) -> None:

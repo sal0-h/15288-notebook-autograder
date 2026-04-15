@@ -11,12 +11,11 @@ from api import sse as sse_mod
 from api import state
 from api.validation import parse_student_name_path_param
 from genai_detection import run_genai_detection
-from grading_helpers import effective_groups
 from grade import grade_student
 from token_usage import TokenUsage
 from prompt_builder import validate_question_groups
 from results_store import find_student, load_results, save_results, update_student
-from utils import get_assignment_output_paths
+from config_models import get_assignment_output_paths
 
 logger = logging.getLogger(__name__)
 
@@ -92,7 +91,7 @@ async def api_grade_one(student_name: str):
         student_parsed["student_name"] = student_name
 
         grading_config = cfg.grading
-        groups = effective_groups(grading_config)
+        groups = grading_config.get_effective_groups()
         ungrouped = validate_question_groups(groups, solution_parsed)
 
         grade_only_merge = grading_config.grade_only_merge

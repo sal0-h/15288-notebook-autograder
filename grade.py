@@ -8,8 +8,6 @@ from pydantic import BaseModel
 
 from config_models import AppConfig, DEFAULT_MODEL
 from grading_helpers import (
-    grade_only_list,
-    effective_groups,
     skipped_feedback,
 )
 from grading_models import (
@@ -33,10 +31,8 @@ from prompt_builder import (
 )
 from results_models import GradedResult
 from config_models import load_app_config
-from utils import (
-    get_openai_client,
-    get_job_logger,
-)
+from llm_client import get_openai_client
+from utils import get_job_logger
 
 logger = logging.getLogger(__name__)
 
@@ -262,8 +258,8 @@ def grade_student(
         client = get_openai_client()
 
     grading_config = cfg.grading
-    groups = effective_groups(grading_config)
-    grade_only = grade_only_list(grading_config)
+    groups = grading_config.get_effective_groups()
+    grade_only = grading_config.get_grade_only()
     student_name = student_parsed.get("student_name", "Unknown")
     is_merge = merge_into is not None and grade_only is not None
 

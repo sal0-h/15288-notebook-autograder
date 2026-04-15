@@ -13,7 +13,7 @@ from api.helpers import require_active_config
 from api.validation import parse_student_name_path_param
 from results_models import GradedResult
 from results_store import load_results, save_results, update_student
-from utils import get_assignment_output_paths
+from config_models import get_assignment_output_paths
 
 router = APIRouter()
 

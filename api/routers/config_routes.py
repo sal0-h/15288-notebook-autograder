@@ -5,7 +5,11 @@ from __future__ import annotations
 import json
 from fastapi import APIRouter, Body, File, Form, HTTPException, UploadFile
 
-from api.helpers import build_parse_solution_response, resolve_solution_notebook_path
+from api.helpers import (
+    build_parse_solution_response,
+    deep_merge,
+    resolve_solution_notebook_path,
+)
 from api import state
 from pydantic import ValidationError
 
@@ -16,7 +20,7 @@ from config_models import (
 )
 from parse_notebook import parse_notebook
 from config_models import load_app_config, sanitize_assignment_name
-from utils import save_config
+from config_models import save_config
 
 router = APIRouter()
 
@@ -52,15 +56,6 @@ def api_get_config():
 def api_put_config(config: dict = Body(...)):
     """Validate and update config.yaml from UI."""
 
-    def _deep_merge(base: dict, override: dict) -> dict:
-        merged = dict(base or {})
-        for k, v in (override or {}).items():
-            if isinstance(v, dict) and isinstance(merged.get(k), dict):
-                merged[k] = _deep_merge(merged[k], v)
-            else:
-                merged[k] = v
-        return merged
-
     try:
         existing = state.get_active_app_config().model_dump(mode="python")
     except HTTPException as e:
@@ -85,7 +80,7 @@ def api_put_config(config: dict = Body(...)):
         config = dict(config)
         config["solution_notebook"] = ""
 
-    merged = _deep_merge(default_config("default"), _deep_merge(existing, config))
+    merged = deep_merge(default_config("default"), deep_merge(existing, config))
     try:
         validated = ensure_app_config(merged)
     except ValidationError as e:

@@ -25,11 +25,8 @@ from pipeline_runner import (
     run_parse,
 )
 from config_models import load_app_config, sanitize_assignment_name
-from utils import (
-    get_assignment_output_paths,
-    save_config,
-    setup_assignment_logging,
-)
+from config_models import get_assignment_output_paths, save_config
+from utils import setup_assignment_logging
 
 # -----------------------------------------------------------------------------
 # Programmatic config — edit this to customize
