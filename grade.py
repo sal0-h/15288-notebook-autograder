@@ -1,5 +1,6 @@
 """LLM-based per-group and per-student grading logic."""
 
+import logging
 from pathlib import Path
 
 from pydantic import BaseModel

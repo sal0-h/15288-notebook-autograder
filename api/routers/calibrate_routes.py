@@ -8,7 +8,8 @@ from fastapi import APIRouter
 
 from api import state
 from api.helpers import require_active_config
-from pipeline_runner import get_calibration_report, run_calibrate_step
+from calibrate import run_calibration
+from pipeline_runner import get_calibration_report
 
 router = APIRouter()
 
@@ -17,7 +18,7 @@ router = APIRouter()
 async def api_calibrate():
     """Run calibration (outlier detection) on graded results."""
     cfg = require_active_config()
-    flagged = await asyncio.to_thread(run_calibrate_step, cfg)
+    flagged = await asyncio.to_thread(run_calibration, cfg)
     return {"flagged": flagged, "count": len(flagged)}
 
 

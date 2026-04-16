@@ -11,7 +11,7 @@ from fastapi.responses import FileResponse
 from api import state
 from api.helpers import require_active_config
 from linter_export import export_linter_zip
-from pipeline_runner import run_export, run_export_autograder_zip
+from export import export_all, export_autograder_zip
 
 router = APIRouter()
 
@@ -20,7 +20,7 @@ router = APIRouter()
 async def api_export():
     """Run export step. Returns summary and Excel download path."""
     cfg = require_active_config()
-    return await asyncio.to_thread(run_export, cfg)
+    return await asyncio.to_thread(export_all, cfg)
 
 
 @router.get("/export/excel")
@@ -40,8 +40,7 @@ def api_download_excel():
 def api_download_autograder_zip():
     """Create Gradescope autograder zip and return it for download."""
     cfg = require_active_config()
-    run_export(cfg)
-    zip_path = run_export_autograder_zip(cfg)
+    zip_path = export_autograder_zip(cfg)
     return FileResponse(zip_path, filename="gradescope_autograder.zip")
 
 

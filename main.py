@@ -18,12 +18,12 @@ from pydantic import ValidationError
 from config_models import default_config
 from parse_notebook import get_all_question_ids, get_total_points
 from pipeline_runner import (
-    run_calibrate_step,
-    run_export,
     run_gather,
     run_genai_detection,
     run_parse,
 )
+from calibrate import run_calibration
+from export import export_all
 from config_models import load_app_config, sanitize_assignment_name
 from config_models import get_assignment_output_paths, save_config
 from utils import setup_assignment_logging
@@ -217,11 +217,11 @@ Examples:
             logging.warning("%s", err)
 
     if "calibrate" in steps:
-        flagged = run_calibrate_step(cfg)
+        flagged = run_calibration(cfg)
         print(f"Calibrate: {len(flagged)} outlier(s) flagged")
 
     if "export" in steps:
-        summary = run_export(cfg)
+        summary = export_all(cfg)
         print(f"Export: {summary['students']} students → {summary['excel_path']}")
 
     return 0

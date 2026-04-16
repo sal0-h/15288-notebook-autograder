@@ -825,7 +825,7 @@ class TestExportEndpoint:
         mock_config["output_dir"] = str(out)
         with (
             patch_active_assignment(mock_config),
-            patch("pipeline_runner.run_export") as mock_export,
+            patch("api.routers.export_routes.export_all") as mock_export,
         ):
             mock_export.return_value = {
                 "students": 1,

@@ -86,3 +86,32 @@ class TestLoadSolutionParsed:
         )
         with pytest.raises(FileNotFoundError):
             load_solution_parsed(cfg)
+
+
+class TestGradingQidNormalization:
+    def test_grade_only_normalizes_q_prefix(self):
+        cfg = ensure_app_config(
+            {
+                "assignment_name": "Demo",
+                "grading": {"question_groups": [["1.1"]], "grade_only": ["Q1.1"]},
+            }
+        )
+        assert cfg.grading.grade_only == ["1.1"]
+
+    def test_question_groups_normalize_q_prefix(self):
+        cfg = ensure_app_config(
+            {
+                "assignment_name": "Demo",
+                "grading": {"question_groups": [["Q1.1", "q1.2"]]},
+            }
+        )
+        assert cfg.grading.question_groups == [["1.1", "1.2"]]
+
+    def test_invalid_qid_raises(self):
+        with pytest.raises(ValueError):
+            ensure_app_config(
+                {
+                    "assignment_name": "Demo",
+                    "grading": {"question_groups": [["QX"]]},
+                }
+            )
