@@ -20,7 +20,7 @@ from llm.json_runner import run_jobs
 from prompt_builder import validate_question_groups
 from results_store import load_results, save_results, update_student
 from config_models import get_assignment_output_paths
-from llm_client import get_openai_client
+from llm.client import get_openai_client
 from utils import get_job_logger
 
 logger = logging.getLogger(__name__)

@@ -50,7 +50,7 @@ gather → parse → generate-rubrics → grade → calibrate → export
 | Layer | Modules |
 |-------|---------|
 | Config & models | `config_models.py` (AppConfig, schema, load/save, paths, `load_solution_parsed`), `grading_models.py` (all LLM response schemas), `results_models.py` (GradedResult, Question), `token_usage.py` (TokenUsage, pricing, cost) |
-| LLM engine | `llm_client.py` (OpenAI client, temperature), `llm/json_runner.py` (structured output, retry, `run_jobs`, `extract_llm_questions`, `LlmContext`, `load_llm_context`) |
+| LLM engine | `llm/client.py` (OpenAI client, temperature), `llm/json_runner.py` (structured output, retry, `run_jobs`, `extract_llm_questions`, `LlmContext`, `load_llm_context`) |
 | Pipeline | `parse_notebook.py`, `rubric_generate.py`, `rubric_review.py`, `grade.py` (returns `GradedResult`), `batch_grader.py`, `genai_detection.py`, `calibrate.py` |
 | Prompt | `prompt_builder.py` (prompt construction, sanitization, question type injection), `prompts/DEFAULT/*.md` (templates), `prompts/DEFAULT/question_types.yaml` (per-type grading instructions) |
 | Export | `export.py` (Gradescope JSON, Excel, autograder ZIP), `linter_export.py` + `linter_run_autograder.py.tpl` (format linter ZIP), `gradescope_runtime.py` (Gradescope harness, email-based lookup), `zip_helpers.py` |

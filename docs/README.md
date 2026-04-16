@@ -54,7 +54,7 @@ Use **Black** (`black .`, line length 88). No Ruff/mypy gate required today.
 
 ### Environment
 
-Set **`OPENAI_API_KEY`** in `.env` at the repo root. Legacy **`key`** is deprecated (see `llm_client.get_openai_client`).
+Set **`OPENAI_API_KEY`** in `.env` at the repo root. Legacy **`key`** is deprecated (see `llm.client.get_openai_client`).
 
 ### Token usage on graded results
 

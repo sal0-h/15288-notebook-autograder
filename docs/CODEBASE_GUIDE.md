@@ -47,7 +47,7 @@ ai_autograder/
 ├── linter_export.py        Pre-deadline format linter autograder
 ├── llm/
 │   ├── json_runner.py      Structured Responses API, retries, run_jobs, extract_llm_questions, LlmContext
-├── llm_client.py           OpenAI client creation and temperature helpers
+│   ├── client.py          OpenAI client creation and temperature helpers
 ├── main.py                 CLI entry point
 ├── parse_notebook.py       Notebook → structured JSON parser
 ├── genai_detection.py      Optional GenAI suspicion pass (merges flags into graded_results)
@@ -884,7 +884,7 @@ recomputed from the merged result.
 ### Add a new OpenAI model
 
 Add the model name and pricing (input, output per 1M tokens) to `MODEL_PRICING` in
-`token_usage.py`. Update `temperature_for_model` in `llm_client.py` if the model has
+`token_usage.py`. Update `temperature_for_model` in `llm/client.py` if the model has
 a temperature restriction.
 
 ### GenAI suspicion pass (optional, second LLM call)
