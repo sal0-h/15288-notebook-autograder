@@ -1613,6 +1613,20 @@ function renderReviewContent() {
         confBadge.className = `badge ${confClass}`;
         confBadge.textContent = `conf: ${conf}`;
     }
+    const provEl = document.getElementById("reviewProvenance");
+    if (provEl) {
+        const prov = q._provenance;
+        if (prov && prov.model) {
+            const ts = prov.graded_at ? new Date(prov.graded_at).toLocaleString() : "";
+            const rh = prov.rubric_hash ? ` · rubric ${prov.rubric_hash}` : "";
+            provEl.textContent = `${prov.model}${rh}${ts ? ` · ${ts}` : ""}`;
+            provEl.title = `Model: ${prov.model}\nRubric hash: ${prov.rubric_hash || "n/a"}\nGraded: ${ts || "unknown"}`;
+            provEl.classList.remove("hidden");
+        } else {
+            provEl.textContent = "";
+            provEl.classList.add("hidden");
+        }
+    }
     work?.querySelectorAll("[data-toggle-output]").forEach(btn => {
         btn.onclick = () => {
             const id = btn.dataset.toggleOutput;

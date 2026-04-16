@@ -272,12 +272,22 @@ def _build_student_parts(stu_q: dict | None, cap: int) -> tuple[str, list[dict]]
         if not has_code and not has_output and not has_images:
             stu_text += "WARNING: This question has NO code, NO output, and NO images — only markdown (if any). Score accordingly; do not award points for code/output that is not present.\n\n"
         has_any = has_code or has_output or stu_q.get("answer_markdown_concat")
-        if stu_q.get("answer_code_concat"):
-            stu_text += f"Code:\n{_sanitize_student_text(truncate_output(stu_q['answer_code_concat'], cap))}\n\n"
-        if stu_q.get("answer_text_concat"):
-            stu_text += f"Output:\n{_sanitize_student_text(truncate_output(stu_q['answer_text_concat'], cap))}\n\n"
-        if stu_q.get("answer_markdown_concat"):
-            stu_text += f"Answer:\n{_sanitize_student_text(truncate_output(stu_q['answer_markdown_concat'], cap))}\n\n"
+        truncated_fields: list[str] = []
+        code_raw = stu_q.get("answer_code_concat", "")
+        if code_raw:
+            stu_text += f"Code:\n{_sanitize_student_text(truncate_output(code_raw, cap))}\n\n"
+            if len(code_raw) > cap:
+                truncated_fields.append(f"code ({len(code_raw)} → {cap} chars)")
+        output_raw = stu_q.get("answer_text_concat", "")
+        if output_raw:
+            stu_text += f"Output:\n{_sanitize_student_text(truncate_output(output_raw, cap))}\n\n"
+            if len(output_raw) > cap:
+                truncated_fields.append(f"output ({len(output_raw)} → {cap} chars)")
+        md_raw = stu_q.get("answer_markdown_concat", "")
+        if md_raw:
+            stu_text += f"Answer:\n{_sanitize_student_text(truncate_output(md_raw, cap))}\n\n"
+            if len(md_raw) > cap:
+                truncated_fields.append(f"markdown ({len(md_raw)} → {cap} chars)")
         if not has_any:
             stu_text += "(no submission)\n"
         for cell in stu_q.get("answer_cells", []):
@@ -285,6 +295,13 @@ def _build_student_parts(stu_q: dict | None, cap: int) -> tuple[str, list[dict]]
                 stu_images.append(img)
         if stu_images:
             stu_text += f"[{len(stu_images)} student plot(s) follow below]\n"
+        if truncated_fields:
+            stu_text += (
+                "GRADING NOTE: Student evidence was truncated: "
+                + "; ".join(truncated_fields)
+                + ". If the truncated content could contain the answer, "
+                "set requires_review=true.\n"
+            )
     else:
         stu_text += "(no submission)\n"
 

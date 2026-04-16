@@ -1,6 +1,9 @@
 """LLM-based per-group and per-student grading logic."""
 
+import hashlib
+import json as _json
 import logging
+from datetime import datetime, timezone
 from pathlib import Path
 
 from pydantic import BaseModel
@@ -43,6 +46,18 @@ _NO_SUBMISSION_PATTERNS = (
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def _rubric_hash(rubric_entry) -> str:
+    """Short hash of rubric content for provenance tracking."""
+    if rubric_entry is None:
+        return ""
+    data = rubric_entry
+    if hasattr(rubric_entry, "model_dump"):
+        data = rubric_entry.model_dump(mode="python")
+    return hashlib.sha256(
+        _json.dumps(data, sort_keys=True, default=str).encode()
+    ).hexdigest()[:8]
 
 
 def _normalize_no_submission_feedback(feedback: str) -> str:
@@ -162,11 +177,14 @@ def _store_group_grades(
     group: list[str],
     grade_items: list[QuestionGrade],
     qid_to_max: dict[str, int],
+    model: str = "",
+    rubrics: dict | None = None,
 ) -> tuple[float, float]:
     """Process one group's grading response into questions dict. Returns (score, max) for this group."""
     grade_map = {g.question_id: g for g in grade_items}
     total_score = 0.0
     total_max = 0.0
+    now = datetime.now(timezone.utc).isoformat()
     for qid in group:
         max_pts = qid_to_max.get(qid, 0)
         total_max += max_pts
@@ -184,6 +202,11 @@ def _store_group_grades(
             "feedback": feedback,
             "confidence": q_grade.confidence,
             "requires_review": q_grade.requires_review,
+            "_provenance": {
+                "model": model,
+                "rubric_hash": _rubric_hash(rubrics.get(qid) if rubrics else None),
+                "graded_at": now,
+            },
         }
         total_score += score
         if feedback and score < max_pts:
@@ -315,7 +338,13 @@ def grade_student(
             )
         usage_total = usage_total.merged(usage)
         score_delta, max_delta = _store_group_grades(
-            questions, feedback_parts, group, grade_items, qid_to_max
+            questions,
+            feedback_parts,
+            group,
+            grade_items,
+            qid_to_max,
+            model=ctx.model,
+            rubrics=cfg.rubrics,
         )
         total_score += score_delta
         total_max += max_delta
