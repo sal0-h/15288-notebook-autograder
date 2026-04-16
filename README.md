@@ -96,7 +96,7 @@ Main pipeline modules:
 - config_models.py: AppConfig, ParsingConfig, GradingConfig, config I/O, default_config, normalize_qid.
 - grading_helpers.py: grade_only filtering, effective_groups, needs_merge.
 - token_usage.py: TokenUsage, MODEL_PRICING, cost calculation, usage merge/detach helpers.
-- pipeline_runner.py: thin wrappers for app pipeline steps (run_gather, run_parse, run_export, etc.).
+- pipeline_runner.py: thin wrappers for app pipeline steps (run_gather, run_parse, get_calibration_report, run_genai_detection).
 - results_models.py: GradedResult, ParsedNotebook, Question (on-disk artifact schemas).
 - results_store.py: load_results, save_results, update_student, load_results_with_backup.
 - zip_helpers.py: shared ZIP archive helper (write_to_zip with Unix attributes).
@@ -384,6 +384,7 @@ The test suite covers parsing, grading, rubric generation, export paths, utiliti
 
 - Student notebook content is treated as untrusted input.
 - Prompt-injection boundaries and sanitizer behavior should remain intact.
+- When student evidence is truncated, the grading prompt injects a note instructing the LLM to flag the question for review.
 - Grading responses are JSON-validated before use.
 - Malformed or partial model output is retried.
 - Empty submissions are normalized to a no-submission state.

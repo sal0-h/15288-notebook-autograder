@@ -52,7 +52,7 @@ gather → parse → generate-rubrics → grade → calibrate → export
 | Config & models | `config_models.py` (AppConfig, schema, load/save, paths, `load_solution_parsed`), `grading_models.py` (all LLM response schemas), `results_models.py` (GradedResult, Question), `token_usage.py` (TokenUsage, pricing, cost) |
 | LLM engine | `llm/client.py` (OpenAI client, temperature), `llm/json_runner.py` (structured output, retry, `run_jobs`, `extract_llm_questions`, `LlmContext`, `load_llm_context`) |
 | Pipeline | `parse_notebook.py`, `rubric_generate.py`, `rubric_review.py`, `grade.py` (returns `GradedResult`), `batch_grader.py`, `genai_detection.py`, `calibrate.py` |
-| Prompt | `prompt_builder.py` (prompt construction, sanitization, question type injection), `prompts/DEFAULT/*.md` (templates), `prompts/DEFAULT/question_types.yaml` (per-type grading instructions) |
+| Prompt | `prompt_builder.py` (prompt construction, sanitization, question type injection, truncation flags), `prompts/DEFAULT/*.md` (templates), `prompts/DEFAULT/question_types.yaml` (per-type grading instructions) |
 | Export | `export.py` (Gradescope JSON, Excel, autograder ZIP), `linter_export.py` + `linter_run_autograder.py.tpl` (format linter ZIP), `gradescope_runtime.py` (Gradescope harness, email-based lookup), `zip_helpers.py` |
 | Web | `app.py` (FastAPI factory), `api/routers/` (route handlers), `api/state.py` (locks, config cache) |
 | Shared | `utils.py` (logging, filename sanitization), `grading_helpers.py` (grade_only filtering) |
@@ -72,11 +72,11 @@ gather → parse → generate-rubrics → grade → calibrate → export
 
 **Prompts** live in `prompts/{assignment_name}/` or `prompts/DEFAULT/`, loaded via `load_prompt(name, assignment_name=...)`. Never persist prompt content in config YAML.
 
-**Student content is untrusted.** Prompt injection boundaries (`<<<STUDENT_SUBMISSION>>>`) and `_sanitize_student_text()` must stay intact.
+**Student content is untrusted.** Prompt injection boundaries (`<<<STUDENT_SUBMISSION>>>`) and `_sanitize_student_text()` must stay intact. When student code/output/markdown is truncated, `_build_student_parts()` injects a "GRADING NOTE" instructing the LLM to set `requires_review=true`.
 
 **`grade_student()` returns `GradedResult`**, not a dict. Callers should not re-validate. Usage is extracted from `result.usage` directly.
 
-**Incremental save:** `graded_results.json` is written atomically (temp+rename) after every student. `batch_grader` skips already-graded students on resume.
+**Incremental save:** `graded_results.json` is written atomically (temp+rename) after every student. `batch_grader` skips already-graded students on resume. Each question carries a `_provenance` dict (`model`, `rubric_hash`, `graded_at`) written by `grade.py:_store_group_grades()`.
 
 **Rubric compliance:** The grading prompt requires the LLM to address every rubric criterion in its feedback. The `score` field is the **final score (points earned)**, not the deduction amount.
 
@@ -86,7 +86,7 @@ gather → parse → generate-rubrics → grade → calibrate → export
 
 **Gradescope autograder:** Uses email-based student lookup (`email_stem_map.json` maps email → notebook stem). Results visibility is `after_published` (students see grades only after instructor publishes). Linter test stays `visible` for pre-deadline format checks.
 
-**Testing:** All LLM calls are mocked via `unittest.mock.patch` on `llm.json_runner.complete_structured`. Tests use `tmp_path` for output isolation. Shared fixtures in `conftest.py`: `sample_config`, `sample_app_config`, `sample_parsed_notebook`, `mock_openai_client`.
+**Testing:** All LLM calls are mocked via `unittest.mock.patch` on `llm.json_runner.complete_structured`. Tests use `tmp_path` for output isolation. `tests/conftest.py` adds the project root to `sys.path`; test-specific fixtures are defined inline in each test file.
 
 **Documentation discipline:** When changing routes, locks, tests, or public behavior, update `docs/CODEBASE_GUIDE.md` in the same commit.
 

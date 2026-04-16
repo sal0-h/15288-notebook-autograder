@@ -8,16 +8,12 @@ applyTo: "tests/test_*.py"
 
 ## Pytest Fixtures and Conftest
 
-`tests/conftest.py` adds the project root to `sys.path` and provides shared fixtures:
-- `sample_config` — minimal valid config dict with tmp_path-based output directories.
-- `sample_app_config` — `AppConfig` built from `sample_config`.
-- `sample_parsed_notebook` — minimal parsed notebook dict with one section/question.
-- `mock_openai_client` — `MagicMock()` for tests that call LLM functions.
+`tests/conftest.py` adds the project root to `sys.path`. No shared fixtures are defined in conftest; test-specific fixtures are defined inline in each test file.
 - Use pytest's built-in `tmp_path` for temporary assignment directories.
 - Build minimal config dicts inline with required fields (e.g. `model`, `grading.question_groups`, `rubrics`); use `DEFAULT_MODEL` from `config_models`.
 - Mock OpenAI via `unittest.mock.patch` on `llm.json_runner.complete_structured`.
 
-Fixtures ensure tests are isolated and do not pollute the real `output/` directory.
+Conftest adds the project root to `sys.path`. Tests are isolated and do not pollute the real `output/` directory.
 
 ## Isolation with tmp_path
 
@@ -37,7 +33,7 @@ def test_grade_student(tmp_path):
 
 ## Mock OpenAI Clients
 
-For tests involving LLM calls, use `mock_openai_client` fixture to avoid API costs and network latency:
+For tests involving LLM calls, mock `llm.json_runner.complete_structured` via `unittest.mock.patch` to avoid API costs and network latency:
 - Mock returns deterministic, consistent grading responses.
 - Validate that prompts sent to the mocked client have expected structure.
 - Do not make real OpenAI API calls in tests (use integration tests sparingly for that).

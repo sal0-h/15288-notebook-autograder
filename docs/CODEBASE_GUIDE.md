@@ -51,7 +51,7 @@ ai_autograder/
 ├── main.py                 CLI entry point
 ├── parse_notebook.py       Notebook → structured JSON parser
 ├── genai_detection.py      Optional GenAI suspicion pass (merges flags into graded_results)
-├── pipeline_runner.py      Thin wrappers for app endpoints (run_gather, run_parse, etc.)
+├── pipeline_runner.py      Thin wrappers for app endpoints (run_gather, run_parse, get_calibration_report, run_genai_detection)
 ├── prompt_builder.py       Prompt construction, sanitization, JSON extraction
 ├── results_models.py       GradedResult, ParsedNotebook, Question (on-disk schemas)
 ├── results_store.py        load_results → list[GradedResult]; save/update coerce dict rows
@@ -89,7 +89,7 @@ ai_autograder/
 | `app.py`             | FastAPI app factory; includes routers from `api/routers/`          | `api.state`, router modules                                        |
 | `config_models.py`   | AppConfig, ParsingConfig, GradingConfig, default_config              | nothing (leaf)                                                     |
 | `grading_helpers.py` | grade_only filtering, needs_merge, skipped_feedback                  | grading_models                                                     |
-| `pipeline_runner.py` | Thin wrappers for gather, parse, calibrate, export, estimate, genai | gather, parse_notebook, calibrate, export, estimate, `genai_detection` |
+| `pipeline_runner.py` | Thin wrappers for gather, parse, calibration read, genai detection | gather, parse_notebook, `genai_detection` |
 | `results_store.py`   | load_results, save_results, update_student, load_results_with_backup | nothing (leaf)                                                     |
 | `utils.py`           | Assignment-scoped logging, filename sanitization                     | config_models                                                      |
 | `grading_models.py`  | LLM response Pydantic schemas, constants                             | nothing (leaf)                                                     |
@@ -112,9 +112,9 @@ ai_autograder/
 
 Prefer these surfaces when adding features so CLI and web app stay aligned:
 
-- **CLI:** `[main.py](../main.py)` — uses `[pipeline_runner.py](../pipeline_runner.py)` for gather, parse, calibrate, and export (same calls as HTTP routes).
+- **CLI:** `[main.py](../main.py)` — imports directly from `calibrate`, `export`, `estimate`, and uses `[pipeline_runner.py](../pipeline_runner.py)` for gather and parse.
 - **HTTP:** `[app.py](../app.py)` and `[api/routers/](../api/routers/)` — load config via `[api/state.py](../api/state.py)` (`get_active_app_config()` for pipeline work); call `pipeline_runner`, `batch_grader`, `grade`, `export`, etc.
-- **Shared step wrappers:** `[pipeline_runner.py](../pipeline_runner.py)` (`run_gather`, `run_parse`, `run_export`, …).
+- **Shared step wrappers:** `[pipeline_runner.py](../pipeline_runner.py)` (`run_gather`, `run_parse`, `get_calibration_report`, `run_genai_detection`).
 - **Config I/O:** `load_app_config` / `save_config` in `config_models.py` for assignment YAML; `ensure_app_config` at dict/`AppConfig` boundaries.
 
 ---
@@ -301,6 +301,18 @@ An array of per-student result objects:
 ```
 
 After an optional GenAI pass, question objects may also include `suspicious_genai` (bool) and `suspicious_genai_note` (string); see `results_models.Question` (`extra="allow"`).
+
+Per-question provenance is written by `grade.py:_store_group_grades()`:
+
+```json
+"_provenance": {
+  "model": "gpt-4.1",
+  "rubric_hash": "a1b2c3d4",
+  "graded_at": "2025-06-01T12:00:00"
+}
+```
+
+`model` is the grading model, `rubric_hash` is `sha256[:8]` of the rubric entry used, and `graded_at` is an ISO timestamp. This metadata is preserved by `Question(extra="allow")` without schema changes. The Review UI displays provenance below the confidence badge.
 
 `total_score` and `total_max` only count questions with non-skip feedback.
 Questions with `[skipped - not in grade_only]` or `[not included in grading groups]`
@@ -595,6 +607,8 @@ Long text fields (reference and student code, output, markdown) share one charac
 derived from `max_prompt_tokens` (`prompt_builder._grading_body_char_cap` — roughly 4×
 tokens, clamped). No per-question token estimation in the builder.
 
+**Truncation flags:** When student code, output, or markdown exceeds the character cap and is truncated, `_build_student_parts()` appends a `GRADING NOTE` to the prompt telling the LLM which fields were truncated and instructing it to set `requires_review=true` when truncated content could contain the answer. This ensures truncated submissions are flagged for human review rather than silently scored on incomplete evidence.
+
 Image payloads are added as vision message parts with
 `{"type": "image_url", "image_url": {"url": "data:image/png;base64,..."}}`.
 `estimate_tokens` still uses `TOKENS_PER_IMAGE = 1000` when projecting costs from built messages.
@@ -665,7 +679,7 @@ Row types are shared for LLM wire and pipeline: **`QuestionGrade`** (grading), *
 
 `app.py` is a FastAPI application serving both the REST API and the static UI.
 
-The Review tab fetches per-student parsed JSON (`GET /parsed/{student_name}`) and renders `answer_text_concat` plus any `image/png` or `image/jpeg` entries under `answer_cells[].images` as inline `<img>` data URLs (`ui/js/app.js`).
+The Review tab auto-loads results when the tab is activated. It fetches per-student parsed JSON (`GET /parsed/{student_name}`) and renders `answer_text_concat` plus any `image/png` or `image/jpeg` entries under `answer_cells[].images` as inline `<img>` data URLs (`ui/js/app.js`). Per-question `_provenance` (model, rubric hash, timestamp) is shown below the confidence badge.
 
 ### Export (`POST /export`, file downloads)
 
@@ -866,10 +880,10 @@ an assignment-specific override). Call `load_prompt("{name}", assignment_name=..
 3. If it needs a UI trigger, add HTTP routes in `api/routers/` (see `pipeline_routes.py`,
   `grade_routes.py`, …) and, if you add a new router module, register it in `app.py` with
   `include_router`.
-4. **Shared entrypoints:** `gather`, `parse`, `calibrate`, and `export` use thin wrappers in
-  `pipeline_runner.py` so CLI (`main.py`) and HTTP call the same code. **`grade` and
-  `generate-rubrics` are not in `pipeline_runner`** — they are imported directly (`batch_grader`,
-  `rubric_generate.generate_rubrics`). Follow whichever pattern fits the new step.
+4. **Shared entrypoints:** `gather` and `parse` use thin wrappers in
+  `pipeline_runner.py`. `calibrate`, `export`, and `estimate` are imported directly by callers.
+  **`grade` and `generate-rubrics` are not in `pipeline_runner`** — they are imported directly
+  (`batch_grader`, `rubric_generate.generate_rubrics`). Follow whichever pattern fits the new step.
 5. Write tests in `tests/test_{stage}.py` (or extend an existing test file).
 
 ### Regrade a subset of questions
