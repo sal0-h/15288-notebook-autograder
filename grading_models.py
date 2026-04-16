@@ -33,11 +33,6 @@ class QuestionGrade(BaseModel):
     confidence: Literal["high", "medium", "low"] = "medium"
     requires_review: bool = False
 
-    @field_validator("score", mode="before")
-    @classmethod
-    def coerce_score(cls, v) -> float:
-        return float(v)
-
     @field_validator("feedback", mode="before")
     @classmethod
     def coerce_feedback(cls, v) -> str:
