@@ -16,7 +16,7 @@
 python -m venv .venv
 .venv/bin/pip install -r requirements.txt -r requirements-dev.txt
 
-# Run full test suite (244 tests)
+# Run full test suite (227 tests)
 .venv/bin/python -m pytest tests/ -q
 
 # Run a single test file
@@ -84,6 +84,10 @@ gather → parse → generate-rubrics → grade → calibrate → export
 
 **Export schema stability:** Gradescope JSON must have `tests` array with `name`, `score`, `max_score`, `output`, `visibility`, optional `output_format`.
 
+**Gradescope autograder:** Uses email-based student lookup (`email_stem_map.json` maps email → notebook stem). Results visibility is `after_published` (students see grades only after instructor publishes). Linter test stays `visible` for pre-deadline format checks.
+
 **Testing:** All LLM calls are mocked via `unittest.mock.patch` on `llm.json_runner.complete_structured`. Tests use `tmp_path` for output isolation. Shared fixtures in `conftest.py`: `sample_config`, `sample_app_config`, `sample_parsed_notebook`, `mock_openai_client`.
 
 **Documentation discipline:** When changing routes, locks, tests, or public behavior, update `docs/CODEBASE_GUIDE.md` in the same commit.
+
+**Research reports** go in `docs/research/` (gitignored). Not in the session workspace.
