@@ -1,9 +1,7 @@
 """LLM-based per-group and per-student grading logic."""
 
-import logging
 from pathlib import Path
 
-from openai import OpenAI
 from pydantic import BaseModel
 
 from config_models import AppConfig, DEFAULT_MODEL
@@ -18,23 +16,20 @@ from grading_models import (
     SKIP_FEEDBACKS,
 )
 from llm.json_runner import (
+    LlmContext,
     MAX_JSON_LLM_ATTEMPTS,
     execute_llm_task,
     extract_llm_questions,
+    load_llm_context,
 )
 from token_usage import TokenUsage
 from prompt_builder import (
     build_group_prompt,
     get_question_data,
-    load_prompt,
     validate_question_groups,
 )
 from results_models import GradedResult
 from config_models import load_app_config
-from llm_client import get_openai_client
-from utils import get_job_logger
-
-logger = logging.getLogger(__name__)
 
 _NO_SUBMISSION_PATTERNS = (
     "[no submission]",
@@ -104,39 +99,36 @@ def grade_group(
     solution_parsed: dict,
     student_parsed: dict,
     config: AppConfig,
-    client: OpenAI,
+    ctx: LlmContext,
     student_name: str | None = None,
 ) -> tuple[list[QuestionGrade], dict[str, int], TokenUsage]:
     """
     Grade one question group. Retries up to MAX_VALIDATION_RETRIES times
     if the LLM response fails Pydantic validation.
     """
-    logger = get_job_logger(config, __name__)
-    model = config.model or DEFAULT_MODEL
-    system_prompt = load_prompt("grade_system", assignment_name=config.assignment_name)
     messages, qid_to_max = build_group_prompt(
         group,
         solution_parsed,
         student_parsed,
-        system_prompt,
+        ctx.system_prompt,
         max_prompt_tokens=config.max_prompt_tokens,
         rubrics=config.rubrics,
         include_reference=config.include_reference_in_grading,
         assignment_name=config.assignment_name,
     )
 
-    ctx = f" [{student_name}]" if student_name else ""
-    effective_max = min(config.max_completion_tokens, max(2048, len(group) * 1024))
+    name_ctx = f" [{student_name}]" if student_name else ""
+    effective_max = min(ctx.max_completion_tokens, max(2048, len(group) * 1024))
     g_tuple = tuple(group)
 
     def _exhausted(last_err: BaseException | None) -> list[QuestionGrade]:
-        logger.error(
+        ctx.logger.error(
             "Giving up on group %s%s after %d attempts: %s",
             group,
-            ctx,
+            name_ctx,
             MAX_JSON_LLM_ATTEMPTS,
             last_err,
-            extra={"task": "grade_group", "model": model},
+            extra={"task": "grade_group", "model": ctx.model},
         )
         return [
             QuestionGrade(
@@ -150,13 +142,13 @@ def grade_group(
         ]
 
     grade_items, usage = execute_llm_task(
-        client,
-        model=model,
+        ctx.client,
+        model=ctx.model,
         messages=messages,
         max_completion_tokens=effective_max,
         response_model=GradingLlmResponse,
         task_kind="grade_group",
-        logger=logger,
+        logger=ctx.logger,
         postprocess=lambda p: _postprocess_grade_group(p, group=g_tuple),
         fallback_factory=_exhausted,
     )
@@ -244,7 +236,7 @@ def grade_student(
     student_parsed: dict,
     solution_parsed: dict,
     cfg: AppConfig,
-    client: OpenAI | None = None,
+    client=None,
     ungrouped: list[str] | None = None,
     merge_into: GradedResult | dict | None = None,
 ) -> GradedResult:
@@ -253,9 +245,7 @@ def grade_student(
     When merge_into is provided with grade_only, only grades grade_only questions
     and merges new grades into existing result (keeps other questions unchanged).
     """
-    logger = get_job_logger(cfg, __name__)
-    if client is None:
-        client = get_openai_client()
+    ctx = load_llm_context(cfg, "grade_system", client=client)
 
     grading_config = cfg.grading
     groups = grading_config.get_effective_groups()
@@ -284,11 +274,11 @@ def grade_student(
     feedback_parts: list[str] = []
     usage_total = TokenUsage()
 
-    logger.info("Grading %s (%d groups)", student_name, len(groups))
+    ctx.logger.info("Grading %s (%d groups)", student_name, len(groups))
     for group_idx, group in enumerate(groups):
         if not group:
             continue
-        logger.info(
+        ctx.logger.info(
             "Grading %s — group %d/%d: %s",
             student_name,
             group_idx + 1,
@@ -299,7 +289,7 @@ def grade_student(
             get_question_data(student_parsed, qid) is None for qid in group
         )
         if all_missing:
-            logger.info(
+            ctx.logger.info(
                 "Skipping group %s for %s (all questions missing)",
                 group,
                 student_name,
@@ -319,7 +309,7 @@ def grade_student(
                 solution_parsed,
                 student_parsed,
                 cfg,
-                client,
+                ctx,
                 student_name=student_name,
             )
         usage_total = usage_total.merged(usage)
@@ -346,7 +336,7 @@ def grade_student(
     result = _build_graded_result(
         student_name, questions, total_score, total_max, feedback_parts, usage_total
     )
-    logger.info(
+    ctx.logger.info(
         "Graded %s: %.1f/%.1f (tokens: %d in / %d out)",
         student_name,
         total_score,

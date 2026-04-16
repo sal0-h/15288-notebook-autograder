@@ -6,12 +6,13 @@ import logging
 import time
 from collections.abc import Callable, Iterable, Iterator, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass
 from typing import Any, TypeVar
 
 from openai import OpenAI
 from pydantic import BaseModel
 
-from config_models import normalize_qid
+from config_models import AppConfig, DEFAULT_MODEL, normalize_qid
 from token_usage import TokenUsage
 from llm_client import temperature_for_model
 
@@ -22,6 +23,54 @@ _R = TypeVar("_R")
 # Application-level retries when validation fails.
 MAX_VALIDATION_RETRIES = 2
 MAX_JSON_LLM_ATTEMPTS = MAX_VALIDATION_RETRIES + 1
+
+
+# ---------------------------------------------------------------------------
+# Shared LLM context — resolved once per orchestrator, passed to workers
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class LlmContext:
+    """Resolved LLM task context shared across per-job workers."""
+
+    logger: logging.Logger
+    client: OpenAI
+    model: str
+    system_prompt: str
+    workers: int
+    max_completion_tokens: int
+
+
+def load_llm_context(
+    config: AppConfig,
+    prompt_name: str,
+    *,
+    model_selector: Callable[[AppConfig], str] | None = None,
+    client: OpenAI | None = None,
+    max_completion_tokens: int | None = None,
+) -> LlmContext:
+    """Resolve config into a ready-to-use :class:`LlmContext`.
+
+    Replaces the repeated setup boilerplate in LLM task orchestrators.
+    """
+    # Local imports to avoid circular dependencies (same pattern as elsewhere).
+    from llm_client import get_openai_client
+    from prompt_builder import load_prompt
+    from utils import get_job_logger
+
+    if model_selector is not None:
+        model = model_selector(config)
+    else:
+        model = config.model or DEFAULT_MODEL
+    return LlmContext(
+        logger=get_job_logger(config, prompt_name),
+        client=client or get_openai_client(),
+        model=model,
+        system_prompt=load_prompt(prompt_name, assignment_name=config.assignment_name),
+        workers=config.workers,
+        max_completion_tokens=max_completion_tokens or config.max_completion_tokens,
+    )
 
 
 def retry_with_exponential_backoff(
