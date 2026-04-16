@@ -89,7 +89,7 @@ Main pipeline modules:
 - estimate.py: token and cost estimation helpers.
 - genai_detection.py: optional post-grade GenAI suspicion flags merged into results.
 - llm/json_runner.py: shared structured-output LLM calls, retries, parallel helpers, and `LlmContext` (shared setup for all LLM task orchestrators).
-- llm_client.py: OpenAI client creation and model-specific helpers (temperature).
+- llm/client.py: OpenAI client creation and model-specific helpers (temperature).
 - prompt_builder.py: prompt construction, sanitization, and JSON extraction.
 - grading_models.py: Pydantic schemas for all LLM structured outputs (grading, rubrics, GenAI detection).
 - utils.py: assignment-scoped logging and filename sanitization.

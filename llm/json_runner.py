@@ -14,7 +14,7 @@ from pydantic import BaseModel
 
 from config_models import AppConfig, DEFAULT_MODEL, normalize_qid
 from token_usage import TokenUsage
-from llm_client import temperature_for_model
+from llm.client import temperature_for_model
 
 T = TypeVar("T")
 _T = TypeVar("_T")
@@ -55,7 +55,7 @@ def load_llm_context(
     Replaces the repeated setup boilerplate in LLM task orchestrators.
     """
     # Local imports to avoid circular dependencies (same pattern as elsewhere).
-    from llm_client import get_openai_client
+    from llm.client import get_openai_client
     from prompt_builder import load_prompt
     from utils import get_job_logger
 

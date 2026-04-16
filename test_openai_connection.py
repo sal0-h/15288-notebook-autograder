@@ -4,7 +4,7 @@ import argparse
 
 from config_models import DEFAULT_MODEL
 from config_models import load_app_config
-from llm_client import get_openai_client
+from llm.client import get_openai_client
 
 
 def test_llm_connection() -> str:

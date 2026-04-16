@@ -296,7 +296,7 @@ output_dir: output
 
 class TestOpenAIClientConfig:
     def test_get_openai_client_uses_httpx_limits_and_timeout(self, monkeypatch):
-        import llm_client
+        from llm import client as llm_client
 
         monkeypatch.setenv("key", "")
         monkeypatch.setenv("OPENAI_API_KEY", "test-key")

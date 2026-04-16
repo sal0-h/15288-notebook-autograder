@@ -25,7 +25,7 @@ From `python test_openai_connection.py --list-models`:
 
 ## Temperature (deterministic grading)
 
-Implementation: `temperature_for_model()` in `llm_client.py` returns **1.0** for any model
+Implementation: `temperature_for_model()` in `llm/client.py` returns **1.0** for any model
 name starting with `gpt-5` (including `gpt-5.2`, `gpt-5-mini`, `gpt-5-nano`, dated
 snapshots), and **0.0** otherwise (e.g. `gpt-4.1`, `gpt-4.1-mini`, `gpt-4o-mini`).
 
