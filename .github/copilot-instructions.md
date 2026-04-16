@@ -50,7 +50,7 @@ gather → parse → generate-rubrics → grade → calibrate → export
 | Layer | Modules |
 |-------|---------|
 | Config & models | `config_models.py` (AppConfig, schema, load/save, paths, `load_solution_parsed`), `grading_models.py` (all LLM response schemas), `results_models.py` (GradedResult, Question), `token_usage.py` (TokenUsage, pricing, cost) |
-| LLM engine | `llm_client.py` (OpenAI client, temperature), `llm/json_runner.py` (structured output, retry, `run_jobs`, `extract_llm_questions`) |
+| LLM engine | `llm_client.py` (OpenAI client, temperature), `llm/json_runner.py` (structured output, retry, `run_jobs`, `extract_llm_questions`, `LlmContext`, `load_llm_context`) |
 | Pipeline | `parse_notebook.py`, `rubric_generate.py`, `rubric_review.py`, `grade.py` (returns `GradedResult`), `batch_grader.py`, `genai_detection.py`, `calibrate.py` |
 | Prompt | `prompt_builder.py` (prompt construction, sanitization, question type injection), `prompts/DEFAULT/*.md` (templates), `prompts/DEFAULT/question_types.yaml` (per-type grading instructions) |
 | Export | `export.py` (Gradescope JSON, Excel, autograder ZIP), `linter_export.py` + `linter_run_autograder.py.tpl` (format linter ZIP), `gradescope_runtime.py` (Gradescope harness, email-based lookup), `zip_helpers.py` |
@@ -58,7 +58,7 @@ gather → parse → generate-rubrics → grade → calibrate → export
 | Shared | `utils.py` (logging, filename sanitization), `grading_helpers.py` (grade_only filtering) |
 | Tools | `tag_notebook.py` (inject question type tags into notebook cells) |
 
-**LLM calling pattern:** All four LLM tasks (grading, rubric gen, rubric review, genai detection) use: `execute_llm_task()` → `complete_structured()` (OpenAI Responses API) → `postprocess` callback → optional `fallback_factory` on exhaustion. Shared helpers: `extract_llm_questions()` for QID normalize+dedup+validate, `run_jobs()` for sequential/parallel dispatch.
+**LLM calling pattern:** All four LLM tasks (grading, rubric gen, rubric review, genai detection) use: `load_llm_context()` (shared setup) → `execute_llm_task()` → `complete_structured()` (OpenAI Responses API) → `postprocess` callback → optional `fallback_factory` on exhaustion. `LlmContext` bundles logger, client, model, system prompt, workers, and max tokens so each orchestrator resolves config once and passes the context to its workers. Shared helpers: `extract_llm_questions()` for QID normalize+dedup+validate, `run_jobs()` for sequential/parallel dispatch.
 
 **Question type tags:** Notebook cells can have `type:code`, `type:analysis`, `type:plot`, `type:open-ended`, `type:exact` in cell metadata tags. Parser extracts these into `question_type` field. `prompt_builder` and `rubric_generate` inject type-specific grading/rubric instructions from `question_types.yaml`.
 

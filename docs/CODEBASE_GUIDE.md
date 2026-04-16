@@ -46,7 +46,7 @@ ai_autograder/
 ├── grading_models.py       Pydantic schemas for all LLM structured outputs
 ├── linter_export.py        Pre-deadline format linter autograder
 ├── llm/
-│   ├── json_runner.py      Structured Responses API, retries, run_jobs, extract_llm_questions
+│   ├── json_runner.py      Structured Responses API, retries, run_jobs, extract_llm_questions, LlmContext
 ├── llm_client.py           OpenAI client creation and temperature helpers
 ├── main.py                 CLI entry point
 ├── parse_notebook.py       Notebook → structured JSON parser
@@ -613,6 +613,9 @@ inert characters (`«` / `»`). This prevents a malicious student from escaping 
 ### LLM response validation chain
 
 ```
+load_llm_context(config, "grade_system")  # shared setup: logger, client, model, prompt, workers, max_tokens
+  → LlmContext (frozen dataclass, passed to all per-job workers)
+
 execute_llm_task(..., response_model=GradingLlmResponse, postprocess=_postprocess_grade_group, fallback_factory=…)
   → complete_structured(...)        # client.responses.parse(text_format=GradingLlmResponse)
                                     # API guarantees schema — no JSON parsing needed

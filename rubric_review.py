@@ -6,7 +6,6 @@ import json
 import threading
 from dataclasses import dataclass
 
-from openai import OpenAI
 from pydantic import BaseModel
 
 from config_models import (
@@ -18,14 +17,14 @@ from config_models import (
 from grading_models import RubricReviewResponse
 from grading_helpers import filter_groups_by_grade_only
 from llm.json_runner import (
+    LlmContext,
     MAX_JSON_LLM_ATTEMPTS,
     execute_llm_task,
     extract_llm_questions,
+    load_llm_context,
     run_jobs,
 )
-from prompt_builder import get_question_data, load_prompt
-from llm_client import get_openai_client
-from utils import get_job_logger
+from prompt_builder import get_question_data
 
 
 @dataclass(frozen=True)
@@ -33,11 +32,7 @@ class RubricReviewJob:
     group: list[str]
     rubrics: dict[str, RubricEntry]
     solution_parsed: dict
-    config: AppConfig
-    review_prompt: str
-    model: str
-    max_completion_tokens: int
-    client: OpenAI | None
+    ctx: LlmContext
 
 
 def _rubric_as_dict(entry: RubricEntry | dict) -> dict:
@@ -85,14 +80,7 @@ def review_one_group(job: RubricReviewJob) -> dict[str, RubricEntry]:
     group = job.group
     rubrics = job.rubrics
     solution_parsed = job.solution_parsed
-    config = job.config
-    review_prompt = job.review_prompt
-    model = job.model
-    max_tokens = job.max_completion_tokens
-    client = job.client
-    log = get_job_logger(config, __name__)
-    if client is None:
-        client = get_openai_client()
+    ctx = job.ctx
 
     parts: list[str] = []
     group_rubrics: dict[str, dict] = {}
@@ -112,12 +100,12 @@ def review_one_group(job: RubricReviewJob) -> dict[str, RubricEntry]:
         return {}
 
     messages = [
-        {"role": "system", "content": review_prompt},
+        {"role": "system", "content": ctx.system_prompt},
         {"role": "user", "content": "\n".join(parts)},
     ]
 
     def _exhausted(last_err: BaseException | None) -> dict[str, RubricEntry]:
-        log.warning(
+        ctx.logger.warning(
             "Rubric review failed for group %s after %d attempts: %s",
             group,
             MAX_JSON_LLM_ATTEMPTS,
@@ -125,23 +113,23 @@ def review_one_group(job: RubricReviewJob) -> dict[str, RubricEntry]:
         )
         return {}
 
-    log.info("Rubric review - group: %s (model=%s)", group, model)
+    ctx.logger.info("Rubric review - group: %s (model=%s)", group, ctx.model)
 
     revised, usage = execute_llm_task(
-        client,
-        model=model,
+        ctx.client,
+        model=ctx.model,
         messages=messages,
-        max_completion_tokens=max_tokens,
+        max_completion_tokens=ctx.max_completion_tokens,
         response_model=RubricReviewResponse,
         task_kind="rubric_review",
-        logger=log,
+        logger=ctx.logger,
         postprocess=lambda p: _postprocess_rubric_review(
             p, group_rubrics=group_rubrics
         ),
         fallback_factory=_exhausted,
     )
 
-    log.info(
+    ctx.logger.info(
         "Rubric review - group complete: %d/%d questions revised (tokens: %d in / %d out)",
         len(revised),
         len(group_rubrics),
@@ -159,12 +147,13 @@ def review_rubrics(
     groups_to_review: list[list[str]] | None = None,
 ) -> dict[str, RubricEntry]:
     """Optional second pass: review generated rubrics against question text."""
-    logger = get_job_logger(config, __name__)
-    if client is None:
-        client = get_openai_client()
+    ctx = load_llm_context(
+        config,
+        "review_system",
+        model_selector=lambda c: c.rubric_model or c.model or DEFAULT_MODEL,
+        client=client,
+    )
 
-    model = config.rubric_model or config.model or DEFAULT_MODEL
-    max_tokens = config.max_completion_tokens
     grading_config = config.grading
     groups: list[list[str]] = groups_to_review or grading_config.question_groups
     grade_only: list[str] | None = grading_config.grade_only
@@ -172,41 +161,34 @@ def review_rubrics(
     if groups_to_review is None and grade_only is not None:
         groups = filter_groups_by_grade_only(groups, grade_only)
 
-    review_prompt = load_prompt("review_system", assignment_name=config.assignment_name)
-
     revised = dict(rubrics)
     revised_in_pass = 0
-    workers = config.workers
     to_process: list[RubricReviewJob] = [
         RubricReviewJob(
             group=group,
             rubrics=rubrics,
             solution_parsed=solution_parsed,
-            config=config,
-            review_prompt=review_prompt,
-            model=model,
-            max_completion_tokens=max_tokens,
-            client=client,
+            ctx=ctx,
         )
         for group in groups
         if group
     ]
     groups_reviewed = len(to_process)
 
-    if workers > 1 and len(to_process) > 1:
-        logger.info(
+    if ctx.workers > 1 and len(to_process) > 1:
+        ctx.logger.info(
             "Rubric review started in parallel: %d groups, %d workers, model=%s",
             len(to_process),
-            workers,
-            model,
+            ctx.workers,
+            ctx.model,
         )
     review_lock = threading.Lock()
-    for result in run_jobs(to_process, review_one_group, max_workers=workers):
+    for result in run_jobs(to_process, review_one_group, max_workers=ctx.workers):
         with review_lock:
             revised_in_pass += len(result)
             revised.update(result)
 
-    logger.info(
+    ctx.logger.info(
         "Rubric review complete — %d groups reviewed, %d questions revised in pass",
         groups_reviewed,
         revised_in_pass,

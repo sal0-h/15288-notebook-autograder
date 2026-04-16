@@ -6,7 +6,6 @@ import threading
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from openai import OpenAI
 from pydantic import BaseModel
 
 from config_models import (
@@ -19,15 +18,15 @@ from config_models import (
 from grading_models import RubricGroupLlmResponse
 from grading_helpers import filter_groups_by_grade_only
 from llm.json_runner import (
+    LlmContext,
     MAX_JSON_LLM_ATTEMPTS,
     execute_llm_task,
     extract_llm_questions,
+    load_llm_context,
     run_jobs,
 )
 from token_usage import TokenUsage, usage_cost_usd
-from prompt_builder import get_question_data, load_prompt, truncate_output
-from llm_client import get_openai_client
-from utils import get_job_logger
+from prompt_builder import get_question_data, truncate_output
 
 GENERATION_FAILED = "[generation failed]"
 
@@ -99,10 +98,7 @@ class RubricGenJob:
     group: list[str]
     solution_parsed: dict
     config: AppConfig
-    rubric_prompt: str
-    model: str
-    max_completion_tokens: int
-    client: OpenAI | None
+    ctx: LlmContext
 
 
 def generate_one_group(
@@ -113,13 +109,7 @@ def generate_one_group(
     group = job.group
     solution_parsed = job.solution_parsed
     config = job.config
-    rubric_prompt = job.rubric_prompt
-    model = job.model
-    max_completion_tokens = job.max_completion_tokens
-    client = job.client
-    log = get_job_logger(config, __name__)
-    if client is None:
-        client = get_openai_client()
+    ctx = job.ctx
     rubrics_for_group: dict[str, RubricEntry] = {}
     usage = TokenUsage()
     had_error = False
@@ -131,7 +121,7 @@ def generate_one_group(
         group, solution_parsed, assignment_name=config.assignment_name
     )
     messages = [
-        {"role": "system", "content": rubric_prompt},
+        {"role": "system", "content": ctx.system_prompt},
         {"role": "user", "content": user_content},
     ]
 
@@ -140,7 +130,7 @@ def generate_one_group(
     def _exhausted(last_err: BaseException | None) -> dict[str, RubricEntry]:
         nonlocal had_error
         had_error = True
-        log.error(
+        ctx.logger.error(
             "Rubric generation failed for group %s after %d attempts: %s",
             group,
             MAX_JSON_LLM_ATTEMPTS,
@@ -158,26 +148,26 @@ def generate_one_group(
             )
         return out
 
-    log.info(
+    ctx.logger.info(
         "Rubric generation - group %d: %s (model=%s)",
         idx + 1,
         group,
-        model,
+        ctx.model,
     )
 
     rubrics_for_group, usage = execute_llm_task(
-        client,
-        model=model,
+        ctx.client,
+        model=ctx.model,
         messages=messages,
-        max_completion_tokens=max_completion_tokens,
+        max_completion_tokens=ctx.max_completion_tokens,
         response_model=RubricGroupLlmResponse,
         task_kind="rubric_generate",
-        logger=log,
+        logger=ctx.logger,
         postprocess=lambda p: _postprocess_rubric_generate(p, group=g_tuple),
         fallback_factory=_exhausted,
     )
 
-    log.info(
+    ctx.logger.info(
         "Rubric generation - group %d complete: %d/%d questions parsed (tokens: %d in / %d out)",
         idx + 1,
         len(rubrics_for_group),
@@ -208,19 +198,17 @@ def generate_rubrics(
     """
     from rubric_review import review_rubrics
 
-    logger = get_job_logger(config, __name__)
+    ctx = load_llm_context(
+        config,
+        "rubric_system",
+        model_selector=lambda c: c.rubric_model or c.model or DEFAULT_MODEL,
+        client=client,
+    )
     solution_parsed = load_solution_parsed(config)
-
-    if client is None:
-        client = get_openai_client()
 
     grading_config = config.grading
     all_groups: list[list[str]] = grading_config.question_groups
     grade_only: list[str] | None = grading_config.grade_only
-    model = config.rubric_model or config.model or DEFAULT_MODEL
-    workers = config.workers
-    max_completion_tokens = config.max_completion_tokens
-    rubric_prompt = load_prompt("rubric_system", assignment_name=config.assignment_name)
 
     partial = group_indices is not None
     if group_indices is not None:
@@ -249,21 +237,18 @@ def generate_rubrics(
             group=group,
             solution_parsed=solution_parsed,
             config=config,
-            rubric_prompt=rubric_prompt,
-            model=model,
-            max_completion_tokens=max_completion_tokens,
-            client=client,
+            ctx=ctx,
         )
         for idx, group in enumerate(groups)
         if group
     ]
 
-    if workers > 1 and len(to_process) > 1:
-        logger.info(
+    if ctx.workers > 1 and len(to_process) > 1:
+        ctx.logger.info(
             "Rubric generation started in parallel: %d groups, %d workers, model=%s",
             len(to_process),
-            workers,
-            model,
+            ctx.workers,
+            ctx.model,
         )
     for (
         idx,
@@ -271,14 +256,14 @@ def generate_rubrics(
         rubrics_for_group,
         usage,
         had_error,
-    ) in run_jobs(to_process, generate_one_group, max_workers=workers):
+    ) in run_jobs(to_process, generate_one_group, max_workers=ctx.workers):
         with rubrics_lock:
             rubrics.update(rubrics_for_group)
             rubrics_snapshot = {q: e.model_dump() for q, e in rubrics.items()}
         usage_total = usage_total.merged(usage)
         if had_error:
             groups_failed += 1
-        logger.info(
+        ctx.logger.info(
             "Rubric generation progress: group %d/%d complete (%s)",
             idx + 1,
             total,
@@ -288,8 +273,8 @@ def generate_rubrics(
             progress_callback(idx + 1, total, group, rubrics_snapshot)
 
     if usage_total.has_tokens():
-        cost = usage_cost_usd(usage_total, model)
-        logger.info(
+        cost = usage_cost_usd(usage_total, ctx.model)
+        ctx.logger.info(
             "Rubric generation complete: %d groups, %d failed, %d questions, %d tokens (%.0f in / %.0f out), ~$%.4f",
             len(to_process),
             groups_failed,
@@ -300,7 +285,7 @@ def generate_rubrics(
             cost,
         )
     else:
-        logger.info(
+        ctx.logger.info(
             "Rubric generation complete: %d groups, %d failed, %d questions",
             len(to_process),
             groups_failed,
@@ -308,12 +293,12 @@ def generate_rubrics(
         )
 
     if config.rubric_review:
-        logger.info("Running rubric review pass...")
+        ctx.logger.info("Running rubric review pass...")
         rubrics = review_rubrics(
             rubrics,
             config,
             solution_parsed,
-            client,
+            ctx.client,
             groups_to_review=groups if partial else None,
         )
 
