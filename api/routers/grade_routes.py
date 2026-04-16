@@ -31,6 +31,17 @@ def api_grade_status():
     return {"in_progress": not acquired}
 
 
+@router.post("/grade/cancel")
+def api_grade_cancel():
+    """Request cancellation of the active grading run (stops after current student)."""
+    acquired = state.grading_lock.acquire(blocking=False)
+    if acquired:
+        state.grading_lock.release()
+        raise HTTPException(status_code=409, detail="No grading run in progress.")
+    state.request_grading_cancel()
+    return {"ok": True, "message": "Cancellation requested. Grading will stop after the current student."}
+
+
 @router.get("/grade")
 async def api_grade():
     """SSE stream: runs grading in a background thread, emits progress events."""
@@ -40,10 +51,15 @@ async def api_grade():
             detail="Grading already in progress. Wait for it to finish or refresh.",
         )
     cfg = state.get_active_app_config()
+    state.reset_grading_cancel()
 
     def worker(emit: Callable[[dict], None]) -> None:
         try:
-            for evt in grade_all_students(cfg, results_lock=state.results_lock):
+            for evt in grade_all_students(
+                cfg,
+                results_lock=state.results_lock,
+                cancel_check=state.is_grading_cancelled,
+            ):
                 emit(evt)
         except Exception as e:
             emit({"student": "", "status": "error", "result": None, "error": str(e)})

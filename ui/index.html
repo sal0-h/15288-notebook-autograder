@@ -202,6 +202,7 @@
         <p class="mb-2 text-muted-sm">Students who already have grades in <code>graded_results.json</code> are skipped automatically; the run continues with the next pending student. Each row below updates as grading proceeds.</p>
         <div class="mb-2 flex-row-gap10 flex-wrap grade-estimate-row">
             <button type="button" class="btn btn-align-start" id="gradeBtn">Start Grading</button>
+            <button type="button" class="btn btn-danger btn-align-start hidden" id="gradeCancelBtn" title="Stop grading after the current student finishes">Stop after current</button>
             <button type="button" class="btn btn-secondary btn-align-start" id="genaiDetectBtn" title="Optional: run a separate cheap-model pass to flag possible GenAI-style answers. Does not change scores.">Run GenAI detection</button>
             <label class="review-flagged-inline mb-0"><input type="checkbox" id="genaiAutoRun"> Auto-run after grading</label>
             <div class="grade-estimate-block">

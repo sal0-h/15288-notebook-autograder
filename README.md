@@ -324,6 +324,7 @@ Pipeline:
 - POST /generate-rubrics
 - GET /grade/status
 - GET /grade
+- POST /grade/cancel
 - POST /grade/{student_name}
 - POST /calibrate
 - POST /export

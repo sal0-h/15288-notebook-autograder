@@ -137,11 +137,14 @@ def grade_all_students(
     cfg: AppConfig,
     client: OpenAI | None = None,
     results_lock=None,
+    cancel_check: callable | None = None,
 ) -> Generator[dict, None, None]:
     """
     Grade all students sequentially or in parallel.
     Yields progress events; saves graded_results.json after each student.
     When results_lock is provided (e.g. from app), uses it for thread-safe writes.
+    When cancel_check is provided, it is called before each student; if it returns
+    True, grading stops after the current student with a 'cancelled' event.
     """
     logger = get_job_logger(cfg, __name__)
 
@@ -233,6 +236,16 @@ def grade_all_students(
         # Sequential grading
         graded_count = 0
         for i, path in to_grade:
+            if cancel_check and cancel_check():
+                logger.info("Grading cancelled by user after %d students", graded_count)
+                yield {
+                    "student": "",
+                    "status": "cancelled",
+                    "result": None,
+                    "error": None,
+                    "graded_count": graded_count,
+                }
+                break
             student_name = path.stem
             yield _emit_working_event(student_name, i, len(student_files))
             try:
@@ -325,6 +338,16 @@ def grade_all_students(
             _grade_one,
             max_workers=workers,
         ):
+            if cancel_check and cancel_check():
+                logger.info("Grading cancelled by user after %d students (parallel)", graded_count)
+                yield {
+                    "student": "",
+                    "status": "cancelled",
+                    "result": None,
+                    "error": None,
+                    "graded_count": graded_count,
+                }
+                break
             if status == "done":
                 if result is None:
                     logger.error(

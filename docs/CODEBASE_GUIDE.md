@@ -685,6 +685,11 @@ rubric_lock    # rubric generation / SSE exclusivity
 through `api.sse.threaded_sse_response`. The async route waits on a queue fed by
 `loop.call_soon_threadsafe` from a background thread.
 
+**Grading cancellation:** `POST /grade/cancel` sets a cancellation flag in `api.state`
+(threading.Event). The `batch_grader.grade_all_students` loop checks this flag between
+students and emits a `"cancelled"` event before stopping. Already-graded results are
+preserved. The flag is reset when a new grading run starts (`GET /grade`).
+
 **Blocking work in routes:** CPU- or disk-heavy steps (e.g. `run_parse`) run inside
 `asyncio.to_thread(...)` so the event loop stays responsive; lightweight handlers may stay synchronous.
 
