@@ -3,6 +3,9 @@
 .cursor
 .cursorignore
 output/
+# Human grades / exports (PII). README is tracked via negation below.
+experiment_data/**
+!experiment_data/README.md
 __pycache__/
 .pytest_cache
 *.pyc

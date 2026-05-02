@@ -56,6 +56,10 @@ Use **Black** (`black .`, line length 88). No Ruff/mypy gate required today.
 
 Set **`OPENAI_API_KEY`** in `.env` at the repo root. Legacy **`key`** is deprecated (see `llm.client.get_openai_client`).
 
+### Local experiment data
+
+**`experiment_data/`** at the repo root is for manual grades / Gradescope exports / evaluation bundles (often PII). It is **gitignored** except **`experiment_data/README.md`** (see root `.gitignore`). Runtime assignment state remains under **`output/{assignment_name}/`**. If you use a local `.cursorignore` (not tracked here), exclude `experiment_data/**/*.csv` and other large artifacts from indexing.
+
 ### Token usage on graded results
 
 - On disk, optional usage under **`_usage`**; canonical key: **`results_models.GRADED_RESULT_USAGE_KEY`** (see **`results_models`** for merge/detach helpers).
