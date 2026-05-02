@@ -86,7 +86,7 @@ def test_build_group_prompt_includes_rubric_from_rubric_entry_models():
             ],
         )
     }
-    messages, qid_to_max = prompt_builder.build_group_prompt(
+    messages, qid_to_max, inj = prompt_builder.build_group_prompt(
         ["1.1"],
         solution_parsed,
         student_parsed,
@@ -101,6 +101,7 @@ def test_build_group_prompt_includes_rubric_from_rubric_entry_models():
     assert "Wrong approach: -5.0 pts" in text_blob
     assert "No explanation: -5.0 pts" in text_blob
     assert qid_to_max["1.1"] == 10
+    assert inj.get("1.1") is False
 
 
 def test_build_group_prompt_includes_rubric_from_plain_dicts():
@@ -133,7 +134,7 @@ def test_build_group_prompt_includes_rubric_from_plain_dicts():
             }
         }
     }
-    messages, _ = prompt_builder.build_group_prompt(
+    messages, _, inj = prompt_builder.build_group_prompt(
         ["1.1"],
         solution_parsed,
         student_parsed,
@@ -145,6 +146,51 @@ def test_build_group_prompt_includes_rubric_from_plain_dicts():
         p["text"] for p in user if isinstance(p, dict) and p.get("type") == "input_text"
     )
     assert "Off by one: -3.0 pts" in text_blob
+    assert inj.get("1.1") is False
+
+
+def test_build_group_prompt_sandwich_and_rubric_mirror_copy():
+    """Post-student anchor + anti–rubric-mirroring lines are present (injection depth)."""
+    sol = {
+        "sections": {
+            "1": {
+                "questions": {
+                    "1.1": {
+                        "points": 1,
+                        "question_markdown": "Q",
+                        "answer_code_concat": "x=1",
+                        "answer_text_concat": "",
+                        "answer_markdown_concat": "",
+                        "answer_cells": [],
+                    }
+                }
+            }
+        }
+    }
+    stu = {
+        "sections": {
+            "1": {
+                "questions": {
+                    "1.1": {
+                        "points": 1,
+                        "question_markdown": "Q",
+                        "answer_code_concat": "x=1",
+                        "answer_text_concat": "",
+                        "answer_markdown_concat": "",
+                        "answer_cells": [],
+                    }
+                }
+            }
+        }
+    }
+    messages, _, _ = prompt_builder.build_group_prompt(["1.1"], sol, stu, "sys")
+    blob = "\n".join(
+        p["text"]
+        for p in messages[1]["content"]
+        if isinstance(p, dict) and p.get("type") == "input_text"
+    )
+    assert "mirror rubric language" in blob
+    assert "End of student evidence for question 1.1" in blob
 
 
 def test_build_genai_detection_user_message_none_when_empty():

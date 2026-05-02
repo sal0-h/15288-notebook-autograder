@@ -601,7 +601,8 @@ For each group:
     - Solution content (question markdown, code, output, markdown answer, images)
     — if `include_reference_in_grading` is False, only the question text and rubric are included
     - Rubric (if present in `cfg.rubrics`)
-    - Student submission section wrapped in `<<<STUDENT_SUBMISSION>>>` / `<<<END_STUDENT_SUBMISSION>>>` delimiters.
+    - Student submission section wrapped in `<<<STUDENT_SUBMISSION>>>` / `<<<END_STUDENT_SUBMISSION>>>` delimiters (student text passed through `_sanitize_student_text`: NFC, removal of Unicode `Cf` / disallowed `Cc` except newline/tab/CR, bidi/isolate controls, then delimiter substitution).
+    - A one-line **anchor** after that question's student block reminding the model that grading rules still bind (sandwich-style depth).
 
 Long text fields (reference and student code, output, markdown) share one character cap
 derived from `max_prompt_tokens` (`prompt_builder._grading_body_char_cap` — roughly 4×
@@ -609,16 +610,27 @@ tokens, clamped). No per-question token estimation in the builder.
 
 **Truncation flags:** When student code, output, or markdown exceeds the character cap and is truncated, `_build_student_parts()` appends a `GRADING NOTE` to the prompt telling the LLM which fields were truncated and instructing it to set `requires_review=true` when truncated content could contain the answer. This ensures truncated submissions are flagged for human review rather than silently scored on incomplete evidence.
 
+**Injection suspect:** If many Unicode format/control characters are stripped from a question's combined student evidence (threshold `_INJECTION_UNICODE_STRIP_THRESHOLD` in `prompt_builder.py`), `build_group_prompt` marks that question ID in the third return value; `grade._store_group_grades` then **forces** `requires_review=true` and sets `_provenance.unicode_injection_suspect` when merging results.
+
 Image payloads are added as vision message parts with
 `{"type": "image_url", "image_url": {"url": "data:image/png;base64,..."}}`.
 `estimate_tokens` still uses `TOKENS_PER_IMAGE = 1000` when projecting costs from built messages.
 
 ### Prompt injection protection
 
-All student-supplied text is run through `_sanitize_student_text` before insertion,
-which replaces `<<<` / `>>>` delimiter sequences with visually similar but structurally
-inert characters (`«` / `»`). This prevents a malicious student from escaping the
-`<<<STUDENT_SUBMISSION>>>` boundary in the prompt.
+All student-supplied text is run through `_sanitize_student_text` before insertion.
+It **NFC**-normalizes the string, removes Unicode **Cf** (format) characters and
+**Cc** control characters except newline, tab, and carriage return, removes
+**bidi / isolate** directional controls (U+200E--U+200F, U+202A--U+202E,
+U+2066--U+2069), then replaces `<<<` / `>>>` delimiter sequences with visually
+similar but structurally inert characters (`«` / `»`). This prevents a malicious
+student from escaping the `<<<STUDENT_SUBMISSION>>>` boundary and mitigates
+stealth Unicode injections (cf. EvalHack-style benchmarks in the paper draft).
+
+The grading user header also warns against **rubric-mirroring** manipulation
+(paste criterion text without substantive work). `build_group_prompt` returns
+`(messages, qid_to_max_pts, qid_to_injection_suspect)`; the third map drives
+forced human review as documented under **Injection suspect** above.
 
 ---
 
@@ -745,7 +757,7 @@ for blocking work and return ordinary JSON responses.
 
 | Threat                                     | Mitigation                                                                                                                       |
 | ------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------- |
-| Prompt injection via student notebook      | `_sanitize_student_text` replaces `<<<` / `>>>` with `«` / `»` before any student content enters a prompt                        |
+| Prompt injection via student notebook      | `_sanitize_student_text`: NFC; strip Unicode **Cf** / disallowed **Cc** (keep newline/tab/CR); strip bidi/isolate controls; replace `<<<` / `>>>` with `«` / `»`; per-question sandwich anchor + anti–rubric-mirroring header in `build_group_prompt`; heavy strip forces `requires_review` and `_provenance.unicode_injection_suspect` |
 | Path traversal in API routes               | `safe_path` in `api/helpers.py` resolves and checks the path stays under `base`; raises HTTP 400 otherwise                       |
 | Blank `solution_notebook` on `POST /parse-solution` | `resolve_solution_notebook_path` returns `None` so the repo root is never opened as a notebook (avoids `PROJECT_ROOT / ""`); HTTP 404 with a clear message |
 | Untrusted YAML (student names)             | Student names come only from Gradescope metadata, not from notebook content                                                      |

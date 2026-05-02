@@ -339,7 +339,10 @@ def grade_all_students(
             max_workers=workers,
         ):
             if cancel_check and cancel_check():
-                logger.info("Grading cancelled by user after %d students (parallel)", graded_count)
+                logger.info(
+                    "Grading cancelled by user after %d students (parallel)",
+                    graded_count,
+                )
                 yield {
                     "student": "",
                     "status": "cancelled",

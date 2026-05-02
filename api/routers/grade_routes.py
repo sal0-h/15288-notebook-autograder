@@ -39,7 +39,10 @@ def api_grade_cancel():
         state.grading_lock.release()
         raise HTTPException(status_code=409, detail="No grading run in progress.")
     state.request_grading_cancel()
-    return {"ok": True, "message": "Cancellation requested. Grading will stop after the current student."}
+    return {
+        "ok": True,
+        "message": "Cancellation requested. Grading will stop after the current student.",
+    }
 
 
 @router.get("/grade")

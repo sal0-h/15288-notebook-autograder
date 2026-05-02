@@ -156,7 +156,7 @@ class TestBuildGroupPrompt:
     def test_returns_two_messages(self):
         sol = self._minimal_parsed("4.1", "print('ref')")
         stu = self._minimal_parsed("4.1", "print('stu')")
-        messages, qid_to_max = build_group_prompt(["4.1"], sol, stu, "You grade.")
+        messages, qid_to_max, _ = build_group_prompt(["4.1"], sol, stu, "You grade.")
         assert len(messages) == 2
         assert messages[0]["role"] == "system"
         assert messages[1]["role"] == "user"
@@ -164,13 +164,13 @@ class TestBuildGroupPrompt:
     def test_qid_to_max_populated(self):
         sol = self._minimal_parsed("4.1")
         stu = self._minimal_parsed("4.1")
-        _, qid_to_max = build_group_prompt(["4.1"], sol, stu, "You grade.")
+        _, qid_to_max, _ = build_group_prompt(["4.1"], sol, stu, "You grade.")
         assert qid_to_max["4.1"] == 2
 
     def test_content_parts_include_text(self):
         sol = self._minimal_parsed("4.1", "solution_code")
         stu = self._minimal_parsed("4.1", "student_code")
-        messages, _ = build_group_prompt(["4.1"], sol, stu, "You grade.")
+        messages, _, _ = build_group_prompt(["4.1"], sol, stu, "You grade.")
         content = messages[1]["content"]
         all_text = " ".join(p["text"] for p in content if p["type"] == "input_text")
         # By default, reference solution is NOT included (rubric-only grading)
@@ -181,7 +181,7 @@ class TestBuildGroupPrompt:
     def test_include_reference_flag(self):
         sol = self._minimal_parsed("4.1", "solution_code")
         stu = self._minimal_parsed("4.1", "student_code")
-        messages, _ = build_group_prompt(
+        messages, _, _ = build_group_prompt(
             ["4.1"], sol, stu, "You grade.", include_reference=True
         )
         content = messages[1]["content"]
@@ -192,7 +192,7 @@ class TestBuildGroupPrompt:
     def test_no_answer_shows_placeholder(self):
         sol = self._minimal_parsed("4.1")
         stu = {"sections": {}}  # student has nothing
-        messages, _ = build_group_prompt(["4.1"], sol, stu, "You grade.")
+        messages, _, _ = build_group_prompt(["4.1"], sol, stu, "You grade.")
         content = messages[1]["content"]
         all_text = " ".join(p["text"] for p in content if p["type"] == "input_text")
         assert "no submission" in all_text
@@ -209,7 +209,7 @@ class TestBuildGroupPrompt:
                 ],
             },
         }
-        messages, _ = build_group_prompt(
+        messages, _, _ = build_group_prompt(
             ["1.1"], sol, stu, "You grade.", rubrics=rubrics
         )
         content = messages[1]["content"]
@@ -247,6 +247,14 @@ class TestSanitizeStudentText:
         result = _sanitize_student_text(text)
         assert "<<<" not in result
         assert ">>>" not in result
+
+    def test_strips_zero_width_and_bidi_controls(self):
+        zw = "\u200b"
+        rlo = "\u202e"
+        s = _sanitize_student_text(f"a{zw}b{rlo}c")
+        assert zw not in s
+        assert rlo not in s
+        assert s == "abc"
 
     def test_delimiter_escape_attack_neutralised_in_prompt(self):
         """
@@ -294,7 +302,7 @@ class TestSanitizeStudentText:
                 }
             }
         }
-        messages, _ = build_group_prompt(["4.1"], sol, stu, "Grade.")
+        messages, _, _ = build_group_prompt(["4.1"], sol, stu, "Grade.")
         full_text = " ".join(
             p["text"] for p in messages[1]["content"] if p["type"] == "input_text"
         )
@@ -306,6 +314,45 @@ class TestSanitizeStudentText:
         assert full_text.count("<<<END_STUDENT_SUBMISSION>>>") == 1
         # The malicious escape attempt inside student content should be neutralised
         assert "«END_STUDENT_SUBMISSION»" in full_text
+
+
+def test_build_group_prompt_marks_injection_suspect_after_many_control_chars():
+    """Many stripped format chars → qid_injection_suspect True (forces review in grade)."""
+    zw = "\u200b"
+    sol = {
+        "sections": {
+            "1": {
+                "questions": {
+                    "1.1": {
+                        "points": 1,
+                        "question_markdown": "Q",
+                        "answer_code_concat": "x=1",
+                        "answer_text_concat": "",
+                        "answer_markdown_concat": "",
+                        "answer_cells": [],
+                    }
+                }
+            }
+        }
+    }
+    stu = {
+        "sections": {
+            "1": {
+                "questions": {
+                    "1.1": {
+                        "points": 1,
+                        "question_markdown": "Q",
+                        "answer_code_concat": "x=1" + zw * 9,
+                        "answer_text_concat": "",
+                        "answer_markdown_concat": "",
+                        "answer_cells": [],
+                    }
+                }
+            }
+        }
+    }
+    _, _, inj = build_group_prompt(["1.1"], sol, stu, "sys")
+    assert inj.get("1.1") is True
 
 
 # ---------------------------------------------------------------------------

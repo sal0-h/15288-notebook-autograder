@@ -117,12 +117,15 @@ def grade_group(
     config: AppConfig,
     ctx: LlmContext,
     student_name: str | None = None,
-) -> tuple[list[QuestionGrade], dict[str, int], TokenUsage]:
+) -> tuple[list[QuestionGrade], dict[str, int], TokenUsage, dict[str, bool]]:
     """
     Grade one question group. Retries up to MAX_VALIDATION_RETRIES times
     if the LLM response fails Pydantic validation.
+
+    Returns:
+        (grade_items, qid_to_max, usage, qid_injection_suspect)
     """
-    messages, qid_to_max = build_group_prompt(
+    messages, qid_to_max, qid_injection_suspect = build_group_prompt(
         group,
         solution_parsed,
         student_parsed,
@@ -168,7 +171,7 @@ def grade_group(
         postprocess=lambda p: _postprocess_grade_group(p, group=g_tuple),
         fallback_factory=_exhausted,
     )
-    return grade_items, qid_to_max, usage
+    return grade_items, qid_to_max, usage, qid_injection_suspect
 
 
 def _store_group_grades(
@@ -179,12 +182,14 @@ def _store_group_grades(
     qid_to_max: dict[str, int],
     model: str = "",
     rubrics: dict | None = None,
+    injection_suspect: dict[str, bool] | None = None,
 ) -> tuple[float, float]:
     """Process one group's grading response into questions dict. Returns (score, max) for this group."""
     grade_map = {g.question_id: g for g in grade_items}
     total_score = 0.0
     total_max = 0.0
     now = datetime.now(timezone.utc).isoformat()
+    inj = injection_suspect or {}
     for qid in group:
         max_pts = qid_to_max.get(qid, 0)
         total_max += max_pts
@@ -196,17 +201,21 @@ def _store_group_grades(
         )
         score = max(0.0, min(float(max_pts), q_grade.score))
         feedback = _normalize_no_submission_feedback(q_grade.feedback.strip())
+        needs_review = bool(q_grade.requires_review or inj.get(qid, False))
+        prov = {
+            "model": model,
+            "rubric_hash": _rubric_hash(rubrics.get(qid) if rubrics else None),
+            "graded_at": now,
+        }
+        if inj.get(qid, False):
+            prov["unicode_injection_suspect"] = True
         questions[qid] = {
             "score": score,
             "max": max_pts,
             "feedback": feedback,
             "confidence": q_grade.confidence,
-            "requires_review": q_grade.requires_review,
-            "_provenance": {
-                "model": model,
-                "rubric_hash": _rubric_hash(rubrics.get(qid) if rubrics else None),
-                "graded_at": now,
-            },
+            "requires_review": needs_review,
+            "_provenance": prov,
         }
         total_score += score
         if feedback and score < max_pts:
@@ -327,8 +336,9 @@ def grade_student(
                 for qid in group
             ]
             usage = TokenUsage()
+            qid_injection = {}
         else:
-            grade_items, qid_to_max, usage = grade_group(
+            grade_items, qid_to_max, usage, qid_injection = grade_group(
                 group,
                 solution_parsed,
                 student_parsed,
@@ -345,6 +355,7 @@ def grade_student(
             qid_to_max,
             model=ctx.model,
             rubrics=cfg.rubrics,
+            injection_suspect=qid_injection,
         )
         total_score += score_delta
         total_max += max_delta

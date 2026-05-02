@@ -156,7 +156,7 @@ def estimate_grade(config: AppConfig, student_name: str | None = None) -> dict:
         for group in groups:
             if not group:
                 continue
-            messages, _ = build_group_prompt(
+            messages, _, _ = build_group_prompt(
                 group,
                 solution_parsed,
                 sample,
