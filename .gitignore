@@ -3,6 +3,7 @@
 .cursor
 .cursorignore
 output/
+experiment_analysis/
 # Human grades / exports (PII). README is tracked via negation below.
 experiment_data/**
 !experiment_data/README.md
@@ -17,4 +18,24 @@ temp_scripts*.db
 *.sqlite3
 docs/research/
 docs/plans/
-research/
+# Local scratch under research/ is ignored; tracked paper draft + tables live in research/paper/.
+research/*
+!research/README.md
+!research/paper/
+!research/paper/**
+
+# LaTeX build products (keep draft .md / .csv tracked; local paper PDFs stay untracked)
+research/paper/*.aux
+research/paper/*.bbl
+research/paper/*.blg
+research/paper/*.log
+research/paper/*.out
+research/paper/*.pdf
+research/paper/*.toc
+research/paper/*.fdb_latexmk
+research/paper/*.fls
+research/paper/*.synctex.gz
+
+# Local snapshots of graded JSON (see grading_backups/README.md; only README tracked)
+grading_backups/*
+!grading_backups/README.md
