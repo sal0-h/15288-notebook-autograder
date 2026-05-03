@@ -99,10 +99,10 @@ ai_autograder/
 | `batch_grader.py`    | Sequential/parallel grading, resume logic                            | `grade`, `results_store`, `utils`                                  |
 | `rubric_generate`, `rubric_review` | Rubric generation + optional review pass                             | `prompt_builder`, `utils`, `llm`                                   |
 | `gather.py`          | Submission extraction                                                | `utils`                                                            |
-| `export.py`          | Excel + Gradescope export                                            | `utils`                                                            |
+| `export.py`          | Excel + Gradescope export                                            | `utils`, `zip_helpers`                                             |
 | `calibrate.py`       | Outlier detection                                                    | `utils`                                                            |
 | `estimate.py`        | Cost projection                                                      | `prompt_builder`, `utils`                                          |
-| `linter_export.py`   | Format linter zip                                                    | `parse_notebook`, `utils`                                          |
+| `linter_export.py`   | Format linter zip                                                    | `parse_notebook`, `config_models`, `zip_helpers`                   |
 | `genai_detection.py` | Post-grade suspicion flags on questions                             | `llm.json_runner`, `prompt_builder`, `results_store`               |
 
 
@@ -112,7 +112,7 @@ ai_autograder/
 
 Prefer these surfaces when adding features so CLI and web app stay aligned:
 
-- **CLI:** `[main.py](../main.py)` — imports directly from `calibrate`, `export`, `estimate`, and uses `[pipeline_runner.py](../pipeline_runner.py)` for gather and parse.
+- **CLI:** `[main.py](../main.py)` — imports directly from `calibrate`, `export`, `estimate`, and uses `[pipeline_runner.py](../pipeline_runner.py)` for gather and parse. After `load_app_config`, `--model` / `--solution` / `--submissions-dir` are merged in-memory so they work with `--no-write-config` too.
 - **HTTP:** `[app.py](../app.py)` and `[api/routers/](../api/routers/)` — load config via `[api/state.py](../api/state.py)` (`get_active_app_config()` for pipeline work); call `pipeline_runner`, `batch_grader`, `grade`, `export`, etc.
 - **Shared step wrappers:** `[pipeline_runner.py](../pipeline_runner.py)` (`run_gather`, `run_parse`, `get_calibration_report`, `run_genai_detection`).
 - **Config I/O:** `load_app_config` / `save_config` in `config_models.py` for assignment YAML; `ensure_app_config` at dict/`AppConfig` boundaries.
@@ -410,6 +410,12 @@ If `section_regex` is too loose (e.g. it matches student `### 1. …` subheading
 stop early. Prefer a pattern that matches real handout section lines only (distinctive
 HTML, wording, or heading level).
 
+**Inline answers in the question cell:** `question_markdown` stores the **entire** matched
+markdown cell — including any text a student typed after the question stem in that same cell.
+`_collect_answer_cells` only walks cells *following* the header cell (`start + 1`), so content
+appended inside the question cell does not appear in `answer_*` fields. The grading prompt
+handles this via the "inline answer" detection in `build_group_prompt` — see §5.
+
 **`extract_qids_from_notebook`**
 
 Same `question_regex` semantics: markdown only, one `search` per cell, same 3- vs 4-group
@@ -434,7 +440,7 @@ Flow:
 
 1. Load `solution_parsed.json` from `output_dir`.
 2. For each question group (or the subset specified by `group_indices`), call the LLM
-  with the solution content and `rubric_system` prompt.
+  with the solution content and `rubric_system` prompt (lenient, few line items; point totals must match each question's ``(P pts)`` header; split multi-part questions into a few broad criteria over one full-point checklist paragraph).
 3. Parse the returned JSON into a `{qid: {points, items: [{description, deduction}]}}` dict.
   The object must include **every** question in the group; each entry must include `points` (no silent backfill from the solution).
   Omissions fail validation and trigger JSON LLM retries, then a `"[generation failed]"` placeholder rubric for that group if retries are exhausted.
@@ -610,6 +616,15 @@ tokens, clamped). No per-question token estimation in the builder.
 
 **Truncation flags:** When student code, output, or markdown exceeds the character cap and is truncated, `_build_student_parts()` appends a `GRADING NOTE` to the prompt telling the LLM which fields were truncated and instructing it to set `requires_review=true` when truncated content could contain the answer. This ensures truncated submissions are flagged for human review rather than silently scored on incomplete evidence.
 
+**Inline question-cell answers:** Students sometimes write their answer directly inside the
+question header markdown cell (below the question stem) rather than in a following cell.
+`build_group_prompt` detects this by comparing the student's `question_markdown` to the
+solution's. When they differ, the student's full cell text is included inside the
+`<<<STUDENT_SUBMISSION>>>` block under the label "Inline answer in question cell", so the
+model sees it as part of their answer. The question header always uses the **solution's**
+question text (authoritative). The `grade_system` prompt instructs the model to treat the
+inline section as evidence only, not as a change to the rubric or point value.
+
 **Injection suspect:** If many Unicode format/control characters are stripped from a question's combined student evidence (threshold `_INJECTION_UNICODE_STRIP_THRESHOLD` in `prompt_builder.py`), `build_group_prompt` marks that question ID in the third return value; `grade._store_group_grades` then **forces** `requires_review=true` and sets `_provenance.unicode_injection_suspect` when merging results.
 
 Image payloads are added as vision message parts with
@@ -682,8 +697,8 @@ Row types are shared for LLM wire and pipeline: **`QuestionGrade`** (grading), *
 
 `temperature_for_model(model)` returns:
 
-- `1.0` for `gpt-5*` family (reasoning models that only support temperature=1)
-- `0.0` for all other models (deterministic output for reproducibility)
+- `1.0` for early GPT-5 ids (`gpt-5`, `gpt-5-mini`, `gpt-5-nano`, snapshots, and `*codex*`) where Chat Completions still expects default sampling
+- `0.0` for `gpt-5.2` / `gpt-5.3` / `gpt-5.4` / `gpt-5.5` prefixes (newer dot-releases) and for all non–GPT-5 models (deterministic output for reproducibility)
 
 ---
 
@@ -775,11 +790,17 @@ Tests live in `tests/` and are run with `pytest tests/ -q`.
 
 | File                     | What it covers                                                                                     |
 | ------------------------ | -------------------------------------------------------------------------------------------------- |
+| `test_llm_client.py` | `temperature_for_model` policy for GPT-5 id families |
 | `test_utils.py`          | Config load/save/defaults, `AppConfig` serialization helpers, `ensure_app_config`, path resolution |
 | `test_parse.py`          | Notebook parsing with mock cell structures                                                         |
 | `test_grade.py`          | `grade_student` and `grade_group` logic including `grade_only`, merge, skip, retry                 |
 | `test_rubric.py`         | Rubric generation and review pass logic                                                            |
 | `test_export.py`         | Excel and Gradescope JSON output, `gradescope_title_mapping`, autograder ZIP layout                  |
+| `test_experiment_data_scripts.py` | Anonymize CSV helper, S25 pack-to-Gradescope-ZIP + `gather_submissions` smoke |
+| `test_backup_grading_results.py` | `scripts/backup_grading_results.py`: snapshot ``graded_results.json`` + ``experiment_runs/`` |
+| `test_compare_experiment_to_human.py` | `scripts/compare_experiment_to_human.py`: `analyze_lab` totals / per-question MAE / Pearson |
+| `test_analyze_human_ai_discrepancies.py` | `scripts/analyze_human_ai_discrepancies.py` + `scripts/_human_ai_join.py`: Task 2/3 rows, Task 4 quartile invariance, grader scan (skips Autograder headers), Task 1 `_raw` scan |
+| `test_audit_experiment_output_rubrics.py` | `scripts/audit_experiment_output_rubrics.py`: rubric vs `question_groups` coverage, deduction sums, coarse-item heuristic |
 | `test_gather.py`         | Submission extraction from metadata, `email_stem_map.json`                                           |
 | `test_calibrate.py`      | Z-score computation and outlier flagging                                                           |
 | `test_app.py`            | FastAPI endpoints including config CRUD, `POST /parse-solution`, grading SSE, export downloads      |

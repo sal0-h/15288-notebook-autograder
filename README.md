@@ -202,6 +202,12 @@ python main.py --steps parse grade export --config output/LabTest_3_S26/config.y
 
 Use `--no-write-config` when you want to run pipeline steps against the current assignment config as-is.
 
+**Snapshot graded JSON before big reruns** (copies `output/*/graded_results.json` and `output/*/experiment_runs/` into `grading_backups/<timestamp>/`; see `grading_backups/README.md`):
+
+```bash
+python scripts/backup_grading_results.py
+```
+
 It is also a good idea to keep a dated local backup before major reruns, for example:
 
 ```bash
@@ -239,7 +245,7 @@ The UI is organized around the same staff workflow:
 Important fields in config.yaml:
 
 - assignment_name: the assignment identifier used to scope output.
-- model: grading model. For reproducible scores across regrades, use **gpt-4.1** or **gpt-4.1-mini** (temperature=0). gpt-5 models use temperature=1 and can vary significantly between runs. See `docs/OPENAI_VISION_MODELS.md` for model comparison and stability data.
+- model: grading model. For reproducible scores across regrades, use **gpt-4.1** or **gpt-4.1-mini** (temperature=0). Early **gpt-5** / **gpt-5-mini** ids use temperature=1 and can vary between runs; **gpt-5.2+** dot releases often allow temperature=0 (see `temperature_for_model` in `llm/client.py` and `docs/OPENAI_VISION_MODELS.md`).
 - rubric_model: optional rubric-generation model; falls back to model when empty.
 - solution_notebook: path to the reference notebook.
 - workers: parallel grading worker count.
