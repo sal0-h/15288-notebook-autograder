@@ -1,0 +1,112 @@
+#!/usr/bin/env python3
+"""Refresh `research/paper/human_ai_metrics_wide.csv` from compare outputs.
+
+Reads `experiment_analysis/<model_tag>/summary.json` when present (local runs).
+If missing, copies numbers from `research/paper/metrics_snapshot.json`.
+
+Usage:
+    python scripts/export_research_paper_metrics.py
+"""
+
+from __future__ import annotations
+
+import csv
+import json
+import sys
+from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+WIDE_CSV = PROJECT_ROOT / "research" / "paper" / "human_ai_metrics_wide.csv"
+SNAPSHOT = PROJECT_ROOT / "research" / "paper" / "metrics_snapshot.json"
+ANALYSIS = PROJECT_ROOT / "experiment_analysis"
+
+
+def _load_compare_summaries() -> dict[str, dict] | None:
+    out: dict[str, dict] = {}
+    for tag in ("gpt-4.1", "gpt-4.1-mini"):
+        p = ANALYSIS / tag / "summary.json"
+        if not p.is_file():
+            return None
+        out[tag] = json.loads(p.read_text(encoding="utf-8"))
+    return out
+
+
+def _rows_from_summaries(data: dict[str, dict]) -> list[dict[str, object]]:
+    labs_mini = {x["assignment_name"]: x for x in data["gpt-4.1-mini"]["labs"]}
+    labs_full = {x["assignment_name"]: x for x in data["gpt-4.1"]["labs"]}
+    names = sorted(set(labs_mini) | set(labs_full))
+    rows: list[dict[str, object]] = []
+    for name in names:
+        m = labs_mini.get(name, {})
+        g = labs_full.get(name, {})
+        if m.get("error") or g.get("error"):
+            continue
+        rows.append(
+            {
+                "assignment_name": name,
+                "n_paired": m.get("n_paired_total_score"),
+                "gpt4_mae_total": g.get("total_score_mae"),
+                "gpt4_rmse_total": g.get("total_score_rmse"),
+                "gpt4_pearson_r": g.get("total_score_pearson_r"),
+                "gpt4mini_mae_total": m.get("total_score_mae"),
+                "gpt4mini_rmse_total": m.get("total_score_rmse"),
+                "gpt4mini_pearson_r": m.get("total_score_pearson_r"),
+            }
+        )
+    return rows
+
+
+def _rows_from_snapshot() -> list[dict[str, object]]:
+    snap = json.loads(SNAPSHOT.read_text(encoding="utf-8"))
+    mini = snap["models"]["gpt-4.1-mini"]["labs"]
+    full = snap["models"]["gpt-4.1"]["labs"]
+    names = sorted(set(mini) | set(full))
+    rows = []
+    for name in names:
+        m, g = mini[name], full[name]
+        rows.append(
+            {
+                "assignment_name": name,
+                "n_paired": m["paired"],
+                "gpt4_mae_total": g["mae_total"],
+                "gpt4_rmse_total": g["rmse_total"],
+                "gpt4_pearson_r": g["pearson_r"],
+                "gpt4mini_mae_total": m["mae_total"],
+                "gpt4mini_rmse_total": m["rmse_total"],
+                "gpt4mini_pearson_r": m["pearson_r"],
+            }
+        )
+    return rows
+
+
+def main() -> int:
+    data = _load_compare_summaries()
+    if data is not None:
+        rows = _rows_from_summaries(data)
+        source = "experiment_analysis/*/summary.json"
+    else:
+        rows = _rows_from_snapshot()
+        source = str(SNAPSHOT)
+
+    fieldnames = [
+        "assignment_name",
+        "n_paired",
+        "gpt4_mae_total",
+        "gpt4_rmse_total",
+        "gpt4_pearson_r",
+        "gpt4mini_mae_total",
+        "gpt4mini_rmse_total",
+        "gpt4mini_pearson_r",
+    ]
+    WIDE_CSV.parent.mkdir(parents=True, exist_ok=True)
+    with WIDE_CSV.open("w", encoding="utf-8", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=fieldnames)
+        w.writeheader()
+        for r in rows:
+            w.writerow(r)
+    print(f"Wrote {WIDE_CSV} ({len(rows)} rows) from {source}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
