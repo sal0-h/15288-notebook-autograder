@@ -303,9 +303,19 @@ def _build_reference_parts(
     return ref_text, ref_images
 
 
-def _build_student_parts(stu_q: dict | None, cap: int) -> tuple[str, list[dict], int]:
+def _build_student_parts(
+    stu_q: dict | None,
+    cap: int,
+    stu_question_md: str | None = None,
+) -> tuple[str, list[dict], int]:
     """
     Build the STUDENT SUBMISSION text block (wrapped in delimiters) and extract images.
+
+    ``stu_question_md`` should be the student's question-header cell text **only when
+    it differs from the solution's question cell** (i.e. the student wrote inline
+    content such as a prose answer directly inside the question cell). When provided,
+    that text is included first inside the delimited block so the grading model sees it
+    as part of the student's answer.
 
     Returns:
         (submission_text, submission_images, n_unicode_stripped_from_evidence)
@@ -314,13 +324,30 @@ def _build_student_parts(stu_q: dict | None, cap: int) -> tuple[str, list[dict],
     stu_images: list[dict] = []
     unicode_stripped = 0
 
+    # Include student's question-cell text when it contains inline answers (i.e. the
+    # student modified or extended the question header cell itself). This is separate
+    # from answer_* fields which only cover cells that follow the question header.
+    if stu_question_md:
+        sanitized_qmd, n_u = _sanitize_student_field(stu_question_md)
+        unicode_stripped += n_u
+        stu_text += (
+            "Inline answer in question cell (student has written content inside the "
+            "question header cell — treat as part of their answer):\n"
+            f"{sanitized_qmd}\n\n"
+        )
+
     if stu_q:
         has_code = bool(stu_q.get("answer_code_concat", "").strip())
         has_output = bool(stu_q.get("answer_text_concat", "").strip())
         has_images = any(cell.get("images") for cell in stu_q.get("answer_cells", []))
-        if not has_code and not has_output and not has_images:
+        if not has_code and not has_output and not has_images and not stu_question_md:
             stu_text += "WARNING: This question has NO code, NO output, and NO images — only markdown (if any). Score accordingly; do not award points for code/output that is not present.\n\n"
-        has_any = has_code or has_output or stu_q.get("answer_markdown_concat")
+        has_any = (
+            has_code
+            or has_output
+            or stu_q.get("answer_markdown_concat")
+            or stu_question_md
+        )
         truncated_fields: list[str] = []
         code_raw = stu_q.get("answer_code_concat", "")
         if code_raw:
@@ -357,7 +384,7 @@ def _build_student_parts(stu_q: dict | None, cap: int) -> tuple[str, list[dict],
                 + ". If the truncated content could contain the answer, "
                 "set requires_review=true.\n"
             )
-    else:
+    elif not stu_question_md:
         stu_text += "(no submission)\n"
 
     stu_text += "<<<END_STUDENT_SUBMISSION>>>\n\n"
@@ -439,8 +466,16 @@ def build_group_prompt(
             content_parts.append({"type": "input_text", "text": ref_text})
             _append_image_parts(content_parts, ref_images)
 
+        # Detect whether the student wrote content inside the question-header cell
+        # itself (a common pattern: prose answer typed below the question stem).
+        # Compare stripped versions: if the student's cell differs from the solution's,
+        # the delta is inline-answer evidence that must be included in their submission.
+        sol_q_md = (sol_q or {}).get("question_markdown", "").strip()
+        stu_q_md = (stu_q or {}).get("question_markdown", "").strip()
+        stu_inline_md = stu_q_md if (stu_q_md and stu_q_md != sol_q_md) else None
+
         # Student submission (wrapped in delimiters for prompt injection mitigation)
-        stu_text, stu_images, n_strip = _build_student_parts(stu_q, cap)
+        stu_text, stu_images, n_strip = _build_student_parts(stu_q, cap, stu_inline_md)
         qid_injection_suspect[qid] = n_strip >= _INJECTION_UNICODE_STRIP_THRESHOLD
         content_parts.append({"type": "input_text", "text": stu_text})
         _append_image_parts(content_parts, stu_images)
