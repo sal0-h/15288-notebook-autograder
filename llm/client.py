@@ -11,10 +11,22 @@ from openai import OpenAI
 
 
 def temperature_for_model(model: str) -> float:
-    """Use 0 when model supports it (deterministic); else 1. GPT-5 family only supports 1."""
-    if model.startswith("gpt-5"):
+    """Return sampling temperature for Chat Completions (0 = deterministic when allowed).
+
+    Early GPT-5 ids (``gpt-5``, ``gpt-5-mini``, ``gpt-5-nano``, dated snapshots) often
+    only accept the default temperature (``1``). Newer dot-releases (``gpt-5.2``+,
+    ``gpt-5.3``+, …) typically accept ``0``; Codex variants are treated like the older
+    policy (``1``) until confirmed otherwise. Verify with ``test_openai_connection.py
+    --probe-chat --probe-json`` for your org.
+    """
+    m = model.lower()
+    if not m.startswith("gpt-5"):
+        return 0.0
+    if "codex" in m:
         return 1.0
-    return 0.0
+    if m.startswith(("gpt-5.5", "gpt-5.4", "gpt-5.3", "gpt-5.2")):
+        return 0.0
+    return 1.0
 
 
 def get_openai_client(
