@@ -14,6 +14,8 @@ The codebase currently targets Python notebook assignments and is organized arou
 
 **Contributing / changing code:** start with **[docs/README.md](docs/README.md)** (documentation index + developer quick reference), then **[docs/CODEBASE_GUIDE.md](docs/CODEBASE_GUIDE.md)** for depth. **Cursor:** [`.cursor/rules/`](.cursor/rules/) — keep docs aligned with code (see `documentation-discipline.mdc`).
 
+**Research:** A companion paper on human–AI grading agreement and robustness is **under review** at **SIGCSE Virtual 2026** (Experience Report Track). LaTeX and experiment-derived tables are kept **out of git**; see **[research/README.md](research/README.md)** for how to regenerate metrics locally.
+
 ## Why this exists
 
 Manual notebook grading is slow, inconsistent, and difficult to scale once classes get large. This project automates the repetitive parts of the grading loop while still keeping humans in control of:

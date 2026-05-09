@@ -4,21 +4,9 @@
 .cursorignore
 output/
 experiment_analysis/
-# Raw experiment exports (PII, cohort notebooks, Gradescope dumps). Never commit.
+# Cohort trees and raw exports (PII). Never commit — only experiment_data/README.md.
 experiment_data/**
 !experiment_data/README.md
-# Optional cohort placeholder dirs (README / .gitkeep only — no raw data in git)
-!experiment_data/S24/
-experiment_data/S24/**
-!experiment_data/S24/.gitkeep
-!experiment_data/S24/README_S24_SETUP.md
-experiment_data/**/_raw/
-experiment_data/**/submissions/
-experiment_data/**/*.ipynb
-experiment_data/**/human_grades.csv
-experiment_data/**/graded_results.json
-experiment_data/**/parsed/
-experiment_data/**/experiment_runs/
 __pycache__/
 .pytest_cache
 *.pyc
@@ -30,39 +18,9 @@ temp_scripts*.db
 *.sqlite3
 docs/research/
 docs/plans/
-# research/ is local scratch except README. Under research/paper/, only an explicit
-# allowlist may be committed — never student exports, hand grades, or survey raw CSVs.
+# Paper, lit review PDFs, cohort metrics — all local (see research/README.md).
 research/*
 !research/README.md
-!research/paper/
-research/paper/**
-!research/paper/README.md
-!research/paper/main.tex
-!research/paper/references.bib
-!research/paper/architecture_standalone.tex
-!research/paper/experiment_section_draft.md
-!research/paper/scale_and_parse_notes.md
-!research/paper/human_ai_metrics_wide.csv
-!research/paper/metrics_snapshot.json
-!research/paper/architecture.pdf
-
-# Explicit bans (redundant with ** allowlist, but document intent & catch renames)
-research/paper/student_feedback.csv
-research/paper/hw1_manual_grades_grader_b_wide.csv
-research/paper/hw1_irr_metrics.json
-research/paper/manual_hw1_gradescope/
-
-# LaTeX build products (never commit)
-research/paper/*.aux
-research/paper/*.bbl
-research/paper/*.blg
-research/paper/*.log
-research/paper/*.out
-research/paper/build/
-research/paper/*.toc
-research/paper/*.fdb_latexmk
-research/paper/*.fls
-research/paper/*.synctex.gz
 
 # Local snapshots of graded JSON (see grading_backups/README.md; only README tracked)
 grading_backups/*
