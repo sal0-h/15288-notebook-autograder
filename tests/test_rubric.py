@@ -58,7 +58,7 @@ class TestGenerateRubrics:
 
         custom_prompt = "CUSTOM RUBRIC SYSTEM PROMPT"
         monkeypatch.setattr(
-            "rubric_generate.load_prompt",
+            "prompt_builder.load_prompt",
             lambda name, assignment_name=None: custom_prompt,
         )
 
@@ -110,8 +110,7 @@ class TestGenerateRubrics:
         def _load_prompt(name, assignment_name=None):
             return custom_review_prompt if name == "review_system" else "OTHER"
 
-        monkeypatch.setattr("rubric_generate.load_prompt", _load_prompt)
-        monkeypatch.setattr("rubric_review.load_prompt", _load_prompt)
+        monkeypatch.setattr("prompt_builder.load_prompt", _load_prompt)
 
         config = {
             "output_dir": str(tmp_path),

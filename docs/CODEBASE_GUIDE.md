@@ -42,16 +42,16 @@ ai_autograder/
 ├── gather.py               Submission extraction from Gradescope export
 ├── config_models.py        AppConfig, ParsingConfig, GradingConfig, config I/O, paths
 ├── grade.py                Per-student and per-group grading logic
-├── grading_helpers.py      grade_only filtering, effective_groups, needs_merge
+├── grading_helpers.py      grade_only filtering, needs_merge, skipped_feedback
 ├── grading_models.py       Pydantic schemas for all LLM structured outputs
 ├── linter_export.py        Pre-deadline format linter autograder
 ├── llm/
-│   ├── json_runner.py      Structured Responses API, retries, run_jobs, extract_llm_questions
-├── llm_client.py           OpenAI client creation and temperature helpers
+│   ├── json_runner.py      Structured Responses API, retries, run_jobs, extract_llm_questions, LlmContext
+│   ├── client.py          OpenAI client creation and temperature helpers
 ├── main.py                 CLI entry point
 ├── parse_notebook.py       Notebook → structured JSON parser
 ├── genai_detection.py      Optional GenAI suspicion pass (merges flags into graded_results)
-├── pipeline_runner.py      Thin wrappers for app endpoints (run_gather, run_parse, etc.)
+├── pipeline_runner.py      Thin wrappers for app endpoints (run_gather, run_parse, get_calibration_report, run_genai_detection)
 ├── prompt_builder.py       Prompt construction, sanitization, JSON extraction
 ├── results_models.py       GradedResult, ParsedNotebook, Question (on-disk schemas)
 ├── results_store.py        load_results → list[GradedResult]; save/update coerce dict rows
@@ -88,10 +88,10 @@ ai_autograder/
 | `main.py`            | CLI, config write, pipeline orchestration                            | All pipeline modules                                               |
 | `app.py`             | FastAPI app factory; includes routers from `api/routers/`          | `api.state`, router modules                                        |
 | `config_models.py`   | AppConfig, ParsingConfig, GradingConfig, default_config              | nothing (leaf)                                                     |
-| `grading_helpers.py` | grade_only filtering, effective_groups, needs_merge                  | grading_models                                                     |
-| `pipeline_runner.py` | Thin wrappers for gather, parse, calibrate, export, estimate, genai | gather, parse_notebook, calibrate, export, estimate, `genai_detection` |
+| `grading_helpers.py` | grade_only filtering, needs_merge, skipped_feedback                  | grading_models                                                     |
+| `pipeline_runner.py` | Thin wrappers for gather, parse, calibration read, genai detection | gather, parse_notebook, `genai_detection` |
 | `results_store.py`   | load_results, save_results, update_student, load_results_with_backup | nothing (leaf)                                                     |
-| `utils.py`           | Config load/save, logging, OpenAI client                             | config_models                                                      |
+| `utils.py`           | Assignment-scoped logging, filename sanitization                     | config_models                                                      |
 | `grading_models.py`  | LLM response Pydantic schemas, constants                             | nothing (leaf)                                                     |
 | `prompt_builder.py`  | Prompt loading, token counting, sanitization, JSON parsing           | `utils`                                                            |
 | `parse_notebook.py`  | Notebook → parsed JSON                                               | `utils`                                                            |
@@ -99,10 +99,10 @@ ai_autograder/
 | `batch_grader.py`    | Sequential/parallel grading, resume logic                            | `grade`, `results_store`, `utils`                                  |
 | `rubric_generate`, `rubric_review` | Rubric generation + optional review pass                             | `prompt_builder`, `utils`, `llm`                                   |
 | `gather.py`          | Submission extraction                                                | `utils`                                                            |
-| `export.py`          | Excel + Gradescope export                                            | `utils`                                                            |
+| `export.py`          | Excel + Gradescope export                                            | `utils`, `zip_helpers`                                             |
 | `calibrate.py`       | Outlier detection                                                    | `utils`                                                            |
 | `estimate.py`        | Cost projection                                                      | `prompt_builder`, `utils`                                          |
-| `linter_export.py`   | Format linter zip                                                    | `parse_notebook`, `utils`                                          |
+| `linter_export.py`   | Format linter zip                                                    | `parse_notebook`, `config_models`, `zip_helpers`                   |
 | `genai_detection.py` | Post-grade suspicion flags on questions                             | `llm.json_runner`, `prompt_builder`, `results_store`               |
 
 
@@ -112,10 +112,11 @@ ai_autograder/
 
 Prefer these surfaces when adding features so CLI and web app stay aligned:
 
-- **CLI:** `[main.py](../main.py)` — uses `[pipeline_runner.py](../pipeline_runner.py)` for gather, parse, calibrate, and export (same calls as HTTP routes).
+- **CLI:** `[main.py](../main.py)` — imports directly from `calibrate`, `export`, `estimate`, and uses `[pipeline_runner.py](../pipeline_runner.py)` for gather and parse. After `load_app_config`, `--model` / `--solution` / `--submissions-dir` are merged in-memory so they work with `--no-write-config` too.
 - **HTTP:** `[app.py](../app.py)` and `[api/routers/](../api/routers/)` — load config via `[api/state.py](../api/state.py)` (`get_active_app_config()` for pipeline work); call `pipeline_runner`, `batch_grader`, `grade`, `export`, etc.
-- **Shared step wrappers:** `[pipeline_runner.py](../pipeline_runner.py)` (`run_gather`, `run_parse`, `run_export`, …).
-- **Config I/O:** `[utils.load_config](../utils.py)` / `load_app_config` for assignment YAML; `[ensure_app_config](../config_models.py)` at dict/`AppConfig` boundaries.
+- **Shared step wrappers:** `[pipeline_runner.py](../pipeline_runner.py)` (`run_gather`, `run_parse`, `get_calibration_report`, `run_genai_detection`).
+- **Config I/O:** `load_app_config` / `save_config` in `config_models.py` for assignment YAML; `ensure_app_config` at dict/`AppConfig` boundaries.
+- **Research / prompt-injection bench:** `[scripts/build_hw2_injection_bench.py](../scripts/build_hw2_injection_bench.py)` writes `output/HW2_Injection_Bench_gpt_4_1/` and `output/HW2_Injection_Bench_gpt_4_1_mini/` (same notebooks; per-model `config.yaml` with `grading.grade_only: ['1.3','2.1','2.6']`). After grading, `[scripts/analyze_hw2_injection_bench.py](../scripts/analyze_hw2_injection_bench.py)` prints mean delta, ASR, and review rate from the two `graded_results.json` files (defaults: those output paths). Documented in `research/paper/main.tex` §5.5 and `research/README.md`.
 
 ---
 
@@ -141,31 +142,22 @@ Contains everything else — model choice, tokenizer budgets, rubrics, question 
 parsing regexes, etc. This is written by the pipeline and should not be hand-edited
 while grading is running.
 
-### Loading logic (`utils.load_config`)
+### Loading logic (`load_app_config`)
 
-`load_config(config_path: Path)` requires an explicit path to the assignment config.
+`load_app_config(config_path: Path)` in `config_models.py` requires an explicit path to the assignment config.
 
 ```
 config_path must point to output/{assignment_name}/config.yaml
-  → load that file directly as the assignment config
+  → load YAML as dict
   → infer project_root as config_path.parent.parent.parent
   → resolve relative paths against project_root
-  → normalize derived paths like output_dir, submissions_dir, parsed_dir
+  → normalize derived paths (output_dir, submissions_dir, parsed_dir)
+  → validate via ensure_app_config → return AppConfig
 ```
 
-After resolution, relative paths (`solution_notebook`, `submissions_dir`, etc.) are
-resolved against the project root. Defaults are filled in via `merge_partial_config_dict`
-in `config_models` (same defaults as `AppConfig`).
-
-The merged dict is validated via `ensure_app_config(cfg)` (same coercion rules as
-everywhere else), then returned as a plain dict with `model_dump()` for
-YAML/HTTP and other dict-shaped consumers.
-
-`**load_app_config(config_path)**` runs the same load path but returns `**AppConfig**`
-directly (no dict round-trip). Prefer it inside the grading/pipeline stack. The web
-app exposes `**get_active_app_config()**` in `api.state` for routes that call
-`pipeline_runner` / `batch_grader` / export; `**get_active_config()**` remains a dict
-for merge-heavy endpoints (e.g. `PUT /config`). See [docs/README.md](README.md).
+The web app caches the loaded `AppConfig` via `get_active_app_config()` in `api.state`
+(call `invalidate_config_cache()` after saving). Config is saved with `save_config()`
+from `config_models.py`.
 
 ### `AppConfig` schema (`config_models.py`)
 
@@ -311,6 +303,18 @@ An array of per-student result objects:
 
 After an optional GenAI pass, question objects may also include `suspicious_genai` (bool) and `suspicious_genai_note` (string); see `results_models.Question` (`extra="allow"`).
 
+Per-question provenance is written by `grade.py:_store_group_grades()`:
+
+```json
+"_provenance": {
+  "model": "gpt-4.1",
+  "rubric_hash": "a1b2c3d4",
+  "graded_at": "2025-06-01T12:00:00"
+}
+```
+
+`model` is the grading model, `rubric_hash` is `sha256[:8]` of the rubric entry used, and `graded_at` is an ISO timestamp. This metadata is preserved by `Question(extra="allow")` without schema changes. The Review UI displays provenance below the confidence badge.
+
 `total_score` and `total_max` only count questions with non-skip feedback.
 Questions with `[skipped - not in grade_only]` or `[not included in grading groups]`
 are excluded from totals.
@@ -348,16 +352,13 @@ the student name as the filename stem (e.g. `Alice Smith.ipynb`).
 
 Writes next to the assignment output root (parent of `submissions/`):
 
-- `student_name_map.json` — normalized display name → notebook stem (legacy autograder lookup).
-- `submitter_stem_map.json` — canonical Gradescope submitter id key → notebook stem when every
-  `:submitter` row includes `:id` (matches autograder `submission_metadata.json` `users[].id`).
+- `email_stem_map.json` — student email → notebook stem (used by Gradescope autograder for lookup).
 
 Handles:
 
 - ZIP input (extracts first, then processes)
 - `assignment_*_export` subdirectory layout from Gradescope
 - Missing and duplicate submissions (returned in result dicts with appropriate status)
-- Conflicting duplicate Gradescope submitter ids mapping to different stems (reported as duplicate)
 
 Does **not** modify `config.yaml`.
 
@@ -376,7 +377,8 @@ Does **not** modify `config.yaml`.
   targets for structure. Other cell types are ignored for matching but still occupy indices
   in the linear `cells` list.
 - Cells are scanned in order. If a markdown cell matches **both** `section_regex` and
-  `question_regex`, **section wins** (that cell is treated as a section header only).
+  `question_regex`, **both apply**: the section header is processed first, then the
+  question match on the **same** cell starts that question (typical CMU handouts).
 
 **`section_regex`**
 
@@ -385,6 +387,12 @@ Does **not** modify `config.yaml`.
 - **Capture group 1** must be the section id string (e.g. `"1"`) used as `sections` keys
   and with question captures to form QIDs `sec.qnum`.
 - Re-encountering the same section id overwrites `overview_markdown` for that section.
+  Repeated **numeric** section ids disambiguate to synthetic section keys (e.g. second
+  block for section `2` → `2002`) so QIDs stay valid for `normalize_qid`.
+- **Pitfall:** patterns like `(\d+)\b` can treat subsection titles `# <font…>1.1 …` as
+  section `1` again (because `\b` splits `1` from `.1`). For handouts whose **main**
+  sections are `1 Topic`, `2 Topic` but subsections are `1.1`, `1.2`, use e.g.
+  `(\d+)(?!\.)` so only non-decimal section numbers open a new section.
 
 **`question_regex`**
 
@@ -393,14 +401,19 @@ Does **not** modify `config.yaml`.
 - Must expose either:
   - **Four capturing groups:** optional prefix (e.g. dash), section id, question number,
     points — parser uses **groups 2, 3, 4**; or
-  - **Three groups:** section id, question number, points — parser uses **groups 1, 2, 3**.
+  - **Three groups:** section id, question number, points — parser uses **groups 1, 2, 3**; or
+  - **Two groups:** per-section prompt index, points — parser uses **groups 1, 2** and
+    forms `qid` as `{current_section}.{index}` where `current_section` comes from the
+    latest `section_regex` match (or implicit section `1` if none yet).
 - Points are parsed with `int()`.
 
 **Answers**
 
 1. A markdown cell matching `section_regex` opens a new section.
-2. A markdown cell matching `question_regex` opens a new question (within the section
-   implied by the question match, creating the section bucket if needed).
+2. A markdown cell matching `question_regex` opens a new question. For **three- or
+   four-group** patterns the section may come from the match; for **two-group** (dash-font)
+   patterns the section is `current_section` from the latest `section_regex` match (or
+   implicit `1` if none yet).
 3. Following **code** cells contribute code, stdout/plain text, and optional images
    (when `parsing.keep_images` is true).
 4. Following **markdown** cells append non-empty stripped text to the answer until the
@@ -410,14 +423,23 @@ If `section_regex` is too loose (e.g. it matches student `### 1. …` subheading
 stop early. Prefer a pattern that matches real handout section lines only (distinctive
 HTML, wording, or heading level).
 
+**Inline answers in the question cell:** `question_markdown` stores the **entire** matched
+markdown cell — including any text a student typed after the question stem in that same cell.
+`_collect_answer_cells` only walks cells *following* the header cell (`start + 1`), so content
+appended inside the question cell does not appear in `answer_*` fields. The grading prompt
+handles this via the "inline answer" detection in `build_group_prompt` — see §5.
+
 **`extract_qids_from_notebook`**
 
-Same `question_regex` semantics: markdown only, one `search` per cell, same 3- vs 4-group
-rule; used to list QIDs and detect duplicates across cells.
+Same `question_regex` semantics: markdown only, one `search` per cell, same 2-, 3-, and
+4-group rules; used to list QIDs and detect duplicates across cells.
 
 `parse_all_students` parses the solution notebook (writes `solution_parsed.json`),
 then parses every `.ipynb` in `submissions_dir` (writes one `.json` per student to
-`parsed_dir`).
+`parsed_dir`). When `grading.grade_only` is set, the per-student parse report treats
+that list as the **expected** question IDs for `questions_missing` /
+`questions_expected_count` (so a trimmed solution tail does not spuriously warn);
+`questions_unexpected` still flags QIDs not present anywhere in the solution parse.
 
 **Important:** Images are preserved as base64 payloads in the parsed output when
 `parsing.keep_images = true`. These are included in grading prompts as vision
@@ -434,13 +456,13 @@ Flow:
 
 1. Load `solution_parsed.json` from `output_dir`.
 2. For each question group (or the subset specified by `group_indices`), call the LLM
-  with the solution content and `rubric_system` prompt.
+  with the solution content and `rubric_system` prompt (observable criteria; minimum item counts for higher point totals; point totals must match each question's ``(P pts)`` header).
 3. Parse the returned JSON into a `{qid: {points, items: [{description, deduction}]}}` dict.
   The object must include **every** question in the group; each entry must include `points` (no silent backfill from the solution).
   Omissions fail validation and trigger JSON LLM retries, then a `"[generation failed]"` placeholder rubric for that group if retries are exhausted.
 4. If `rubric_review` is enabled, run a second LLM pass (`review_system` prompt) per group
-  that softens rubric criteria that hardcode reference-solution-specific values
-   not required by the question text.
+  that fixes over-demanding wording and misaligned criteria **without** replacing concrete
+  question requirements with vague “understanding” boilerplate.
 5. If `group_indices` is set (partial regeneration), merge new rubrics into the
   existing rubric dict rather than replacing everything.
 
@@ -471,7 +493,7 @@ burning completion budget on single-question groups.
 
 #### Per-student (`grade_student`)
 
-Iterates over all groups from `effective_groups(grading_config)` (in `grading_helpers`) or `grading_config.get_effective_groups()`:
+Iterates over all groups from `grading_config.get_effective_groups()`:
 
 - Groups where all questions are absent from the student's parsed output are skipped
 with `[no submission]` scores (no LLM call).
@@ -534,7 +556,7 @@ of 2 scores per question is required before statistics are computed.
 
 - Reads `graded_results.json`.
 - Writes `output/gradescope/{StudentName}.json` in Gradescope autograder format
-(array of `{name, score, max_score, output, visibility}` test entries).
+(array of `{name, number, score, max_score, status, output, output_format, visibility}` test entries; visibility defaults to `after_published`).
 - Applies `cfg.gradescope_title_mapping` to rename QID labels in Gradescope output.
 - If `grade_only` is set, only those QIDs appear in the Gradescope output.
 - Writes `Final_Grades.xlsx` with one row per student and one column per question.
@@ -542,21 +564,15 @@ of 2 scores per question is required before statistics are computed.
 `export_autograder_zip`:
 
 - Bundles all per-student JSONs from `gradescope/` into a Gradescope autograder ZIP under
-`results/{stem}.json` (human-readable stem), plus **`results/{id_key}.json`** copies when
-`submitter_stem_map.json` maps Gradescope submitter keys to those stems.
-- Includes **`precomputed_manifest.json`** (schema version 1) when the stem map yields at least
-one entry: `entries[submitter_key] → { file, display_name }`, optional `assignment_id` /
-`course_id` from config (`gradescope_assignment_id`, `gradescope_course_id`) for runtime
-mismatch detection against `submission_metadata.json`.
-- Ships **`gradescope_runtime.py`** and **`gradescope_submitters.py`** at the ZIP root; the thin
-`run_autograder` adds `/autograder/source` to `sys.path` and calls `gradescope_runtime.main()`.
-- Runtime lookup order: manifest + canonical submitter key (sorted `users[].id`), then id-keyed
-file under `results/`, then legacy **`student_name_map.json`** normalized-name path.
-- ZIP entries for `setup.sh` and `run_autograder` use `create_system=3` (Unix) and
-`external_attr = 0o755 << 16` to set executable bits for Gradescope.
+`results/{stem}.json`.
+- Includes **`email_stem_map.json`** mapping student emails to notebook stems for runtime lookup.
+- Ships **`gradescope_runtime.py`** at the ZIP root; the thin `run_autograder` adds
+`/autograder/source` to `sys.path` and calls `gradescope_runtime.main()`.
+- Runtime lookup: reads `users[0].email` from `submission_metadata.json`, looks up stem in
+`email_stem_map.json`, copies `results/{stem}.json` to output.
+- ZIP entries for `setup.sh` and `run_autograder` use Unix executable bits via `zip_helpers.write_to_zip`.
 
-**Modules:** `gradescope_submitters.py` (canonical keys, manifest schema constant),
-`gradescope_runtime.py` (Gradescope-side resolver).
+**Module:** `gradescope_runtime.py` (Gradescope-side email-based resolver).
 
 ---
 
@@ -607,11 +623,25 @@ For each group:
     - Solution content (question markdown, code, output, markdown answer, images)
     — if `include_reference_in_grading` is False, only the question text and rubric are included
     - Rubric (if present in `cfg.rubrics`)
-    - Student submission section wrapped in `<<<STUDENT_SUBMISSION>>>` / `<<<END_STUDENT_SUBMISSION>>>` delimiters.
+    - Student submission section wrapped in `<<<STUDENT_SUBMISSION>>>` / `<<<END_STUDENT_SUBMISSION>>>` delimiters (student text passed through `_sanitize_student_text`: NFC, removal of Unicode `Cf` / disallowed `Cc` except newline/tab/CR, bidi/isolate controls, then delimiter substitution).
+    - A one-line **anchor** after that question's student block reminding the model that grading rules still bind (sandwich-style depth).
 
 Long text fields (reference and student code, output, markdown) share one character cap
 derived from `max_prompt_tokens` (`prompt_builder._grading_body_char_cap` — roughly 4×
 tokens, clamped). No per-question token estimation in the builder.
+
+**Truncation flags:** When student code, output, or markdown exceeds the character cap and is truncated, `_build_student_parts()` appends a `GRADING NOTE` to the prompt telling the LLM which fields were truncated and instructing it to set `requires_review=true` when truncated content could contain the answer. This ensures truncated submissions are flagged for human review rather than silently scored on incomplete evidence.
+
+**Inline question-cell answers:** Students sometimes write their answer directly inside the
+question header markdown cell (below the question stem) rather than in a following cell.
+`build_group_prompt` detects this by comparing the student's `question_markdown` to the
+solution's. When they differ, the student's full cell text is included inside the
+`<<<STUDENT_SUBMISSION>>>` block under the label "Inline answer in question cell", so the
+model sees it as part of their answer. The question header always uses the **solution's**
+question text (authoritative). The `grade_system` prompt instructs the model to treat the
+inline section as evidence only, not as a change to the rubric or point value.
+
+**Injection suspect:** If many Unicode format/control characters are stripped from a question's combined student evidence (threshold `_INJECTION_UNICODE_STRIP_THRESHOLD` in `prompt_builder.py`), `build_group_prompt` marks that question ID in the third return value; `grade._store_group_grades` then **forces** `requires_review=true` and sets `_provenance.unicode_injection_suspect` when merging results.
 
 Image payloads are added as vision message parts with
 `{"type": "image_url", "image_url": {"url": "data:image/png;base64,..."}}`.
@@ -619,10 +649,19 @@ Image payloads are added as vision message parts with
 
 ### Prompt injection protection
 
-All student-supplied text is run through `_sanitize_student_text` before insertion,
-which replaces `<<<` / `>>>` delimiter sequences with visually similar but structurally
-inert characters (`«` / `»`). This prevents a malicious student from escaping the
-`<<<STUDENT_SUBMISSION>>>` boundary in the prompt.
+All student-supplied text is run through `_sanitize_student_text` before insertion.
+It **NFC**-normalizes the string, removes Unicode **Cf** (format) characters and
+**Cc** control characters except newline, tab, and carriage return, removes
+**bidi / isolate** directional controls (U+200E--U+200F, U+202A--U+202E,
+U+2066--U+2069), then replaces `<<<` / `>>>` delimiter sequences with visually
+similar but structurally inert characters (`«` / `»`). This prevents a malicious
+student from escaping the `<<<STUDENT_SUBMISSION>>>` boundary and mitigates
+stealth Unicode injections (cf. EvalHack-style benchmarks in the paper draft).
+
+The grading user header also warns against **rubric-mirroring** manipulation
+(paste criterion text without substantive work). `build_group_prompt` returns
+`(messages, qid_to_max_pts, qid_to_injection_suspect)`; the third map drives
+forced human review as documented under **Injection suspect** above.
 
 ---
 
@@ -631,6 +670,9 @@ inert characters (`«` / `»`). This prevents a malicious student from escaping 
 ### LLM response validation chain
 
 ```
+load_llm_context(config, "grade_system")  # shared setup: logger, client, model, prompt, workers, max_tokens
+  → LlmContext (frozen dataclass, passed to all per-job workers)
+
 execute_llm_task(..., response_model=GradingLlmResponse, postprocess=_postprocess_grade_group, fallback_factory=…)
   → complete_structured(...)        # client.responses.parse(text_format=GradingLlmResponse)
                                     # API guarantees schema — no JSON parsing needed
@@ -671,8 +713,8 @@ Row types are shared for LLM wire and pipeline: **`QuestionGrade`** (grading), *
 
 `temperature_for_model(model)` returns:
 
-- `1.0` for `gpt-5*` family (reasoning models that only support temperature=1)
-- `0.0` for all other models (deterministic output for reproducibility)
+- `1.0` for early GPT-5 ids (`gpt-5`, `gpt-5-mini`, `gpt-5-nano`, snapshots, and `*codex*`) where Chat Completions still expects default sampling
+- `0.0` for `gpt-5.2` / `gpt-5.3` / `gpt-5.4` / `gpt-5.5` prefixes (newer dot-releases) and for all non–GPT-5 models (deterministic output for reproducibility)
 
 ---
 
@@ -680,7 +722,9 @@ Row types are shared for LLM wire and pipeline: **`QuestionGrade`** (grading), *
 
 `app.py` is a FastAPI application serving both the REST API and the static UI.
 
-The Review tab fetches per-student parsed JSON (`GET /parsed/{student_name}`) and renders `answer_text_concat` plus any `image/png` or `image/jpeg` entries under `answer_cells[].images` as inline `<img>` data URLs (`ui/js/app.js`).
+**Open the UI from uvicorn:** load `http://127.0.0.1:<port>/` (or `localhost` with the same port) so browser `fetch` and `EventSource` hit this app. If you open `ui/index.html` from another dev server (VS Code Simple Browser, Live Preview, etc.), relative `/assignments` goes to that server’s port and the assignment list will be wrong or empty — either use the uvicorn URL or append `?api=http://127.0.0.1:<uvicorn_port>` so `ui/js/shared.js` uses that API base (CORS allows any `localhost` / `127.0.0.1` port). `GET /assignments` sets `Cache-Control: no-store` and the Setup tab fetches it with `cache: "no-store"` so the dropdown does not stick on an old list after you add `output/*/config.yaml` folders.
+
+The Review tab auto-loads results when the tab is activated. It fetches per-student parsed JSON (`GET /parsed/{student_name}`) and renders `answer_text_concat` plus any `image/png` or `image/jpeg` entries under `answer_cells[].images` as inline `<img>` data URLs (`ui/js/app.js`). Per-question `_provenance` (model, rubric hash, timestamp) is shown below the confidence badge.
 
 ### Export (`POST /export`, file downloads)
 
@@ -700,6 +744,11 @@ rubric_lock    # rubric generation / SSE exclusivity
 through `api.sse.threaded_sse_response`. The async route waits on a queue fed by
 `loop.call_soon_threadsafe` from a background thread.
 
+**Grading cancellation:** `POST /grade/cancel` sets a cancellation flag in `api.state`
+(threading.Event). The `batch_grader.grade_all_students` loop checks this flag between
+students and emits a `"cancelled"` event before stopping. Already-graded results are
+preserved. The flag is reset when a new grading run starts (`GET /grade`).
+
 **Blocking work in routes:** CPU- or disk-heavy steps (e.g. `run_parse`) run inside
 `asyncio.to_thread(...)` so the event loop stays responsive; lightweight handlers may stay synchronous.
 
@@ -713,7 +762,7 @@ deep-merged with defaults and existing config before saving:
   `solution_notebook = ""` to avoid stale cross-assignment paths.
 3. Deep-merge `default_config("default")`, existing config, and incoming payload.
 4. Validate via `ensure_app_config(merged)` (same coercion as the rest of the pipeline).
-5. Save via `save_config(app_config_to_yaml_data(validated), ...)`.
+5. Save via `save_config(validated.model_dump(mode="python"), config_path)` and call `state.invalidate_config_cache()`.
 
 The UI sends only the fields the user changed; the merge preserves everything else.
 
@@ -741,7 +790,7 @@ for blocking work and return ordinary JSON responses.
 
 | Threat                                     | Mitigation                                                                                                                       |
 | ------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------- |
-| Prompt injection via student notebook      | `_sanitize_student_text` replaces `<<<` / `>>>` with `«` / `»` before any student content enters a prompt                        |
+| Prompt injection via student notebook      | `_sanitize_student_text`: NFC; strip Unicode **Cf** / disallowed **Cc** (keep newline/tab/CR); strip bidi/isolate controls; replace `<<<` / `>>>` with `«` / `»`; per-question sandwich anchor + anti–rubric-mirroring header in `build_group_prompt`; heavy strip forces `requires_review` and `_provenance.unicode_injection_suspect` |
 | Path traversal in API routes               | `safe_path` in `api/helpers.py` resolves and checks the path stays under `base`; raises HTTP 400 otherwise                       |
 | Blank `solution_notebook` on `POST /parse-solution` | `resolve_solution_notebook_path` returns `None` so the repo root is never opened as a notebook (avoids `PROJECT_ROOT / ""`); HTTP 404 with a clear message |
 | Untrusted YAML (student names)             | Student names come only from Gradescope metadata, not from notebook content                                                      |
@@ -759,13 +808,19 @@ Tests live in `tests/` and are run with `pytest tests/ -q`.
 
 | File                     | What it covers                                                                                     |
 | ------------------------ | -------------------------------------------------------------------------------------------------- |
+| `test_llm_client.py` | `temperature_for_model` policy for GPT-5 id families |
 | `test_utils.py`          | Config load/save/defaults, `AppConfig` serialization helpers, `ensure_app_config`, path resolution |
 | `test_parse.py`          | Notebook parsing with mock cell structures                                                         |
 | `test_grade.py`          | `grade_student` and `grade_group` logic including `grade_only`, merge, skip, retry                 |
 | `test_rubric.py`         | Rubric generation and review pass logic                                                            |
 | `test_export.py`         | Excel and Gradescope JSON output, `gradescope_title_mapping`, autograder ZIP layout                  |
-| `test_gather.py`         | Submission extraction from metadata, `submitter_stem_map.json`                                     |
-| `test_gradescope_submitters.py` | Canonical submitter keys, manifest build, `gradescope_runtime` resolution                     |
+| `test_experiment_data_scripts.py` | `build_experiment_layout.py` (column parsing including Gradescope ``<g>: <notebook> (pts)`` → notebook QID, S24 cohort tag, S25/S26 e2e, `config.yaml` preserve vs `--overwrite-config`), `canonicalize_experiment_lab.py` (positional CSV guard, dual-header keying, `--allow-misaligned-human`), `remap_gradescope_notebook_qids.py` (rewrite notebook QID in export headers), `verify_experiment_lab_layout.py`, `prepare_assignment` smoke |
+| `test_backup_grading_results.py` | `scripts/backup_grading_results.py`: snapshot ``graded_results.json`` + ``experiment_runs/`` |
+| `test_compare_experiment_to_human.py` | `scripts/compare_experiment_to_human.py`: `analyze_lab` totals / per-question MAE / Pearson; warns when human `Total Score` is constant (undefined *r*, misleading MAE) |
+| `test_compute_irr.py` | `scripts/compute_irr.py`: HW1 Salman (JSON) ± Grader B (wide CSV), human–human + human–AI vs `graded_results.json` smoke (tiny fixture) |
+| `test_analyze_human_ai_discrepancies.py` | `scripts/analyze_human_ai_discrepancies.py` + `scripts/_human_ai_join.py`: Task 2/3 rows, Task 4 quartile invariance, grader scan (skips Autograder headers), Task 1 `_raw` scan |
+| `test_audit_experiment_output_rubrics.py` | `scripts/audit_experiment_output_rubrics.py`: rubric vs `question_groups` coverage, deduction sums, coarse-item heuristic |
+| `test_gather.py`         | Submission extraction from metadata, `email_stem_map.json`                                           |
 | `test_calibrate.py`      | Z-score computation and outlier flagging                                                           |
 | `test_app.py`            | FastAPI endpoints including config CRUD, `POST /parse-solution`, grading SSE, export downloads      |
 | `test_prompt_builder.py` | Prompt construction, sanitization, token budgeting                                                 |
@@ -821,9 +876,9 @@ grade_student(cfg: AppConfig | dict)  # accepts both for flexibility
 Canonical QIDs are numeric strings: `"1.1"`, `"2.3"`, etc.
 
 Anywhere a QID could arrive with a `Q` prefix (from LLM output, UI, YAML),
-use **`normalize_qid()`** from `config_models` (re-exported by `utils`) — e.g. grading postprocess copies each `QuestionGrade` with a normalized `question_id`.
+use **`normalize_qid()`** from `config_models` — e.g. grading postprocess copies each `QuestionGrade` with a normalized `question_id`.
 
-Config helpers (`grade_only_list`, `effective_groups` in `grading_helpers.py`; also available as methods on `GradingConfig`) operate on
+Config helpers (`filter_groups_by_grade_only`, `needs_merge` in `grading_helpers.py`; `get_grade_only()` and `get_effective_groups()` as methods on `GradingConfig`) operate on
 already-canonical IDs. Do not compare raw LLM keys to config QIDs without normalizing.
 
 ### Incremental saves
@@ -877,10 +932,10 @@ an assignment-specific override). Call `load_prompt("{name}", assignment_name=..
 3. If it needs a UI trigger, add HTTP routes in `api/routers/` (see `pipeline_routes.py`,
   `grade_routes.py`, …) and, if you add a new router module, register it in `app.py` with
   `include_router`.
-4. **Shared entrypoints:** `gather`, `parse`, `calibrate`, and `export` use thin wrappers in
-  `pipeline_runner.py` so CLI (`main.py`) and HTTP call the same code. **`grade` and
-  `generate-rubrics` are not in `pipeline_runner`** — they are imported directly (`batch_grader`,
-  `rubric_generate.generate_rubrics`). Follow whichever pattern fits the new step.
+4. **Shared entrypoints:** `gather` and `parse` use thin wrappers in
+  `pipeline_runner.py`. `calibrate`, `export`, and `estimate` are imported directly by callers.
+  **`grade` and `generate-rubrics` are not in `pipeline_runner`** — they are imported directly
+  (`batch_grader`, `rubric_generate.generate_rubrics`). Follow whichever pattern fits the new step.
 5. Write tests in `tests/test_{stage}.py` (or extend an existing test file).
 
 ### Regrade a subset of questions
@@ -900,7 +955,7 @@ recomputed from the merged result.
 ### Add a new OpenAI model
 
 Add the model name and pricing (input, output per 1M tokens) to `MODEL_PRICING` in
-`token_usage.py`. Update `temperature_for_model` in `llm_client.py` if the model has
+`token_usage.py`. Update `temperature_for_model` in `llm/client.py` if the model has
 a temperature restriction.
 
 ### GenAI suspicion pass (optional, second LLM call)

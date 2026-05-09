@@ -22,6 +22,24 @@ grading_lock = threading.Lock()
 results_lock = threading.Lock()
 rubric_lock = threading.Lock()
 
+# Grading cancellation: set by POST /grade/cancel, checked between students.
+_grading_cancel = threading.Event()
+
+
+def request_grading_cancel() -> None:
+    """Signal the active grading run to stop after the current student."""
+    _grading_cancel.set()
+
+
+def is_grading_cancelled() -> bool:
+    """Check whether cancellation has been requested."""
+    return _grading_cancel.is_set()
+
+
+def reset_grading_cancel() -> None:
+    """Clear the cancellation flag (called when a new grading run starts)."""
+    _grading_cancel.clear()
+
 
 def get_active_config_path() -> Path | None:
     return _active_config_path

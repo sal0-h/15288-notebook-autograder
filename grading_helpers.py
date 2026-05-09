@@ -1,13 +1,7 @@
-"""Grading config helpers: grade_only filtering, merge logic, effective groups.
-
-Most logic now lives on GradingConfig methods. This module provides free-standing
-functions for callers that pass a GradingConfig (or groups + grade_only lists)
-rather than calling methods directly.
-"""
+"""Grading config helpers: grade_only filtering, merge logic, skipped feedback."""
 
 from __future__ import annotations
 
-from config_models import GradingConfig
 from grading_models import GRADING_FAILED, SKIP_FEEDBACKS
 from results_models import GradedResult
 
@@ -24,16 +18,6 @@ def filter_groups_by_grade_only(
         for group in groups
         if group and any(q in grade_only_set for q in group)
     ]
-
-
-def grade_only_list(grading_config: GradingConfig) -> list[str] | None:
-    """Return grade_only list from grading config, or None."""
-    return grading_config.get_grade_only()
-
-
-def effective_groups(grading_config: GradingConfig) -> list[list[str]]:
-    """Return question groups filtered by grade_only when set."""
-    return grading_config.get_effective_groups()
 
 
 def needs_merge(

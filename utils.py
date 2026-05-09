@@ -6,13 +6,7 @@ import logging
 import threading
 from pathlib import Path
 
-from config_models import (
-    AppConfig,
-)
-
-# Re-export for callers that still import from utils.
-from config_models import save_config, get_assignment_output_paths  # noqa: F401
-from llm_client import get_openai_client  # noqa: F401
+from config_models import AppConfig
 
 # Windows path reserved characters; stripped by ``sanitize_filename_component``.
 # Also embedded in ``export.RUN_AUTOGRADER`` (must stay in sync).

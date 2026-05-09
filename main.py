@@ -18,22 +18,32 @@ from pydantic import ValidationError
 from config_models import default_config
 from parse_notebook import get_all_question_ids, get_total_points
 from pipeline_runner import (
-    run_calibrate_step,
-    run_export,
     run_gather,
     run_genai_detection,
     run_parse,
 )
+from calibrate import run_calibration
+from export import export_all
 from config_models import load_app_config, sanitize_assignment_name
-from utils import (
-    get_assignment_output_paths,
-    save_config,
-    setup_assignment_logging,
-)
+from config_models import AppConfig, get_assignment_output_paths, save_config
+from utils import setup_assignment_logging
+
 
 # -----------------------------------------------------------------------------
 # Programmatic config — edit this to customize
 # -----------------------------------------------------------------------------
+def _apply_cli_runtime_overrides(cfg: AppConfig, args: argparse.Namespace) -> AppConfig:
+    """Apply --model / --solution / --submissions-dir without requiring a config write."""
+    updates: dict = {}
+    if args.model:
+        updates["model"] = args.model
+    if args.solution:
+        updates["solution_notebook"] = str(Path(args.solution).resolve())
+    if args.submissions_dir:
+        updates["submissions_dir"] = str(Path(args.submissions_dir).resolve())
+    return cfg.model_copy(update=updates) if updates else cfg
+
+
 CONFIG = default_config(
     "LabTest_3_S26",
     solution_notebook="archive1/LabTest_2_S26_sol.ipynb",
@@ -66,6 +76,9 @@ Examples:
   python main.py --config-only      # Only write config.yaml, no pipeline
   python main.py --steps parse      # Only run parse step
   python main.py --model gpt-5.2    # Override model for final grading
+  python main.py --steps grade --config output/S25_LabTest_2/config.yaml --no-write-config --model gpt-4.1
+
+CLI overrides (--model, --solution, --submissions-dir) apply for this run even when --no-write-config is set.
         """,
     )
     parser.add_argument(
@@ -147,6 +160,8 @@ Examples:
         print(f"Invalid config: {e}")
         return 1
 
+    cfg = _apply_cli_runtime_overrides(cfg, args)
+
     # Set up file logging to output_dir/autograder.log (same as web app)
     out_dir = Path(cfg.output_dir)
     assign_name = cfg.assignment_name
@@ -195,7 +210,7 @@ Examples:
         merged = cfg.model_dump(mode="python")
         merged["rubrics"] = {qid: e.model_dump() for qid, e in rubrics.items()}
         save_config(merged, config_path)
-        cfg = load_app_config(config_path)
+        cfg = _apply_cli_runtime_overrides(load_app_config(config_path), args)
         print(f"Generate rubrics: {len(rubrics)} questions")
 
     if "grade" in steps:
@@ -220,11 +235,11 @@ Examples:
             logging.warning("%s", err)
 
     if "calibrate" in steps:
-        flagged = run_calibrate_step(cfg)
+        flagged = run_calibration(cfg)
         print(f"Calibrate: {len(flagged)} outlier(s) flagged")
 
     if "export" in steps:
-        summary = run_export(cfg)
+        summary = export_all(cfg)
         print(f"Export: {summary['students']} students → {summary['excel_path']}")
 
     return 0

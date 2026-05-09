@@ -1,5 +1,6 @@
 """Batch grading orchestration — sequential and parallel, with resume support."""
 
+import contextlib
 import json
 import logging
 from dataclasses import dataclass
@@ -9,11 +10,7 @@ from typing import Generator
 from openai import OpenAI
 
 from config_models import AppConfig, DEFAULT_MODEL, load_solution_parsed
-from grading_helpers import (
-    grade_only_list,
-    effective_groups,
-    needs_merge,
-)
+from grading_helpers import needs_merge
 from results_models import GradedResult, graded_result_to_disk_dict
 from token_usage import (
     TokenUsage,
@@ -22,11 +19,9 @@ from token_usage import (
 from llm.json_runner import run_jobs
 from prompt_builder import validate_question_groups
 from results_store import load_results, save_results, update_student
-from utils import (
-    get_openai_client,
-    get_job_logger,
-    get_assignment_output_paths,
-)
+from config_models import get_assignment_output_paths
+from llm.client import get_openai_client
+from utils import get_job_logger
 
 logger = logging.getLogger(__name__)
 
@@ -100,7 +95,7 @@ def load_grade_queue(
     }
 
     grade_only_merge = grading_config.grade_only_merge
-    grade_only = grade_only_list(grading_config)
+    grade_only = grading_config.get_grade_only()
 
     if grade_only_merge:
         to_grade = [
@@ -122,7 +117,7 @@ def load_grade_queue(
             if path.stem not in already_graded
         ]
 
-    groups = effective_groups(grading_config)
+    groups = grading_config.get_effective_groups()
     ungrouped = validate_question_groups(groups, solution_parsed)
 
     return GradeQueue(
@@ -142,11 +137,14 @@ def grade_all_students(
     cfg: AppConfig,
     client: OpenAI | None = None,
     results_lock=None,
+    cancel_check: callable | None = None,
 ) -> Generator[dict, None, None]:
     """
     Grade all students sequentially or in parallel.
     Yields progress events; saves graded_results.json after each student.
     When results_lock is provided (e.g. from app), uses it for thread-safe writes.
+    When cancel_check is provided, it is called before each student; if it returns
+    True, grading stops after the current student with a 'cancelled' event.
     """
     logger = get_job_logger(cfg, __name__)
 
@@ -165,10 +163,9 @@ def grade_all_students(
     output_dir = paths.output_dir
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    if results_lock:
-        with results_lock:
-            gq = load_grade_queue(cfg, logger_obj=logger)
-    else:
+    lock = results_lock or contextlib.nullcontext()
+
+    with lock:
         gq = load_grade_queue(cfg, logger_obj=logger)
 
     solution_parsed = gq.solution_parsed
@@ -180,7 +177,7 @@ def grade_all_students(
     ungrouped = gq.ungrouped
     grade_only_merge = gq.grade_only_merge
     grading_config = cfg.grading
-    grade_only = grade_only_list(grading_config)
+    grade_only = grading_config.get_grade_only()
 
     def _store_result(student_name: str, result: GradedResult) -> None:
         """Update results list/index and persist — call with lock held if parallel."""
@@ -239,6 +236,16 @@ def grade_all_students(
         # Sequential grading
         graded_count = 0
         for i, path in to_grade:
+            if cancel_check and cancel_check():
+                logger.info("Grading cancelled by user after %d students", graded_count)
+                yield {
+                    "student": "",
+                    "status": "cancelled",
+                    "result": None,
+                    "error": None,
+                    "graded_count": graded_count,
+                }
+                break
             student_name = path.stem
             yield _emit_working_event(student_name, i, len(student_files))
             try:
@@ -261,11 +268,9 @@ def grade_all_students(
                         TokenUsage.from_json_dict(result.usage)
                     )
                 stored = result.model_copy(update={"usage": None})
-                if results_lock:
-                    with results_lock:
-                        _store_result(student_name, stored)
-                else:
+                with lock:
                     _store_result(student_name, stored)
+
                 graded_count += 1
                 result_dict = stored.model_dump(
                     mode="python", by_alias=True, exclude_none=True
@@ -333,6 +338,19 @@ def grade_all_students(
             _grade_one,
             max_workers=workers,
         ):
+            if cancel_check and cancel_check():
+                logger.info(
+                    "Grading cancelled by user after %d students (parallel)",
+                    graded_count,
+                )
+                yield {
+                    "student": "",
+                    "status": "cancelled",
+                    "result": None,
+                    "error": None,
+                    "graded_count": graded_count,
+                }
+                break
             if status == "done":
                 if result is None:
                     logger.error(
@@ -344,10 +362,7 @@ def grade_all_students(
                         TokenUsage.from_json_dict(result.usage)
                     )
                 stored = result.model_copy(update={"usage": None})
-                if results_lock:
-                    with results_lock:
-                        _store_result(student_name, stored)
-                else:
+                with lock:
                     _store_result(student_name, stored)
                 graded_count += 1
             result_dict = (

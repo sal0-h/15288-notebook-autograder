@@ -278,7 +278,6 @@ class TestExportAutograderZip:
             assert "setup.sh" in names
             assert "run_autograder" in names
             assert "gradescope_runtime.py" in names
-            assert "gradescope_submitters.py" in names
             assert "results/Alice.json" in names
             # setup.sh and run_autograder should be executable (Unix)
             for name in ("setup.sh", "run_autograder"):
@@ -291,7 +290,7 @@ class TestExportAutograderZip:
         with pytest.raises(FileNotFoundError, match="Run export first"):
             export_autograder_zip(ensure_app_config(config))
 
-    def test_zip_includes_manifest_and_id_keyed_results(self, tmp_path):
+    def test_zip_includes_email_stem_map(self, tmp_path):
         results = [
             {
                 "student_name": "Alice",
@@ -307,16 +306,14 @@ class TestExportAutograderZip:
         _write_parsed_student(tmp_path, "Alice", ["1.1"])
         config = _make_config(tmp_path, tmp_path)
         export_all(ensure_app_config(config))
-        (tmp_path / "submitter_stem_map.json").write_text(
-            json.dumps({"1001": "Alice"}), encoding="utf-8"
+        (tmp_path / "email_stem_map.json").write_text(
+            json.dumps({"alice@example.com": "Alice"}), encoding="utf-8"
         )
         zip_path = export_autograder_zip(ensure_app_config(config))
         with zipfile.ZipFile(zip_path, "r") as zf:
             names = zf.namelist()
-            assert "precomputed_manifest.json" in names
-            assert "results/1001.json" in names
-            man = json.loads(zf.read("precomputed_manifest.json").decode())
-            assert man["entries"]["1001"]["file"] == "results/1001.json"
+            assert "email_stem_map.json" in names
+            assert "results/Alice.json" in names
 
 
 class TestRunAutograderScript:

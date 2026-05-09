@@ -77,8 +77,8 @@ def export_linter_zip(config_path: Path | None = None) -> Path:
     Create linter_autograder.zip for pre-deadline format validation.
 
     Loads config, parses solution to get required Q IDs, embeds them and the
-    question_regex in run_autograder, writes the zip with create_system=3 and
-    executable bits for Gradescope.
+    question_regex in run_autograder, writes the zip with Gradescope-compatible
+    Unix file attributes (see ``zip_helpers.write_to_zip``).
 
     Returns path to the created zip file.
     """

@@ -13,10 +13,10 @@ from config_models import (
     ensure_app_config,
     get_assignment_output_paths,
     load_app_config,
+    save_config,
 )
 from utils import (
     sanitize_filename_component,
-    save_config,
     setup_assignment_logging,
 )
 
@@ -296,7 +296,7 @@ output_dir: output
 
 class TestOpenAIClientConfig:
     def test_get_openai_client_uses_httpx_limits_and_timeout(self, monkeypatch):
-        import llm_client
+        from llm import client as llm_client
 
         monkeypatch.setenv("key", "")
         monkeypatch.setenv("OPENAI_API_KEY", "test-key")
@@ -379,32 +379,3 @@ class TestAssignmentOutputPaths:
 
         assert isinstance(paths, AssignmentOutputPaths)
         assert paths.output_dir == tmp_path
-
-
-class TestGradingQidNormalization:
-    def test_grade_only_normalizes_q_prefix(self):
-        cfg = ensure_app_config(
-            {
-                "assignment_name": "Demo",
-                "grading": {"question_groups": [["1.1"]], "grade_only": ["Q1.1"]},
-            }
-        )
-        assert cfg.grading.grade_only == ["1.1"]
-
-    def test_question_groups_normalize_q_prefix(self):
-        cfg = ensure_app_config(
-            {
-                "assignment_name": "Demo",
-                "grading": {"question_groups": [["Q1.1", "q1.2"]]},
-            }
-        )
-        assert cfg.grading.question_groups == [["1.1", "1.2"]]
-
-    def test_invalid_qid_raises(self):
-        with pytest.raises(ValueError):
-            ensure_app_config(
-                {
-                    "assignment_name": "Demo",
-                    "grading": {"question_groups": [["QX"]]},
-                }
-            )

@@ -416,6 +416,13 @@ input[type="checkbox"]:focus-visible { outline: 2px solid var(--primary); outlin
     margin: 4px 0 0;
     font-size: 0.75rem;
 }
+.review-provenance {
+    flex-shrink: 0;
+    margin: 4px 0 0;
+    font-size: 0.68rem;
+    color: #94a3b8;
+    cursor: help;
+}
 
 .review-v2-bottombar {
     display: flex;

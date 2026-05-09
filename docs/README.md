@@ -12,7 +12,7 @@ Reasonable **first pass** (in order):
 2. **[DECISIONS.md](DECISIONS.md)** — who this is for, priorities, what is in scope (short).
 3. **[CODEBASE_GUIDE.md](CODEBASE_GUIDE.md)** §1–2 — layout and **config** (assignment-scoped `output/{name}/config.yaml`).
 4. Skim **§4 Pipeline stage reference** in the same file — one section per stage.
-5. Pick your path: **Web** → §7 API; **CLI** → `main.py` + `pipeline_runner.py`; **grading** → `grade.py` + `batch_grader.py`.
+5. Pick your path: **Web** → §7 API; **CLI** → `main.py` + `pipeline_runner.py`; **grading** → `grade.py` + `batch_grader.py`; **S25/S26 lab batch** → [`experiment_data/README.md`](../experiment_data/README.md) (`scripts/run_experiment_grading.py`, `scripts/compare_experiment_to_human.py`).
 
 Deep **product / accuracy / roadmap** discussion (optional): [AUTOGRADER_DESIGN_REVIEW.md](AUTOGRADER_DESIGN_REVIEW.md) Sections A–F only.
 
@@ -25,6 +25,7 @@ Deep **product / accuracy / roadmap** discussion (optional): [AUTOGRADER_DESIGN_
 | Document | Purpose |
 |----------|---------|
 | [README.md](../README.md) | Project overview, workflow, quick commands — **not** the full technical spec. |
+| [research/paper/](../research/paper/) | **Draft** tables + prose for human–AI comparison (non-final); figures `architecture.pdf` (from `architecture_standalone.tex`); add `review_ui.png` locally for builds. **Do not commit** raw student/survey/Gradescope exports under `research/paper/`—root `.gitignore` allowlists only safe sources. Lab totals: `python scripts/export_research_paper_metrics.py` (optional `--write-snapshot`); HW1 IRR: `python scripts/compute_irr.py` (outputs like `hw1_irr_metrics.json` stay local). Prompt-injection red-team: `python scripts/build_hw2_injection_bench.py` → `output/HW2_Injection_Bench_gpt_4_1/` and `output/HW2_Injection_Bench_gpt_4_1_mini/` (see `research/README.md`). |
 | [DECISIONS.md](DECISIONS.md) | Locked product assumptions and priorities (TA tool, single machine, API = UI, etc.). |
 | [CODEBASE_GUIDE.md](CODEBASE_GUIDE.md) | **Main technical reference**: config, data flow, pipeline stages, API, tests, extension patterns. |
 | [AUTOGRADER_DESIGN_REVIEW.md](AUTOGRADER_DESIGN_REVIEW.md) | **Optional**: effectiveness, bottlenecks, roadmap, KPIs — *not* day-to-day module docs. |
@@ -54,7 +55,11 @@ Use **Black** (`black .`, line length 88). No Ruff/mypy gate required today.
 
 ### Environment
 
-Set **`OPENAI_API_KEY`** in `.env` at the repo root. Legacy **`key`** is deprecated (see `utils.get_openai_client`).
+Set **`OPENAI_API_KEY`** in `.env` at the repo root. Legacy **`key`** is deprecated (see `llm.client.get_openai_client`).
+
+### Local experiment data
+
+**`experiment_data/`** at the repo root holds raw cohort exports plus a canonical per-lab layout (`solution.ipynb`, `submissions/<NNN>.ipynb`, `human_grades.csv`, `config.yaml`). All files except [`experiment_data/README.md`](../experiment_data/README.md) are gitignored. Build the layout with [`scripts/build_experiment_layout.py`](../scripts/build_experiment_layout.py) and stage labs into `output/<assignment_name>/` with [`scripts/prepare_assignment.py`](../scripts/prepare_assignment.py) (`--lab-dir …` or `--all`). After staging, the regular CLI works (`python main.py --steps parse … --config output/<assignment_name>/config.yaml`). Pipeline path overrides in [`config_models.load_app_config`](../config_models.py) still force runtime files under `output/<assignment_name>/`.
 
 ### Token usage on graded results
 

@@ -88,15 +88,15 @@ Main pipeline modules:
 - linter_export.py: packaging for a notebook-format linter autograder.
 - estimate.py: token and cost estimation helpers.
 - genai_detection.py: optional post-grade GenAI suspicion flags merged into results.
-- llm/json_runner.py: shared structured-output LLM calls, retries, and parallel helpers.
-- llm_client.py: OpenAI client creation and model-specific helpers (temperature).
+- llm/json_runner.py: shared structured-output LLM calls, retries, parallel helpers, and `LlmContext` (shared setup for all LLM task orchestrators).
+- llm/client.py: OpenAI client creation and model-specific helpers (temperature).
 - prompt_builder.py: prompt construction, sanitization, and JSON extraction.
 - grading_models.py: Pydantic schemas for all LLM structured outputs (grading, rubrics, GenAI detection).
 - utils.py: assignment-scoped logging and filename sanitization.
 - config_models.py: AppConfig, ParsingConfig, GradingConfig, config I/O, default_config, normalize_qid.
 - grading_helpers.py: grade_only filtering, effective_groups, needs_merge.
 - token_usage.py: TokenUsage, MODEL_PRICING, cost calculation, usage merge/detach helpers.
-- pipeline_runner.py: thin wrappers for app pipeline steps (run_gather, run_parse, run_export, etc.).
+- pipeline_runner.py: thin wrappers for app pipeline steps (run_gather, run_parse, get_calibration_report, run_genai_detection).
 - results_models.py: GradedResult, ParsedNotebook, Question (on-disk artifact schemas).
 - results_store.py: load_results, save_results, update_student, load_results_with_backup.
 - zip_helpers.py: shared ZIP archive helper (write_to_zip with Unix attributes).
@@ -202,6 +202,12 @@ python main.py --steps parse grade export --config output/LabTest_3_S26/config.y
 
 Use `--no-write-config` when you want to run pipeline steps against the current assignment config as-is.
 
+**Snapshot graded JSON before big reruns** (copies `output/*/graded_results.json` and `output/*/experiment_runs/` into `grading_backups/<timestamp>/`; see `grading_backups/README.md`):
+
+```bash
+python scripts/backup_grading_results.py
+```
+
 It is also a good idea to keep a dated local backup before major reruns, for example:
 
 ```bash
@@ -239,7 +245,7 @@ The UI is organized around the same staff workflow:
 Important fields in config.yaml:
 
 - assignment_name: the assignment identifier used to scope output.
-- model: grading model. For reproducible scores across regrades, use **gpt-4.1** or **gpt-4.1-mini** (temperature=0). gpt-5 models use temperature=1 and can vary significantly between runs. See `docs/OPENAI_VISION_MODELS.md` for model comparison and stability data.
+- model: grading model. For reproducible scores across regrades, use **gpt-4.1** or **gpt-4.1-mini** (temperature=0). Early **gpt-5** / **gpt-5-mini** ids use temperature=1 and can vary between runs; **gpt-5.2+** dot releases often allow temperature=0 (see `temperature_for_model` in `llm/client.py` and `docs/OPENAI_VISION_MODELS.md`).
 - rubric_model: optional rubric-generation model; falls back to model when empty.
 - solution_notebook: path to the reference notebook.
 - workers: parallel grading worker count.
@@ -324,6 +330,7 @@ Pipeline:
 - POST /generate-rubrics
 - GET /grade/status
 - GET /grade
+- POST /grade/cancel
 - POST /grade/{student_name}
 - POST /calibrate
 - POST /export
@@ -383,6 +390,7 @@ The test suite covers parsing, grading, rubric generation, export paths, utiliti
 
 - Student notebook content is treated as untrusted input.
 - Prompt-injection boundaries and sanitizer behavior should remain intact.
+- When student evidence is truncated, the grading prompt injects a note instructing the LLM to flag the question for review.
 - Grading responses are JSON-validated before use.
 - Malformed or partial model output is retried.
 - Empty submissions are normalized to a no-submission state.

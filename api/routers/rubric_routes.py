@@ -15,7 +15,7 @@ from pydantic import ValidationError
 
 from config_models import ensure_app_config
 from rubric_generate import generate_rubrics
-from utils import save_config
+from config_models import save_config
 
 logger = logging.getLogger(__name__)
 

@@ -25,11 +25,25 @@ ignored for structure but are still skipped over while scanning indices.
 
 Cells are visited in list order. For each cell:
 
-1. If it matches ``section_regex``, it opens/updates that section (see below) and the
-   parser moves on — **even if the same cell could also match ``question_regex``**
-   (section wins).
+1. If it matches ``section_regex``, it opens/updates that section (see below). The same
+   markdown cell may **also** match ``question_regex`` (e.g. CMU handouts with a section
+   title and a ``- 1 <font>… [pts]`` prompt in one cell); in that case **both** are
+   applied: section first, then the question starting in that cell.
 2. Else if it matches ``question_regex``, it starts a question; following cells are
    attached as answers until a cell matches either regex again.
+
+**Repeated section numbers**
+
+If ``section_regex`` matches the same section id again (e.g. a second ``# <font>2 …`` block),
+the parser assigns a **numeric** disambiguated section id ``{N*1000 + occurrence}`` for digit
+sections (e.g. second block for section ``2`` becomes ``2002``) so question IDs stay valid for
+``normalize_qid`` (only ``\\d+.\\d+``). The first block keeps the original id (``2``).
+
+**Repeated dash index (same section)**
+
+If a 2-group ``question_regex`` would create a QID that already exists in that section
+(e.g. two ``- 1`` lines under the same section), the parser assigns the next free integer
+suffix in that section (``6.1`` then ``6.2``) so structure remains machine-readable.
 
 **``section_regex``** (compiled with ``re.IGNORECASE``)
 
@@ -40,17 +54,26 @@ Cells are visited in list order. For each cell:
   question captures.
 - If the same section id appears in multiple section-header cells, later cells
   overwrite ``overview_markdown`` for that section.
+- **Subsection headings** that reuse ``# <font…>`` with a decimal (e.g. ``1.1 Read…``)
+  can be mistaken for a new section ``1`` if the regex only captures a leading digit
+  (``(\\d+)\\b`` matches ``1`` in ``1.1``). Prefer a negative lookahead such as
+  ``(\\d+)(?!\\.)`` when main sections are written ``1 Title`` / ``2 Title`` but
+  subsections are ``1.1 Subtitle``.
 
 **``question_regex``** (compiled with ``re.MULTILINE``)
 
 - Applied to the full markdown cell text via :func:`re.search` (first match anywhere
   in the cell; ``^`` in the pattern matches after newlines inside the cell).
-- The pattern **must** expose captures in one of two shapes (see
+- The pattern **must** expose captures in one of these shapes (see
   :func:`parse_notebook`):
 
   - **Four groups:** ``(-\\s*)?``, section id, question number, points — groups
     ``2``, ``3``, ``4`` are used (group ``1`` is optional dash/prefix).
   - **Three groups:** section id, question number, points — groups ``1``, ``2``, ``3``.
+  - **Two groups:** per-section prompt index, points — groups ``1``, ``2``. The
+    question id is ``"{current_section}.{group1}"`` where ``current_section`` is the
+    section id from the most recent ``section_regex`` match. If no section has been
+    opened yet, the parser uses **implicit section ``1``** (and logs at INFO).
 
 - Points are parsed with :class:`int` (must be numeric in the match).
 
@@ -217,29 +240,68 @@ def parse_notebook(nb_path: Path, config: AppConfig) -> dict:
     result: dict = {"sections": {}, "source_file": str(nb_path)}
     current_section: str | None = None
     seen_qids: set[str] = set()
+    section_occurrence: dict[str, int] = {}
 
     i = 0
     while i < len(cells):
         cell = cells[i]
 
-        if sm := match_section(cell):
-            sec_id = sm.group(1)
+        sm = match_section(cell) if cell.get("cell_type") == "markdown" else None
+
+        if sm:
+            raw_sec = sm.group(1)
+            section_occurrence[raw_sec] = section_occurrence.get(raw_sec, 0) + 1
+            occ = section_occurrence[raw_sec]
+            if occ == 1:
+                sec_id = raw_sec
+            elif raw_sec.isdigit():
+                sec_id = str(int(raw_sec) * 1000 + occ)
+            else:
+                sec_id = f"{raw_sec}{occ}"
             current_section = sec_id
             ensure_section(sec_id)
             result["sections"][sec_id]["overview_markdown"] = md_text(cell)
-            i += 1
-            continue
 
-        qm = match_question(cell)
+        qm = match_question(cell) if cell.get("cell_type") == "markdown" else None
         if qm:
-            # Support both regex formats:
-            # - 4 groups: (optional_dash, section, qnum, pts) — default
-            # - 3 groups: (section, qnum, pts) — e.g. required dash, no optional capture
-            if qm.lastindex >= 4:
+            # Regex capture shapes:
+            # - 4 groups: (optional_dash, section, qnum, pts)
+            # - 3 groups: (section, qnum, pts)
+            # - 2 groups: (dash_index_within_section, pts) → qid uses current_section
+            if qm.lastindex is not None and qm.lastindex >= 4:
                 sec_id, qnum, pts = qm.group(2), qm.group(3), int(qm.group(4))
-            else:
+            elif qm.lastindex == 3:
                 sec_id, qnum, pts = qm.group(1), qm.group(2), int(qm.group(3))
+            elif qm.lastindex == 2:
+                if current_section is None:
+                    sec_id = "1"
+                    current_section = "1"
+                    ensure_section(sec_id)
+                    logger.info(
+                        "Question before first section in %s — using implicit section 1",
+                        nb_path.name,
+                    )
+                else:
+                    sec_id = current_section
+                qnum = qm.group(1)
+                pts = int(qm.group(2))
+            else:
+                logger.warning(
+                    "question_regex in %s produced unexpected capture count "
+                    "(lastindex=%s) — skipping cell",
+                    nb_path.name,
+                    qm.lastindex,
+                )
+                i += 1
+                continue
             qid = f"{sec_id}.{qnum}"
+            ensure_section(sec_id)
+            # CMU dash-font handouts repeat "- 1" under one section; bump only for 2-group regex.
+            if qm.lastindex == 2 and qid in result["sections"][sec_id]["questions"]:
+                n = int(qnum) if str(qnum).isdigit() else 1
+                while f"{sec_id}.{n}" in result["sections"][sec_id]["questions"]:
+                    n += 1
+                qid = f"{sec_id}.{n}"
 
             if current_section != sec_id:
                 logger.info(
@@ -319,7 +381,8 @@ def parse_all_students(config: AppConfig) -> tuple[dict | None, list[dict]]:
         solution_parsed is None if solution notebook not found.
         verification_report is a list of per-student dicts with status, questions_found, etc.
     """
-    from utils import get_assignment_output_paths, get_job_logger
+    from config_models import get_assignment_output_paths
+    from utils import get_job_logger
 
     logger = get_job_logger(config, __name__)
 
@@ -343,6 +406,12 @@ def parse_all_students(config: AppConfig) -> tuple[dict | None, list[dict]]:
         out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path.write_text(json.dumps(solution_parsed, indent=2), encoding="utf-8")
 
+    grade_only = config.grading.get_grade_only()
+    expected_question_ids: list[str] = (
+        list(grade_only) if grade_only else list(solution_question_ids)
+    )
+    solution_id_set = set(solution_question_ids)
+
     report: list[dict] = []
     student_files = (
         list(submissions_dir.glob("*.ipynb")) if submissions_dir.exists() else []
@@ -359,11 +428,11 @@ def parse_all_students(config: AppConfig) -> tuple[dict | None, list[dict]]:
                     "student_name": student_name,
                     "status": "error",
                     "questions_found": [],
-                    "questions_missing": solution_question_ids,
+                    "questions_missing": list(expected_question_ids),
                     "questions_unexpected": [],
                     "questions_duplicate": [],
                     "questions_matched_count": 0,
-                    "questions_expected_count": len(solution_question_ids),
+                    "questions_expected_count": len(expected_question_ids),
                     "total_points_possible": solution_total_pts,
                     "message": str(e),
                 }
@@ -375,10 +444,11 @@ def parse_all_students(config: AppConfig) -> tuple[dict | None, list[dict]]:
         out_path.write_text(json.dumps(parsed, indent=2), encoding="utf-8")
 
         found = get_all_question_ids(parsed)
-        missing = [q for q in solution_question_ids if q not in found]
-        unexpected = [q for q in found if q not in solution_question_ids]
+        found_set = set(found)
+        missing = [q for q in expected_question_ids if q not in found_set]
+        unexpected = [q for q in found if q not in solution_id_set]
         duplicate = parsed.get("duplicate_qids", [])
-        matched_count = len(found) - len(unexpected)
+        matched_count = sum(1 for q in expected_question_ids if q in found_set)
         status = "ok" if not missing and not unexpected and not duplicate else "warning"
 
         report.append(
@@ -390,7 +460,7 @@ def parse_all_students(config: AppConfig) -> tuple[dict | None, list[dict]]:
                 "questions_unexpected": unexpected,
                 "questions_duplicate": duplicate,
                 "questions_matched_count": matched_count,
-                "questions_expected_count": len(solution_question_ids),
+                "questions_expected_count": len(expected_question_ids),
                 "total_points_possible": get_total_points(parsed),
                 "message": "",
             }

@@ -167,7 +167,7 @@ class TestPromptTypeInjection:
             }
         }
 
-        messages, _ = build_group_prompt(["1.1"], sol, stu, "system prompt")
+        messages, _, _ = build_group_prompt(["1.1"], sol, stu, "system prompt")
         # The user message content should contain the open-ended instruction
         user_content = messages[1]["content"]
         text_parts = [p["text"] for p in user_content if p.get("type") == "input_text"]
@@ -212,7 +212,7 @@ class TestPromptTypeInjection:
             }
         }
 
-        messages, _ = build_group_prompt(["1.1"], sol, stu, "system prompt")
+        messages, _, _ = build_group_prompt(["1.1"], sol, stu, "system prompt")
         user_content = messages[1]["content"]
         text_parts = [p["text"] for p in user_content if p.get("type") == "input_text"]
         full_text = " ".join(text_parts)

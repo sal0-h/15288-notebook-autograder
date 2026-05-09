@@ -191,6 +191,7 @@ class TestConfigEndpoints:
             r = client.get("/assignments")
         assert r.status_code == 200
         assert r.json() == {"assignments": ["A1"]}
+        assert "no-store" in (r.headers.get("cache-control") or "").lower()
 
     def test_load_or_create_creates_new_config(self, client, tmp_path):
         """Creates a new config file when the assignment folder does not exist."""
@@ -825,7 +826,7 @@ class TestExportEndpoint:
         mock_config["output_dir"] = str(out)
         with (
             patch_active_assignment(mock_config),
-            patch("pipeline_runner.run_export") as mock_export,
+            patch("api.routers.export_routes.export_all") as mock_export,
         ):
             mock_export.return_value = {
                 "students": 1,

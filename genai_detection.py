@@ -4,7 +4,6 @@ import json
 from dataclasses import dataclass
 from typing import Any
 
-from openai import OpenAI
 from pydantic import BaseModel
 
 from config_models import AppConfig
@@ -15,20 +14,21 @@ from grading_models import (
     GenaiQuestionResult,
 )
 from llm.json_runner import (
+    LlmContext,
     MAX_JSON_LLM_ATTEMPTS,
     execute_llm_task,
     extract_llm_questions,
+    load_llm_context,
     run_jobs,
 )
 from prompt_builder import (
     _sanitize_student_text,
     get_question_data,
-    load_prompt,
     truncate_output,
 )
 from results_models import GradedResult
 from results_store import load_results, save_results
-from utils import get_assignment_output_paths, get_job_logger, get_openai_client
+from config_models import get_assignment_output_paths
 
 
 def build_genai_detection_user_message(
@@ -85,8 +85,7 @@ class _DetectionJob:
     questions: dict[str, dict[str, Any]]
     to_check: tuple[str, ...]
     messages: list[dict[str, Any]]
-    model: str
-    max_completion_tokens: int
+    ctx: LlmContext
 
 
 def _feedback_skipped_for_detection(feedback: str) -> bool:
@@ -129,7 +128,7 @@ def _postprocess_genai_detection(
 def run_genai_detection(
     config: AppConfig,
     *,
-    client: OpenAI | None = None,
+    client=None,
 ) -> dict[str, Any]:
     """
     Load graded_results + parsed notebooks, call detector model per student,
@@ -137,7 +136,6 @@ def run_genai_detection(
 
     Does not modify scores, max, or feedback.
     """
-    log = get_job_logger(config, __name__)
     paths = get_assignment_output_paths(config)
     graded_path = paths.graded_results
     parsed_dir = paths.parsed_dir
@@ -153,22 +151,21 @@ def run_genai_detection(
             "errors": [],
         }
 
-    model = (config.genai_detection_model or "").strip() or "gpt-4.1-mini"
-    max_code = max(1024, int(config.genai_detection_max_code_chars))
-    assignment_name = config.assignment_name
-    max_completion_tokens = min(4096, config.max_completion_tokens)
-
     try:
-        system_prompt = load_prompt(
-            "genai_detection_system", assignment_name=assignment_name
+        ctx = load_llm_context(
+            config,
+            "genai_detection_system",
+            model_selector=lambda c: (c.genai_detection_model or "").strip()
+            or "gpt-4.1-mini",
+            client=client,
+            max_completion_tokens=min(4096, config.max_completion_tokens),
         )
     except FileNotFoundError as e:
         raise FileNotFoundError(
             "Missing prompts/DEFAULT/genai_detection_system.md"
         ) from e
 
-    oc = client or get_openai_client()
-    workers = max(1, int(config.workers))
+    max_code = max(1024, int(config.genai_detection_max_code_chars))
     errors: list[str] = []
     students_processed = 0
     questions_flagged = 0
@@ -220,7 +217,7 @@ def run_genai_detection(
             continue
 
         messages = [
-            {"role": "system", "content": system_prompt},
+            {"role": "system", "content": ctx.system_prompt},
             {"role": "user", "content": user_msg},
         ]
         jobs.append(
@@ -230,35 +227,34 @@ def run_genai_detection(
                 questions=questions,
                 to_check=tuple(to_check),
                 messages=messages,
-                model=model,
-                max_completion_tokens=max_completion_tokens,
+                ctx=ctx,
             )
         )
 
-    log.info(
+    ctx.logger.info(
         "GenAI detection: %d students queued, %d skipped, model=%s, workers=%d",
         len(jobs),
         students_skipped,
-        model,
-        workers,
+        ctx.model,
+        ctx.workers,
     )
 
     def _run_job(
         job: _DetectionJob,
     ) -> tuple[int, dict[str, dict[str, Any]] | None, int, int, list[str]]:
         local_errors: list[str] = []
-        log.info(
+        job.ctx.logger.info(
             "GenAI detection - %s: checking %d questions (model=%s)",
             job.student_name,
             len(job.to_check),
-            job.model,
+            job.ctx.model,
         )
 
         def _on_exhausted(
             last_err: BaseException | None,
         ) -> list[GenaiQuestionResult]:
             local_errors.append(f"{job.student_name}: {last_err}")
-            log.error(
+            job.ctx.logger.error(
                 "GenAI detection failed for %s after %d attempts: %s",
                 job.student_name,
                 MAX_JSON_LLM_ATTEMPTS,
@@ -267,13 +263,13 @@ def run_genai_detection(
             return []
 
         raw, _usage = execute_llm_task(
-            oc,
-            model=job.model,
+            job.ctx.client,
+            model=job.ctx.model,
             messages=job.messages,
-            max_completion_tokens=job.max_completion_tokens,
+            max_completion_tokens=job.ctx.max_completion_tokens,
             response_model=GenaiLlmResponse,
             task_kind="genai_detection",
-            logger=log,
+            logger=job.ctx.logger,
             postprocess=lambda p: _postprocess_genai_detection(
                 p, expected_qids=job.to_check
             ),
@@ -282,7 +278,9 @@ def run_genai_detection(
         )
 
         if not raw:
-            log.warning("GenAI detection - %s: no results returned", job.student_name)
+            job.ctx.logger.warning(
+                "GenAI detection - %s: no results returned", job.student_name
+            )
             return (job.index, None, 0, 0, local_errors)
 
         updated = dict(job.questions)
@@ -301,7 +299,7 @@ def run_genai_detection(
             if entry.suspicious_genai:
                 flagged += 1
 
-        log.info(
+        job.ctx.logger.info(
             "GenAI detection - %s complete: %d/%d flagged",
             job.student_name,
             flagged,
@@ -312,7 +310,7 @@ def run_genai_detection(
     for idx, updated, processed, flagged, local_errors in run_jobs(
         jobs,
         _run_job,
-        max_workers=workers,
+        max_workers=ctx.workers,
     ):
         errors.extend(local_errors)
         if updated is None:
@@ -325,7 +323,7 @@ def run_genai_detection(
         )
 
     save_results(graded_path, results)
-    log.info(
+    ctx.logger.info(
         "GenAI detection complete: %d students processed, %d questions flagged, %d skipped, %d errors",
         students_processed,
         questions_flagged,

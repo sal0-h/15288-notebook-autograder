@@ -1,12 +1,15 @@
 # OpenAI Vision Models for AI Autograder
 
-Models that support **vision** (image input) for grading Jupyter notebooks with plots. Run `python test_openai_connection.py --list-models` to see what your API key can use.
+Models that support **vision** (image input) for grading Jupyter notebooks with plots.
+
+- `python test_openai_connection.py --list-models` — ids from `GET /v1/models` (what your key can **see** in the catalog).
+- `python test_openai_connection.py --probe-chat` — minimal `POST /v1/chat/completions` per candidate (union of filtered `/v1/models` ids, curated seeds aligned with [OpenAI “All models”](https://developers.openai.com/api/docs/models/all), and `token_usage.MODEL_PRICING` keys); use this to see what your key can **call**.
 
 ---
 
 ## Models Available to Your API Key
 
-From `python test_openai_connection.py --list-models`:
+From `python test_openai_connection.py --list-models` (listing only; prefer `--probe-chat` for access):
 
 | Model | Vision | Notes |
 |-------|--------|-------|
@@ -25,12 +28,15 @@ From `python test_openai_connection.py --list-models`:
 
 ## Temperature (deterministic grading)
 
-Implementation: `temperature_for_model()` in `llm_client.py` returns **1.0** for any model
-name starting with `gpt-5` (including `gpt-5.2`, `gpt-5-mini`, `gpt-5-nano`, dated
-snapshots), and **0.0** otherwise (e.g. `gpt-4.1`, `gpt-4.1-mini`, `gpt-4o-mini`).
+Implementation: `temperature_for_model()` in `llm/client.py` returns **1.0** for
+`gpt-5`, `gpt-5-mini`, `gpt-5-nano`, `*codex*`, and similar early GPT-5 ids, **0.0**
+for `gpt-5.2` / `gpt-5.3` / `gpt-5.4` / `gpt-5.5` prefixes, and **0.0** for everything
+else (e.g. `gpt-4.1`, `gpt-4.1-mini`, `gpt-4o-mini`). OpenAI changes constraints by id;
+use `python test_openai_connection.py --probe-chat --probe-json` on your key.
 
-- **GPT-5 family**: API only allows temperature=1 for these models; regrades can vary a lot.
-- **GPT-4.1 / GPT-4.1-mini / GPT-4o-mini**: temperature=0 is used for reproducible grading.
+- **Early GPT-5 (`gpt-5`, `gpt-5-mini`, …)**: often fixed at temperature=1; regrades can vary a lot (see HW1 table below).
+- **GPT-5.2+ (dot releases)**: typically allow temperature=0 for more stable sampling when your project has access.
+- **GPT-4.1 / GPT-4.1-mini / GPT-4o-mini**: temperature=0 for reproducible grading.
 
 ### HW1 multi-model variance study (Mar 2026)
 
@@ -58,8 +64,9 @@ across runs (e.g. high → medium), per the experiment notes.
 | gpt-4.1      | 65.2%                  | 1.0                | 0.0%        |
 
 **Takeaway:** GPT-4.1-class models were **faster and far more score-stable** in this
-setup; the dominant difference versus GPT-5 here is **temperature=0 vs 1**, not vision
-or pricing alone.
+setup for **`gpt-5` / `gpt-5-mini`** (temperature pinned to **1** then). Newer
+**`gpt-5.2`+** may accept **temperature=0**; confirm with a probe and re-run variance
+checks if you standardize on those ids.
 
 ---
 

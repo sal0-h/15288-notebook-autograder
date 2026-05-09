@@ -26,6 +26,7 @@ function switchToTab(tabEl) {
     });
     if (tabId === "rubrics") { loadRubricsForEdit(); loadRubricEstimate(); }
     if (tabId === "grade") { loadGradeEstimate(); if (!gradeStreamActive) document.getElementById("gradeProgress").innerHTML = ""; }
+    if (tabId === "review") { autoLoadReview(); }
     tabEl.focus();
 }
 
@@ -167,10 +168,14 @@ function syncAssignmentSelectToName(name) {
 
 async function refreshAssignmentsDropdown() {
     const sel = document.getElementById("setupAssignmentSelect");
+    const meta = document.getElementById("setupAssignmentsMeta");
     if (!sel) return;
     const keep = sel.value;
     try {
-        const r = await fetchWithRetry(API + "/assignments");
+        const r = await fetchWithRetry(API + "/assignments", { cache: "no-store" });
+        if (!r.ok) {
+            throw new Error(`HTTP ${r.status} ${r.statusText || ""}`.trim());
+        }
         const data = await r.json();
         const names = Array.isArray(data.assignments) ? data.assignments : [];
         sel.innerHTML = "";
@@ -185,7 +190,22 @@ async function refreshAssignmentsDropdown() {
             sel.appendChild(o);
         }
         if (keep && names.includes(keep)) sel.value = keep;
-    } catch (_) {}
+        if (meta) {
+            meta.textContent =
+                names.length > 0
+                    ? `(${names.length} loaded${API ? ", api=" + API : ""})`
+                    : "(no assignments under output/)";
+        }
+    } catch (e) {
+        if (meta) {
+            meta.textContent =
+                "(list failed — hard refresh or open from uvicorn URL; optional ?api=http://127.0.0.1:8000)";
+        }
+        console.warn(
+            "Could not load assignment list from /assignments. Open the app from the same URL as uvicorn, or add ?api=http://127.0.0.1:PORT matching uvicorn.",
+            e
+        );
+    }
 }
 
 async function doLoadAssignment() {
@@ -925,8 +945,17 @@ async function pollGradeProgress() {
 }
 
 document.getElementById("gradeBtn").onclick = async () => {
+    // Show cost estimate in confirmation dialog
+    const estEl = document.getElementById("gradeEstimate");
+    const estText = estEl ? estEl.textContent.trim() : "";
+    const confirmMsg = estText
+        ? `Start grading? ${estText}\n\nThis will make API calls that cost real money.`
+        : "Start grading? This will make API calls that cost real money.";
+    if (!confirm(confirmMsg)) return;
+
     const list = document.getElementById("gradeProgress");
     const genaiBtn = document.getElementById("genaiDetectBtn");
+    const cancelBtn = document.getElementById("gradeCancelBtn");
     const autoGenai = document.getElementById("genaiAutoRun");
     list.innerHTML = "";
     // Track results for summary
@@ -935,6 +964,7 @@ document.getElementById("gradeBtn").onclick = async () => {
     const btn = document.getElementById("gradeBtn");
     setLoading(btn, true, "Grading…");
     genaiBtn.disabled = true;
+    cancelBtn.classList.remove("hidden");
     gradeStreamActive = true;
     stopGradePolling();
     try {
@@ -990,6 +1020,11 @@ document.getElementById("gradeBtn").onclick = async () => {
                 div.dataset.student = student;
                 div.innerHTML = `<span>${escHtml(student)}</span><span>Error: ${escHtml(data.error || "")}</span>`;
                 if (!existing) list.appendChild(div);
+            } else if (data.status === "cancelled") {
+                const div = document.createElement("div");
+                div.className = "progress-item error";
+                div.innerHTML = `<span>⏹ Grading stopped by user after ${data.graded_count ?? gradeResults.length} student(s). Already-graded results are saved.</span>`;
+                list.appendChild(div);
             }
             list.scrollTop = list.scrollHeight;
         });
@@ -1000,6 +1035,7 @@ document.getElementById("gradeBtn").onclick = async () => {
             stopGradePolling();
             setLoading(btn, false, "Start Grading");
             genaiBtn.disabled = false;
+            cancelBtn.classList.add("hidden");
             // Show grading summary banner
             if (gradeResults.length > 0) {
                 const scores = gradeResults.map(r => r.max > 0 ? (r.score / r.max) * 100 : 0);
@@ -1027,6 +1063,7 @@ document.getElementById("gradeBtn").onclick = async () => {
             stopGradePolling();
             setLoading(btn, false, "Start Grading");
             genaiBtn.disabled = false;
+            cancelBtn.classList.add("hidden");
             if (list.querySelectorAll(".progress-item").length === 0) {
                 list.innerHTML = "<p class='status-warning'>Connection failed. Grading may already be in progress in another tab.</p>";
             }
@@ -1038,6 +1075,22 @@ document.getElementById("gradeBtn").onclick = async () => {
         list.innerHTML = `<p class="status-error">Error: ${escHtml(e.message)}</p>`;
         setLoading(btn, false, "Start Grading");
         genaiBtn.disabled = false;
+        cancelBtn.classList.add("hidden");
+    }
+};
+
+document.getElementById("gradeCancelBtn").onclick = async () => {
+    const cancelBtn = document.getElementById("gradeCancelBtn");
+    setLoading(cancelBtn, true, "Stopping…");
+    try {
+        const r = await fetchWithRetry(API + "/grade/cancel", { method: "POST" });
+        if (!r.ok) {
+            const err = await r.json().catch(() => ({}));
+            throw new Error(err.detail || "Cancel failed");
+        }
+    } catch (e) {
+        // Non-fatal: grading may have already finished
+        cancelBtn.textContent = "Stop after current";
     }
 };
 
@@ -1113,6 +1166,31 @@ let currentReviewIdx = -1;
 let currentQids = [];
 let currentQidIdx = 0;
 let reviewDirty = false;
+
+async function autoLoadReview() {
+    // Auto-load results when switching to Review tab (skip if grading is active or dirty edits).
+    if (reviewDirty || gradeStreamActive) return;
+    const btn = document.getElementById("reviewLoadBtn");
+    const msgDiv = document.getElementById("reviewCalibrationResults");
+    setLoading(btn, true, "Loading…");
+    msgDiv.innerHTML = "";
+    try {
+        await loadReviewAndCalibration();
+        parsedCache = {};
+        document.getElementById("reviewLayout").classList.remove("hidden");
+        renderStudentList();
+        const vis = getVisibleStudentOrder();
+        if (vis.length && currentReviewIdx < 0) showReviewDetail(vis[0]);
+        if (calibrationData.length) {
+            msgDiv.innerHTML = `<span class="status-warning review-cal-msg">${calibrationData.length} outlier(s) loaded — run <strong>Calibrate</strong> to refresh.</span>`;
+        }
+    } catch (e) {
+        const err = document.getElementById("reviewError");
+        if (err) err.innerHTML = `<span class="status-error">${escHtml(e.message)}</span>`;
+    } finally {
+        setLoading(btn, false, "Load Results");
+    }
+}
 
 function getQuestionTypeFromParsed(studentName, qid) {
     const p = parsedCache[studentName];
@@ -1553,6 +1631,20 @@ function renderReviewContent() {
         const confClass = conf === "high" ? "badge-high" : conf === "low" ? "badge-low" : "badge-medium";
         confBadge.className = `badge ${confClass}`;
         confBadge.textContent = `conf: ${conf}`;
+    }
+    const provEl = document.getElementById("reviewProvenance");
+    if (provEl) {
+        const prov = q._provenance;
+        if (prov && prov.model) {
+            const ts = prov.graded_at ? new Date(prov.graded_at).toLocaleString() : "";
+            const rh = prov.rubric_hash ? ` · rubric ${prov.rubric_hash}` : "";
+            provEl.textContent = `${prov.model}${rh}${ts ? ` · ${ts}` : ""}`;
+            provEl.title = `Model: ${prov.model}\nRubric hash: ${prov.rubric_hash || "n/a"}\nGraded: ${ts || "unknown"}`;
+            provEl.classList.remove("hidden");
+        } else {
+            provEl.textContent = "";
+            provEl.classList.add("hidden");
+        }
     }
     work?.querySelectorAll("[data-toggle-output]").forEach(btn => {
         btn.onclick = () => {
