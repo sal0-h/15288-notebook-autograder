@@ -116,6 +116,7 @@ Prefer these surfaces when adding features so CLI and web app stay aligned:
 - **HTTP:** `[app.py](../app.py)` and `[api/routers/](../api/routers/)` — load config via `[api/state.py](../api/state.py)` (`get_active_app_config()` for pipeline work); call `pipeline_runner`, `batch_grader`, `grade`, `export`, etc.
 - **Shared step wrappers:** `[pipeline_runner.py](../pipeline_runner.py)` (`run_gather`, `run_parse`, `get_calibration_report`, `run_genai_detection`).
 - **Config I/O:** `load_app_config` / `save_config` in `config_models.py` for assignment YAML; `ensure_app_config` at dict/`AppConfig` boundaries.
+- **Research / prompt-injection bench:** `[scripts/build_hw2_injection_bench.py](../scripts/build_hw2_injection_bench.py)` writes `output/HW2_Injection_Bench_gpt_4_1/` and `output/HW2_Injection_Bench_gpt_4_1_mini/` (same notebooks; per-model `config.yaml` with `grading.grade_only: ['1.3','2.1','2.6']`). After grading, `[scripts/analyze_hw2_injection_bench.py](../scripts/analyze_hw2_injection_bench.py)` prints mean delta, ASR, and review rate from the two `graded_results.json` files (defaults: those output paths). Documented in `research/paper/main.tex` §5.5 and `research/README.md`.
 
 ---
 
@@ -376,7 +377,8 @@ Does **not** modify `config.yaml`.
   targets for structure. Other cell types are ignored for matching but still occupy indices
   in the linear `cells` list.
 - Cells are scanned in order. If a markdown cell matches **both** `section_regex` and
-  `question_regex`, **section wins** (that cell is treated as a section header only).
+  `question_regex`, **both apply**: the section header is processed first, then the
+  question match on the **same** cell starts that question (typical CMU handouts).
 
 **`section_regex`**
 
@@ -385,6 +387,12 @@ Does **not** modify `config.yaml`.
 - **Capture group 1** must be the section id string (e.g. `"1"`) used as `sections` keys
   and with question captures to form QIDs `sec.qnum`.
 - Re-encountering the same section id overwrites `overview_markdown` for that section.
+  Repeated **numeric** section ids disambiguate to synthetic section keys (e.g. second
+  block for section `2` → `2002`) so QIDs stay valid for `normalize_qid`.
+- **Pitfall:** patterns like `(\d+)\b` can treat subsection titles `# <font…>1.1 …` as
+  section `1` again (because `\b` splits `1` from `.1`). For handouts whose **main**
+  sections are `1 Topic`, `2 Topic` but subsections are `1.1`, `1.2`, use e.g.
+  `(\d+)(?!\.)` so only non-decimal section numbers open a new section.
 
 **`question_regex`**
 
@@ -393,14 +401,19 @@ Does **not** modify `config.yaml`.
 - Must expose either:
   - **Four capturing groups:** optional prefix (e.g. dash), section id, question number,
     points — parser uses **groups 2, 3, 4**; or
-  - **Three groups:** section id, question number, points — parser uses **groups 1, 2, 3**.
+  - **Three groups:** section id, question number, points — parser uses **groups 1, 2, 3**; or
+  - **Two groups:** per-section prompt index, points — parser uses **groups 1, 2** and
+    forms `qid` as `{current_section}.{index}` where `current_section` comes from the
+    latest `section_regex` match (or implicit section `1` if none yet).
 - Points are parsed with `int()`.
 
 **Answers**
 
 1. A markdown cell matching `section_regex` opens a new section.
-2. A markdown cell matching `question_regex` opens a new question (within the section
-   implied by the question match, creating the section bucket if needed).
+2. A markdown cell matching `question_regex` opens a new question. For **three- or
+   four-group** patterns the section may come from the match; for **two-group** (dash-font)
+   patterns the section is `current_section` from the latest `section_regex` match (or
+   implicit `1` if none yet).
 3. Following **code** cells contribute code, stdout/plain text, and optional images
    (when `parsing.keep_images` is true).
 4. Following **markdown** cells append non-empty stripped text to the answer until the
@@ -418,12 +431,15 @@ handles this via the "inline answer" detection in `build_group_prompt` — see �
 
 **`extract_qids_from_notebook`**
 
-Same `question_regex` semantics: markdown only, one `search` per cell, same 3- vs 4-group
-rule; used to list QIDs and detect duplicates across cells.
+Same `question_regex` semantics: markdown only, one `search` per cell, same 2-, 3-, and
+4-group rules; used to list QIDs and detect duplicates across cells.
 
 `parse_all_students` parses the solution notebook (writes `solution_parsed.json`),
 then parses every `.ipynb` in `submissions_dir` (writes one `.json` per student to
-`parsed_dir`).
+`parsed_dir`). When `grading.grade_only` is set, the per-student parse report treats
+that list as the **expected** question IDs for `questions_missing` /
+`questions_expected_count` (so a trimmed solution tail does not spuriously warn);
+`questions_unexpected` still flags QIDs not present anywhere in the solution parse.
 
 **Important:** Images are preserved as base64 payloads in the parsed output when
 `parsing.keep_images = true`. These are included in grading prompts as vision
@@ -440,13 +456,13 @@ Flow:
 
 1. Load `solution_parsed.json` from `output_dir`.
 2. For each question group (or the subset specified by `group_indices`), call the LLM
-  with the solution content and `rubric_system` prompt (lenient, few line items; point totals must match each question's ``(P pts)`` header; split multi-part questions into a few broad criteria over one full-point checklist paragraph).
+  with the solution content and `rubric_system` prompt (observable criteria; minimum item counts for higher point totals; point totals must match each question's ``(P pts)`` header).
 3. Parse the returned JSON into a `{qid: {points, items: [{description, deduction}]}}` dict.
   The object must include **every** question in the group; each entry must include `points` (no silent backfill from the solution).
   Omissions fail validation and trigger JSON LLM retries, then a `"[generation failed]"` placeholder rubric for that group if retries are exhausted.
 4. If `rubric_review` is enabled, run a second LLM pass (`review_system` prompt) per group
-  that softens rubric criteria that hardcode reference-solution-specific values
-   not required by the question text.
+  that fixes over-demanding wording and misaligned criteria **without** replacing concrete
+  question requirements with vague “understanding” boilerplate.
 5. If `group_indices` is set (partial regeneration), merge new rubrics into the
   existing rubric dict rather than replacing everything.
 
@@ -706,6 +722,8 @@ Row types are shared for LLM wire and pipeline: **`QuestionGrade`** (grading), *
 
 `app.py` is a FastAPI application serving both the REST API and the static UI.
 
+**Open the UI from uvicorn:** load `http://127.0.0.1:<port>/` (or `localhost` with the same port) so browser `fetch` and `EventSource` hit this app. If you open `ui/index.html` from another dev server (VS Code Simple Browser, Live Preview, etc.), relative `/assignments` goes to that server’s port and the assignment list will be wrong or empty — either use the uvicorn URL or append `?api=http://127.0.0.1:<uvicorn_port>` so `ui/js/shared.js` uses that API base (CORS allows any `localhost` / `127.0.0.1` port). `GET /assignments` sets `Cache-Control: no-store` and the Setup tab fetches it with `cache: "no-store"` so the dropdown does not stick on an old list after you add `output/*/config.yaml` folders.
+
 The Review tab auto-loads results when the tab is activated. It fetches per-student parsed JSON (`GET /parsed/{student_name}`) and renders `answer_text_concat` plus any `image/png` or `image/jpeg` entries under `answer_cells[].images` as inline `<img>` data URLs (`ui/js/app.js`). Per-question `_provenance` (model, rubric hash, timestamp) is shown below the confidence badge.
 
 ### Export (`POST /export`, file downloads)
@@ -796,9 +814,10 @@ Tests live in `tests/` and are run with `pytest tests/ -q`.
 | `test_grade.py`          | `grade_student` and `grade_group` logic including `grade_only`, merge, skip, retry                 |
 | `test_rubric.py`         | Rubric generation and review pass logic                                                            |
 | `test_export.py`         | Excel and Gradescope JSON output, `gradescope_title_mapping`, autograder ZIP layout                  |
-| `test_experiment_data_scripts.py` | Anonymize CSV helper, S25 pack-to-Gradescope-ZIP + `gather_submissions` smoke |
+| `test_experiment_data_scripts.py` | `build_experiment_layout.py` (column parsing including Gradescope ``<g>: <notebook> (pts)`` → notebook QID, S24 cohort tag, S25/S26 e2e, `config.yaml` preserve vs `--overwrite-config`), `canonicalize_experiment_lab.py` (positional CSV guard, dual-header keying, `--allow-misaligned-human`), `remap_gradescope_notebook_qids.py` (rewrite notebook QID in export headers), `verify_experiment_lab_layout.py`, `prepare_assignment` smoke |
 | `test_backup_grading_results.py` | `scripts/backup_grading_results.py`: snapshot ``graded_results.json`` + ``experiment_runs/`` |
-| `test_compare_experiment_to_human.py` | `scripts/compare_experiment_to_human.py`: `analyze_lab` totals / per-question MAE / Pearson |
+| `test_compare_experiment_to_human.py` | `scripts/compare_experiment_to_human.py`: `analyze_lab` totals / per-question MAE / Pearson; warns when human `Total Score` is constant (undefined *r*, misleading MAE) |
+| `test_compute_irr.py` | `scripts/compute_irr.py`: HW1 Salman (JSON) ± Grader B (wide CSV), human–human + human–AI vs `graded_results.json` smoke (tiny fixture) |
 | `test_analyze_human_ai_discrepancies.py` | `scripts/analyze_human_ai_discrepancies.py` + `scripts/_human_ai_join.py`: Task 2/3 rows, Task 4 quartile invariance, grader scan (skips Autograder headers), Task 1 `_raw` scan |
 | `test_audit_experiment_output_rubrics.py` | `scripts/audit_experiment_output_rubrics.py`: rubric vs `question_groups` coverage, deduction sums, coarse-item heuristic |
 | `test_gather.py`         | Submission extraction from metadata, `email_stem_map.json`                                           |
