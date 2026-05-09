@@ -1,5 +1,20 @@
 /** Shared utilities and API for AI Autograder UI */
-const API = "";
+
+/**
+ * Base URL for API calls (fetch / EventSource). Empty string = same origin as the page.
+ * Set `?api=http://127.0.0.1:8000` when the HTML is served from another dev server/port.
+ */
+function resolveApiBase() {
+    if (typeof window === "undefined" || !window.location) return "";
+    try {
+        const q = new URLSearchParams(window.location.search).get("api");
+        if (q != null && String(q).trim()) {
+            return String(q).trim().replace(/\/+$/, "");
+        }
+    } catch (_) {}
+    return "";
+}
+const API = resolveApiBase();
 const DEFAULT_MODEL = "gpt-4.1-mini";
 
 const FETCH_RETRIES = 2;

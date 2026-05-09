@@ -191,6 +191,7 @@ class TestConfigEndpoints:
             r = client.get("/assignments")
         assert r.status_code == 200
         assert r.json() == {"assignments": ["A1"]}
+        assert "no-store" in (r.headers.get("cache-control") or "").lower()
 
     def test_load_or_create_creates_new_config(self, client, tmp_path):
         """Creates a new config file when the assignment folder does not exist."""

@@ -42,7 +42,8 @@
             <select id="setupAssignmentSelect" class="input-select" aria-label="Open an existing output folder" style="min-width:14rem">
                 <option value="">— select —</option>
             </select>
-            <span class="text-muted-xs mb-0">Folders under <code>output/</code> with <code>config.yaml</code>. Last opened is restored on reload.</span>
+            <span id="setupAssignmentsMeta" class="text-muted-xs mb-0" aria-live="polite"></span>
+            <span class="text-muted-xs mb-0">Folders under <code>output/</code> with <code>config.yaml</code>. Open the app from the uvicorn URL (not another port). If the list looks stale, hard-refresh. Served from another dev server: <code>?api=http://127.0.0.1:8000</code> (port = uvicorn).</span>
         </div>
         <div id="setupLoadStatus" class="mb-2" role="status" aria-live="polite"></div>
 

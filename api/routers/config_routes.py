@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from fastapi import APIRouter, Body, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Body, File, Form, HTTPException, Response, UploadFile
 
 from api.helpers import (
     build_parse_solution_response,
@@ -26,8 +26,9 @@ router = APIRouter()
 
 
 @router.get("/assignments")
-def api_list_assignments():
+def api_list_assignments(response: Response):
     """List assignment folders under output/ that have a config.yaml."""
+    response.headers["Cache-Control"] = "no-store, max-age=0"
     out = state.PROJECT_ROOT / "output"
     names: list[str] = []
     if out.is_dir():

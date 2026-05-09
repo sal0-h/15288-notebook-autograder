@@ -168,10 +168,14 @@ function syncAssignmentSelectToName(name) {
 
 async function refreshAssignmentsDropdown() {
     const sel = document.getElementById("setupAssignmentSelect");
+    const meta = document.getElementById("setupAssignmentsMeta");
     if (!sel) return;
     const keep = sel.value;
     try {
-        const r = await fetchWithRetry(API + "/assignments");
+        const r = await fetchWithRetry(API + "/assignments", { cache: "no-store" });
+        if (!r.ok) {
+            throw new Error(`HTTP ${r.status} ${r.statusText || ""}`.trim());
+        }
         const data = await r.json();
         const names = Array.isArray(data.assignments) ? data.assignments : [];
         sel.innerHTML = "";
@@ -186,7 +190,22 @@ async function refreshAssignmentsDropdown() {
             sel.appendChild(o);
         }
         if (keep && names.includes(keep)) sel.value = keep;
-    } catch (_) {}
+        if (meta) {
+            meta.textContent =
+                names.length > 0
+                    ? `(${names.length} loaded${API ? ", api=" + API : ""})`
+                    : "(no assignments under output/)";
+        }
+    } catch (e) {
+        if (meta) {
+            meta.textContent =
+                "(list failed — hard refresh or open from uvicorn URL; optional ?api=http://127.0.0.1:8000)";
+        }
+        console.warn(
+            "Could not load assignment list from /assignments. Open the app from the same URL as uvicorn, or add ?api=http://127.0.0.1:PORT matching uvicorn.",
+            e
+        );
+    }
 }
 
 async function doLoadAssignment() {
