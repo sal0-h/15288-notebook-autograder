@@ -156,6 +156,34 @@ class TestParseNotebook:
         assert qs["1.1"]["points"] == 2
         assert "print('hello world')" in qs["1.1"]["answer_code_concat"]
 
+    def test_two_group_dash_font_question_regex(self, tmp_path):
+        """CMU handout: - N <font> [pts] uses current section for qid sec.qnum."""
+        config = ensure_app_config(
+            {
+                "parsing": {
+                    "section_regex": r"(?m)^\s*#\s*<font[^>]*>\s*(\d+)\b",
+                    "question_regex": r"(?im)^\s*-\s*(\d+)\s*<font[^>]*>.*?\[\s*(\d+)\s*pts?\s*\]",
+                    "keep_images": True,
+                }
+            }
+        )
+        cells = [
+            make_md_cell("# <font color='red'>2 Theory</font>"),
+            make_md_cell("- 1 <font color='blue'> [2 pts] First dash prompt"),
+            make_code_cell("a = 1"),
+            make_md_cell("- 2 <font color='blue'> [3 pts] Second dash prompt"),
+            make_code_cell("b = 2"),
+        ]
+        nb = make_notebook(cells)
+        p = tmp_path / "dash.ipynb"
+        p.write_text(json.dumps(nb), encoding="utf-8")
+        result = parse_notebook(p, config)
+        qs = result["sections"]["2"]["questions"]
+        assert qs["2.1"]["points"] == 2
+        assert qs["2.2"]["points"] == 3
+        assert "a = 1" in qs["2.1"]["answer_code_concat"]
+        assert "b = 2" in qs["2.2"]["answer_code_concat"]
+
     def test_markdown_answer_captured(self, tmp_path):
         cells = [
             make_md_cell("# <font color='red'>2 Theory</font>"),
