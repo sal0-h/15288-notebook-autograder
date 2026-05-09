@@ -9,7 +9,7 @@ After running [`scripts/build_experiment_layout.py`](../scripts/build_experiment
 ```text
 experiment_data/<cohort>/<lab>/
   _raw/                    untouched original files (created on first run)
-  config.yaml              ready for the autograder pipeline
+  config.yaml              ready for the autograder pipeline (created if missing; not overwritten on rebuild)
   solution.ipynb           rewritten so the default Q-style regex parses every prompt
   human_grades.csv         anon_id, Total Score, Max Points, then qid columns (e.g. 1.1, 1.2, …)
   submissions/
@@ -26,14 +26,15 @@ experiment_data/<cohort>/<lab>/
 ### Defaults inside `config.yaml`
 
 ```yaml
-assignment_name: S25_LabTest_2          # or S26_LabTest_2, etc.
-model: gpt-4
+assignment_name: S24_LabTest_2          # or S25_…, S26_…
+model: gpt-4.1
 solution_notebook: solution.ipynb
 workers: 32
 parsing:
   section_regex: '(?m)^\s*#\s*<font[^>]*>\s*(\d+)\b'
   question_regex: '(?i)^\s*(-\s*)?Q(\d+)\.(\d+)\s*.*?\[\s*(\d+)\s*PTS\s*\]'
   keep_images: true
+rubric_review: false          # experiment template: skip second pass unless you set true
 grading:
   question_groups: []   # replaced per lab with explicit lists; see note below
   grade_only: null
@@ -41,24 +42,27 @@ grading:
 rubrics: {}
 ```
 
-You normally do not need to edit parsing regex — every cohort uses the same defaults because the build script makes the data conform. **`grading.question_groups` must list every solution question.** For labs where the notebook has **multiple parsed sections**, each inner list is **one section** (all questions in that section, in parse order). For **single-section** labs (synthetic flat `1.<idx>` numbering), there is no section structure to follow, so groups are **fixed-size chunks** (six questions per call) only to keep prompts bounded. The checked-in canonical `config.yaml` files under each lab folder define these groups.
+You normally do not need to edit parsing regex — every cohort uses the same defaults because the build script makes the data conform. **`rubric_review`** defaults to **false** in the experiment template so rubric text is not run through the optional second “review” LLM pass unless you set it to **true** in `config.yaml`. **`grading.question_groups` must list every solution question.** For labs where the notebook has **multiple parsed sections**, each inner list is **one section** (all questions in that section, in parse order). For **single-section** labs (synthetic flat `1.<idx>` numbering), there is no section structure to follow, so groups are **fixed-size chunks** (six questions per call) only to keep prompts bounded. The checked-in canonical `config.yaml` files under each lab folder define these groups.
 
 
 ## Workflow
 
 ```bash
 # 1. (One-time) drop raw files into the cohort folder, e.g.:
+#    experiment_data/S24/LabTest_2/{LabTest_2_S24_sol.ipynb, grades.csv, metadata.yml, submissions/NNN.ipynb}
 #    experiment_data/S25/LabTest_2/{LabTest_2_S25_sol.ipynb, grades.csv, metadata.yml, submissions/NNN.ipynb}
 #    experiment_data/S26/{lt1.csv, lt1.ipynb, lt1.zip}   # LabTest_1
 #    experiment_data/S26/{lt2.csv, lt2.ipynb, lt2.zip}   # LabTest_2
 
-# 2. Build the canonical layout (idempotent; moves originals to _raw/ on first run):
+# 2. Build the canonical layout (idempotent; moves originals to _raw/ on first run).
+#    Leaves existing lab config.yaml unchanged; use --overwrite-config to rewrite from template.
 python scripts/build_experiment_layout.py
 
 # 3. Stage every lab into output/<assignment_name>/ (symlink submissions):
 python scripts/prepare_assignment.py --all
 
 # Or stage one lab:
+python scripts/prepare_assignment.py --lab-dir experiment_data/S24/LabTest_2
 python scripts/prepare_assignment.py --lab-dir experiment_data/S25/LabTest_2
 # Or stage one S26 lab (after build produced ``experiment_data/S26/LabTest_N/``):
 python scripts/prepare_assignment.py --lab-dir experiment_data/S26/LabTest_1
@@ -81,7 +85,7 @@ python scripts/compare_experiment_to_human.py --model-tag gpt-4.1-mini
 
 `scripts/prepare_assignment.py` symlinks `output/<assignment_name>/submissions` to the canonical `submissions/` and writes a runtime `config.yaml` with the absolute solution path. Pass `--copy` if your filesystem cannot symlink. Re-running it overwrites prior staging.
 
-`scripts/run_experiment_grading.py` uses the same `run_parse` / `grade_all_students` stack as `main.py` (parallel workers, resume within a run). It skips a (model, lab) when `experiment_runs/<sanitize(model)>/graded_results.json` is already complete (every `parsed/*.json` stem has a graded row and `_provenance.model` matches that model). A partial archive is copied to the root, graded with resume, then copied back and the root file removed. Otherwise it moves any other non-empty root `graded_results.json` into a provenance-named folder under `experiment_runs/` before the next run. `scripts/compare_experiment_to_human.py` writes `experiment_analysis/<model_tag>/summary.json` and `per_lab.csv` (gitignored). To refresh the tracked paper tables under `research/paper/`, run `python scripts/export_research_paper_metrics.py` (reads those summaries when present, else `research/paper/metrics_snapshot.json`).
+`scripts/run_experiment_grading.py` uses the same `run_parse` / `grade_all_students` stack as `main.py` (parallel workers, resume within a run). It skips a (model, lab) when `experiment_runs/<sanitize(model)>/graded_results.json` is already complete (every `parsed/*.json` stem has a graded row and `_provenance.model` matches that model). A partial archive is copied to the root, graded with resume, then copied back and the root file removed. Otherwise it moves any other non-empty root `graded_results.json` into a provenance-named folder under `experiment_runs/` before the next run. `scripts/compare_experiment_to_human.py` writes `experiment_analysis/<model_tag>/summary.json` and `per_lab.csv` (gitignored). To refresh the tracked paper tables under `research/paper/`, run `python scripts/compare_experiment_to_human.py` for each model tag, then `python scripts/export_research_paper_metrics.py --write-snapshot` (reads those summaries when present, else `research/paper/metrics_snapshot.json`). For the **HW1** hand-export vs class AI comparison, run `python scripts/compute_irr.py --out research/paper/hw1_irr_metrics.json` (requires `scikit-learn`).
 
 ### Discrepancy analysis report
 
@@ -97,6 +101,7 @@ The Markdown report’s Task 1 section documents missing historical trees (e.g. 
 
 | Cohort | Lab(s) | Students | Question count | Source layout |
 |--------|--------|----------|-----------------|---------------|
+| S24 | (add under `experiment_data/S24/LabTest_*`) | — | (from CSV) | Same raw layout as S25; solution file `LabTest_<N>_S24_sol.ipynb`; `assignment_name` `S24_LabTest_<N>` |
 | S25 | LabTest_2 | 17 | 42 (natural `<sec>.<qnum>` from CSV) | `_raw/{solution.ipynb, grades.csv, metadata.yml, submissions/}` |
 | S25 | LabTest_3 / 4 | 17 / 18 | 20 / 18 (natural) | same |
 | S25 | LabTest_5 / 6 / 7 | 17 / 17 / 16 | synthesized flat `1.<idx>` | same; build warns where solution prompts and CSV columns disagree |
@@ -107,15 +112,17 @@ S26 raw files use names **`ltN.csv`**, **`ltN.ipynb`**, **`ltN.zip`** at **`expe
 
 ## Re-running the build
 
-The build script is idempotent: it always reads from `_raw/` and overwrites the canonical files at lab root. If you replace any raw file, just rerun `python scripts/build_experiment_layout.py`. To re-do staging for the pipeline, rerun `python scripts/prepare_assignment.py --lab-dir <lab>`.
+The build script is idempotent: it always reads from `_raw/` and overwrites the canonical files at lab root **except** `config.yaml`, which is written only when missing (so local edits to model, workers, or rubric settings survive rebuilds). Use `python scripts/build_experiment_layout.py --overwrite-config` to replace every lab’s `config.yaml` with a fresh template. If you replace any raw file, rerun `python scripts/build_experiment_layout.py`. To re-do staging for the pipeline, rerun `python scripts/prepare_assignment.py --lab-dir <lab>`.
 
 ## Privacy / git hygiene
 
-The root `.gitignore` covers `experiment_data/**` with an exception only for this README. The `_raw/` folders contain Gradescope exports with names, SID, and email — they must stay local. The canonical `human_grades.csv` only carries `anon_id`, totals, and per-qid scores, but is still gitignored by default; commit anonymized derivatives explicitly only when you have reviewed them.
+The root `.gitignore` covers `experiment_data/**` with exceptions for this README, `S24/.gitkeep`, and `S24/README_S24_SETUP.md` (S24 setup notes without exports), so the cohort folder exists in git without tracking PII. The `_raw/` folders contain Gradescope exports with names, SID, and email — they must stay local. The canonical `human_grades.csv` only carries `anon_id`, totals, and per-qid scores, but is still gitignored by default; commit anonymized derivatives explicitly only when you have reviewed them.
+
+**S24 hand-canonical labs** (under `experiment_data/S24/LabTest_*`) do **not** use `build_experiment_layout.py` notebook rewriting. Use `scripts/canonicalize_experiment_lab.py` so `solution.ipynb` stays a byte copy of `_raw/*_sol.ipynb`, with optional two-capture `question_regex` for dash-font prompts. See `experiment_data/S24/README_S24_SETUP.md`.
 
 If you keep a local `.cursorignore` (the repo-level copy is gitignored), exclude `experiment_data/**/*.{csv,ipynb,zip}` so Cursor does not pull large or sensitive artifacts into AI context.
 
-**Staging (`output/S25_LabTest_*`, `output/S26_LabTest_2/`):** The root `.gitignore` ignores all of `output/`, so Cursor’s file indexer and **readonly** subagents usually cannot open staged `config.yaml` there. Use a terminal (`python` / `cat`) for audits, or temporarily relax ignores. In `.cursorignore`, avoid a bare `LabTest*/` rule: some matchers treat it like a substring and hide `output/S25_LabTest_*` paths; prefer `/LabTest*/` (repo root only) plus explicit `output/**/parsed/` style ignores for bulk under `output/`.
+**Staging (`output/S24_LabTest_*`, `output/S25_LabTest_*`, `output/S26_LabTest_2/`):** The root `.gitignore` ignores all of `output/`, so Cursor’s file indexer and **readonly** subagents usually cannot open staged `config.yaml` there. Use a terminal (`python` / `cat`) for audits, or temporarily relax ignores. In `.cursorignore`, avoid a bare `LabTest*/` rule: some matchers treat it like a substring and hide `output/S25_LabTest_*` paths; prefer `/LabTest*/` (repo root only) plus explicit `output/**/parsed/` style ignores for bulk under `output/`.
 
 ## Tests
 
