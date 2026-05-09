@@ -47,15 +47,24 @@ DEFAULT_LABS: tuple[str, ...] = (
     "S25_LabTest_6",
     "S25_LabTest_7",
     "S26_LabTest_2",
-    "S26_LabTest_1",
+    "S24_LabTest_2",
+    "S24_LabTest_4",
+    "S24_LabTest_5",
+    "S24_LabTest_6",
+    "S24_LabTest_Final",
+    "S23_LabTest_3",
+    "S23_LabTest_4",
+    "S23_LabTest_5",
+    "S23_LabTest_6",
+    "S23_LabTest_7",
 )
 
 # Grading models to run (outer loop). Gianni: full + mini per family — edit here.
 DEFAULT_MODELS: tuple[str, ...] = (
-    "gpt-4.1",
+    # "gpt-4.1",
     "gpt-4.1-mini",
-    "gpt-5",
-    "gpt-5-mini",
+    # "gpt-5",
+    # "gpt-5-mini",
 )
 
 DEFAULT_WORKERS = 32

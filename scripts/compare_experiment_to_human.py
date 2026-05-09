@@ -112,6 +112,8 @@ def analyze_lab(assignment_name: str, graded_path: Path) -> dict:
             pq["sum_bias"] += aq - hq
             pq["n"] += 1
 
+    human_total_is_constant = len(total_h) >= 2 and len({h for h in total_h}) == 1
+
     per_q_out: dict[str, dict[str, float]] = {}
     for qid, pq in sorted(per_q.items(), key=lambda x: x[0]):
         n = int(pq["n"])
@@ -135,6 +137,7 @@ def analyze_lab(assignment_name: str, graded_path: Path) -> dict:
         "total_score_mae": _mae(total_a, total_h),
         "total_score_rmse": _rmse(total_a, total_h),
         "total_score_pearson_r": _pearson_r(total_a, total_h),
+        "human_total_is_constant": human_total_is_constant,
         "per_question": per_q_out,
     }
     return out
@@ -207,10 +210,16 @@ def main() -> int:
         else:
             r = metrics["total_score_pearson_r"]
             rs = f"{r:.4f}" if r is not None else "n/a"
-            print(
+            line = (
                 f"{lab}: paired={metrics['n_paired_total_score']} "
                 f"MAE={metrics['total_score_mae']:.4f} r={rs}"
             )
+            if metrics.get("human_total_is_constant"):
+                line += (
+                    " — note: every paired human Total Score is identical "
+                    "(often placeholder CSV); r undefined, MAE ≈ mean |AI total|"
+                )
+            print(line)
 
     summary_path = out_dir / "summary.json"
     summary_path.write_text(

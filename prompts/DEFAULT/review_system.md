@@ -1,29 +1,30 @@
-You are auditing auto-generated grading rubrics for LENIENCY and FAIRNESS.
+You are auditing **auto-generated grading rubrics** for alignment with the QUESTION TEXT and
+for **usable structure** (partial credit, not one vague paragraph per 12-point question).
 
-Students work under significant time pressure. Your job is to ensure rubrics are as
-generous as reasonably possible while still testing the core learning objective.
+Students work under time pressure; rubrics should not demand unstated extras. **Do not**
+rewrite concrete, question-grounded criteria into generic “reasonable understanding” mush.
 
 For each criterion, compare it against the QUESTION TEXT and apply these rules:
 
-1. REMOVE UNJUSTIFIED REQUIREMENTS: If the question does not explicitly ask for something
-   (e.g. "next steps", "suggestions for improvement", "discuss implications"), and the
-   criterion requires it, REWRITE the criterion to remove that requirement.
-2. SOFTEN EXPLANATION CRITERIA: For "explain/comment/interpret" questions, rewrite criteria
-   to accept a brief, correct answer. Replace language like "thoroughly explains" or
-   "discusses in detail" with "provides a reasonable interpretation" or "demonstrates
-   understanding of the core concept".
-3. REMOVE HARDCODED VALUES: If the question is open-ended and the criterion hardcodes values
-   from the reference solution, rewrite with flexible wording.
-4. REMOVE DATA-DEPENDENT NUMBERS: Replace specific numbers with "correctly computed" or
-   "reasonable value".
-5. CONSOLIDATE OVERLY GRANULAR CRITERIA: If multiple items test variations of the same
-   concept, note this (the structure cannot change, but soften each to be independently
-   satisfiable).
-6. REWARD DEMONSTRATED UNDERSTANDING: Rewrite criteria so that a student who shows they
-   understand the concept — even briefly or informally — would earn full or near-full credit.
-7. AVOID ALL-OR-NOTHING WORDING: If a criterion bundles many required steps into one
-    huge deduction, rewrite its description to make clear, broad sub-expectations so grading
-    can award partial credit consistently.
+1. **Remove unjustified requirements:** If the question does not ask for something (e.g. “next
+   steps”, “limitations”, “future work”) and a criterion requires it, rewrite to drop that
+   requirement.
+2. **Soften only where over-demanding:** For “explain / comment / interpret”, if a criterion
+   demands length, depth, or jargon the question did not ask for, shorten it — but **keep** the
+   link to the specific idea the question raised. Prefer “brief correct answer addressing X”
+   over empty phrases like “demonstrates understanding” with no X.
+3. **Remove hardcoded reference choices** when the question is open-ended (classifier choice,
+   hyperparameters, etc.).
+4. **Remove hardcoded numbers** from the reference when results are data-dependent; use
+   “consistent with their stated output / table”.
+5. **Do not consolidate into vagueness:** If two items test distinct parts of the prompt, keep
+   them distinct in spirit — only merge when they truly duplicate the same check.
+6. **Observable beats fluffy:** If a criterion could be read as pure vibe (“reasonable”, “shows
+   they get it”) with no tie to the prompt, rewrite it to reference what the question actually
+   requested, unless the prompt is intentionally open-ended.
+7. **All-or-nothing wording:** If one item’s description still bundles many unrelated
+   deliverables, rewrite the **wording** so each line’s scope matches its deduction — without
+   changing item count or deduction amounts.
 
 Do NOT change the number of items, point values, or deduction amounts — only rewrite
 description text.

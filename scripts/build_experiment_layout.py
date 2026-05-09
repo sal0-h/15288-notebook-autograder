@@ -5,13 +5,13 @@ Canonical lab folder (output of this script):
 
     experiment_data/<cohort>/<lab>/
         _raw/                       # untouched originals (created on first run)
-        config.yaml                 # ready for prepare_assignment.py
+        config.yaml                 # created only if missing (see --overwrite-config)
         solution.ipynb              # rewritten so default Q-style regex matches
         human_grades.csv            # anon_id, total, max, then qid columns (1.1, 1.2 ...)
         submissions/<NNN>.ipynb     # one notebook per anon stem; matches human_grades.csv
 
-S25 inputs (per lab):
-    LabTest_<N>_S25_sol.ipynb, grades.csv (anon_id), submissions/<NNN>.ipynb, metadata.yml
+S24 / S25 inputs (per lab, under ``experiment_data/S24`` or ``.../S25``):
+    LabTest_<N>_{S24|S25}_sol.ipynb, grades.csv (anon_id), submissions/<NNN>.ipynb, metadata.yml
     Question prompts use a dash-number pattern; we inject 'Q<sec>.<q> [<pts> PTS]'
     headers using grades.csv as the source of truth so the default pipeline regex
     parses every cell correctly.
@@ -23,7 +23,8 @@ S26 inputs (under experiment_data/S26):
     to ``001.ipynb``, … ordered by Submission ID; ``anon_id`` matches those stems.
 
 The script is idempotent: it moves originals into _raw/ on first run and rebuilds
-canonical artifacts every time (overwriting prior outputs).
+canonical artifacts every time (overwriting prior outputs). ``config.yaml`` is
+written only when missing unless you pass ``--overwrite-config``.
 """
 
 from __future__ import annotations
@@ -48,8 +49,15 @@ EXPERIMENT_ROOT = PROJECT_ROOT / "experiment_data"
 #   S25 LabTest_2/3/4 grades.csv: '<sec>.<q>: Question <q> (<pts> pts)'
 #   S26 lt2.csv:                  '<col_idx>: <sec>.<q> (<pts> pts)'
 #   S25 LabTest_5/6/7:            '<col_idx>: q<n> (<pts> pts)' / '<col_idx>: Q<n> ...' (no sec.qnum)
+#   S24 LabTest_5 (Gradescope):   '<gs_sec>.<gs_q>: <notebook_sec>.<notebook_q> (<pts> pts)'
+#       The first token is the Gradescope column id; the second is the notebook QID used by
+#       parse_notebook — use the notebook id for human_grades alignment (see canonicalize).
 # Rule: if every question column parses to unique <sec>.<qnum> we keep it; otherwise we
 # synthesize flat '1.<idx>' so every lab is internally consistent.
+_DUAL_GS_NB_HEADER = re.compile(
+    r"^\s*(?P<gs>\d+\.\d+)\s*:\s*(?P<nb>\d+\.\d+)\s*\(\s*(?P<pts>[\d.]+)\s*pts?\s*\)",
+    re.IGNORECASE,
+)
 _QID_PREFIX = re.compile(r"^\s*(\d+\.\d+)\s*:\s*")
 _QID_TOKEN = re.compile(r"^\s*\d+\s*:\s*(\d+\.\d+)\s*\(")
 _PTS = re.compile(r"\(([\d.]+)\s*pts?\)", re.IGNORECASE)
@@ -97,16 +105,33 @@ def _is_question_column(header: str) -> bool:
     return True
 
 
+def gradescope_notebook_dual_headers_present(headers: list[str]) -> bool:
+    """True if any question column uses ``<g.g>: <n.n> (pts)`` (notebook QID after colon)."""
+    return any(
+        _is_question_column(h) and _DUAL_GS_NB_HEADER.match(h.strip())
+        for h in headers
+    )
+
+
 def _parse_question_columns(headers: list[str]) -> list[tuple[QSpec, str]]:
     """Ordered list of (canonical QSpec, original column name) for question columns.
 
     If every column parses to a unique <sec>.<qnum>, we use those ids verbatim.
     Otherwise we synthesize a flat '1.<idx>' scheme so the canonical layout is
     consistent for that lab even when the Gradescope labels were ad-hoc.
+
+    For ``<gradescope_qid>: <notebook_qid> (pts)`` headers, the stored QSpec / qid is the
+    **notebook** id (after the colon) so it matches ``parse_notebook`` output.
     """
     raw: list[tuple[str, str | None, int]] = []
     for h in headers:
         if not _is_question_column(h):
+            continue
+        dual = _DUAL_GS_NB_HEADER.match(h.strip())
+        if dual:
+            qid = dual.group("nb")
+            pts = int(round(float(dual.group("pts"))))
+            raw.append((h, qid, pts))
             continue
         m = _QID_PREFIX.match(h) or _QID_TOKEN.match(h)
         qid = m.group(1) if m else None
@@ -186,17 +211,21 @@ _CANONICAL_PARSING = {
     "keep_images": True,
 }
 
+# Defaults for newly created experiment_data/*/config.yaml only (existing file is never overwritten).
+DEFAULT_EXPERIMENT_MODEL = "gpt-4.1"
+DEFAULT_EXPERIMENT_WORKERS = 32
+
 
 def _config_yaml(assignment_name: str) -> str:
     cfg = {
         "assignment_name": assignment_name,
-        "model": "gpt-4.1",
+        "model": DEFAULT_EXPERIMENT_MODEL,
         "rubric_model": "",
-        "rubric_review": True,
+        "rubric_review": False,
         "include_reference_in_grading": False,
         "solution_notebook": "solution.ipynb",
         "output_dir": "output",
-        "workers": 32,
+        "workers": DEFAULT_EXPERIMENT_WORKERS,
         "max_prompt_tokens": 80000,
         "max_completion_tokens": 4096,
         "parsing": dict(_CANONICAL_PARSING),
@@ -208,6 +237,21 @@ def _config_yaml(assignment_name: str) -> str:
         "rubrics": {},
     }
     return yaml.safe_dump(cfg, sort_keys=False, default_flow_style=False)
+
+
+def _write_config_yaml_if_needed(
+    lab_dir: Path, assignment_name: str, *, overwrite: bool
+) -> str:
+    """Write template ``config.yaml`` if missing.
+
+    Returns one of ``\"created\"``, ``\"skipped\"``, ``\"overwritten\"``.
+    """
+    path = lab_dir / "config.yaml"
+    existed = path.is_file()
+    if existed and not overwrite:
+        return "skipped"
+    path.write_text(_config_yaml(assignment_name), encoding="utf-8")
+    return "overwritten" if existed else "created"
 
 
 def _write_canonical_csv(
@@ -235,13 +279,17 @@ def _write_canonical_csv(
 # ---------------------------------------------------------------------------
 
 
-def _ensure_s25_raw(lab_dir: Path) -> Path:
-    """Move originals to _raw/ if not already done. Returns _raw path."""
+def _ensure_s25_raw(lab_dir: Path, cohort: str) -> Path:
+    """Move originals to _raw/ if not already done. Returns _raw path.
+
+    Expects solution notebook ``LabTest_*_{cohort}_sol.ipynb`` (e.g. S24, S25)
+    at lab root before the first run.
+    """
     raw = lab_dir / "_raw"
     if raw.is_dir() and (raw / "grades.csv").is_file():
         return raw
     raw.mkdir(parents=True, exist_ok=True)
-    sol_candidates = list(lab_dir.glob("LabTest_*_S25_sol.ipynb"))
+    sol_candidates = list(lab_dir.glob(f"LabTest_*_{cohort}_sol.ipynb"))
     if sol_candidates:
         shutil.move(str(sol_candidates[0]), raw / "solution.ipynb")
     if (lab_dir / "grades.csv").is_file():
@@ -253,9 +301,15 @@ def _ensure_s25_raw(lab_dir: Path) -> Path:
     return raw
 
 
-def build_s25_lab(lab_dir: Path) -> dict:
-    """Build canonical layout for one S25 lab folder."""
-    raw = _ensure_s25_raw(lab_dir)
+def build_s25_lab(
+    lab_dir: Path, *, cohort: str = "S25", overwrite_config: bool = False
+) -> dict:
+    """Build canonical layout for one lab folder using the S25-style raw dump.
+
+    ``cohort`` is the tag in ``assignment_name`` (``{cohort}_LabTest_N``) and in
+    the expected solution filename ``LabTest_*_{cohort}_sol.ipynb``.
+    """
+    raw = _ensure_s25_raw(lab_dir, cohort)
 
     grades_path = raw / "grades.csv"
     sol_raw = raw / "solution.ipynb"
@@ -324,10 +378,9 @@ def build_s25_lab(lab_dir: Path) -> dict:
         lab_dir / "human_grades.csv", canonical_rows, qspecs, extra_meta
     )
 
-    # config.yaml
-    assignment_name = f"S25_{lab_dir.name}"
-    (lab_dir / "config.yaml").write_text(
-        _config_yaml(assignment_name), encoding="utf-8"
+    assignment_name = f"{cohort}_{lab_dir.name}"
+    config_status = _write_config_yaml_if_needed(
+        lab_dir, assignment_name, overwrite=overwrite_config
     )
 
     return {
@@ -335,6 +388,7 @@ def build_s25_lab(lab_dir: Path) -> dict:
         "students": written,
         "questions": len(qspecs),
         "assignment_name": assignment_name,
+        "config_yaml": config_status,
     }
 
 
@@ -392,7 +446,9 @@ def _extract_s26_submissions(zip_path: Path, dest: Path) -> dict[str, Path]:
     return out
 
 
-def build_s26_lab(s26_root: Path, lab_num: int) -> dict:
+def build_s26_lab(
+    s26_root: Path, lab_num: int, *, overwrite_config: bool = False
+) -> dict:
     """Build canonical layout for S26 ``LabTest_{lab_num}`` (raw: ``lt{lab_num}.*``)."""
     raw = _ensure_s26_raw(s26_root, lab_num)
     lab_dir = raw.parent
@@ -462,8 +518,8 @@ def build_s26_lab(s26_root: Path, lab_num: int) -> dict:
     )
 
     assignment_name = f"S26_{lab_dir.name}"
-    (lab_dir / "config.yaml").write_text(
-        _config_yaml(assignment_name), encoding="utf-8"
+    config_status = _write_config_yaml_if_needed(
+        lab_dir, assignment_name, overwrite=overwrite_config
     )
 
     return {
@@ -471,6 +527,7 @@ def build_s26_lab(s26_root: Path, lab_num: int) -> dict:
         "students": n_written,
         "questions": len(qspecs),
         "assignment_name": assignment_name,
+        "config_yaml": config_status,
     }
 
 
@@ -499,13 +556,18 @@ def _discover_s26_lab_nums(s26_root: Path) -> list[int]:
 
 def main() -> int:
     ap = argparse.ArgumentParser(
-        description="Build canonical experiment_data layout (S25 + S26)."
+        description="Build canonical experiment_data layout (S24 + S25 + S26)."
     )
     ap.add_argument(
         "--root",
         type=Path,
         default=EXPERIMENT_ROOT,
         help="experiment_data root (default: repo experiment_data/)",
+    )
+    ap.add_argument(
+        "--overwrite-config",
+        action="store_true",
+        help="Rewrite each lab's config.yaml from the template (default: keep existing)",
     )
     args = ap.parse_args()
     root: Path = args.root.resolve()
@@ -515,27 +577,44 @@ def main() -> int:
 
     summary: list[dict] = []
 
-    s25_root = root / "S25"
-    if s25_root.is_dir():
+    for cohort in ("S24", "S25"):
+        cohort_root = root / cohort
+        if not cohort_root.is_dir():
+            continue
         for lab in sorted(
             p
-            for p in s25_root.iterdir()
+            for p in cohort_root.iterdir()
             if p.is_dir() and p.name.startswith("LabTest_")
         ):
             try:
-                summary.append(build_s25_lab(lab))
+                summary.append(
+                    build_s25_lab(
+                        lab,
+                        cohort=cohort,
+                        overwrite_config=args.overwrite_config,
+                    )
+                )
+                cfg_note = ""
+                if summary[-1].get("config_yaml") == "skipped":
+                    cfg_note = " (config.yaml unchanged)"
                 print(
-                    f"Built S25 {lab.name}: {summary[-1]['students']} students, {summary[-1]['questions']} qids"
+                    f"Built {cohort} {lab.name}: {summary[-1]['students']} students, "
+                    f"{summary[-1]['questions']} qids{cfg_note}"
                 )
             except Exception as e:
-                print(f"FAILED S25 {lab.name}: {e}", file=sys.stderr)
+                print(f"FAILED {cohort} {lab.name}: {e}", file=sys.stderr)
 
     s26_root = root / "S26"
     for n in _discover_s26_lab_nums(s26_root):
         try:
-            summary.append(build_s26_lab(s26_root, n))
+            summary.append(
+                build_s26_lab(s26_root, n, overwrite_config=args.overwrite_config)
+            )
+            cfg_note = ""
+            if summary[-1].get("config_yaml") == "skipped":
+                cfg_note = " (config.yaml unchanged)"
             print(
-                f"Built {summary[-1]['lab']}: {summary[-1]['students']} students, {summary[-1]['questions']} qids"
+                f"Built {summary[-1]['lab']}: {summary[-1]['students']} students, {summary[-1]['questions']} qids{cfg_note}"
             )
         except Exception as e:
             print(f"FAILED S26 LabTest_{n}: {e}", file=sys.stderr)

@@ -85,12 +85,54 @@ def test_analyze_lab_perfect_agreement(tmp_path, monkeypatch):
         lambda assignment_name, *, project_root: human,
     )
     m = cmp.analyze_lab("AnyLab", graded)
-    assert m.get("error") is None
+    assert m.get("human_total_is_constant") is False
     assert m["n_paired_total_score"] == 3
     assert m["total_score_mae"] == 1.0
     assert m["total_score_pearson_r"] is not None
     assert abs(m["total_score_pearson_r"] - 1.0) < 1e-9
     assert m["per_question"]["1.1"]["mae"] == 1.0
+
+
+def test_analyze_lab_constant_human_total(tmp_path, monkeypatch):
+    """S23-style placeholder CSV: all human totals identical → Pearson r undefined."""
+    cmp = _import_compare_module()
+    human = tmp_path / "human.csv"
+    human.write_text(
+        "anon_id,Total Score,Max Points,1.1\n"
+        "001,0,100,\n"
+        "002,0,100,\n",
+        encoding="utf-8",
+    )
+    graded = tmp_path / "graded.json"
+    graded.write_text(
+        json.dumps(
+            [
+                {
+                    "student_name": "001",
+                    "total_score": 50.0,
+                    "total_max": 100.0,
+                    "questions": {},
+                },
+                {
+                    "student_name": "002",
+                    "total_score": 60.0,
+                    "total_max": 100.0,
+                    "questions": {},
+                },
+            ]
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        cmp,
+        "human_csv_path",
+        lambda assignment_name, *, project_root: human,
+    )
+    m = cmp.analyze_lab("PlaceholderLab", graded)
+    assert m.get("error") is None
+    assert m["human_total_is_constant"] is True
+    assert m["total_score_pearson_r"] is None
+    assert m["total_score_mae"] == 55.0  # mean |50-0|, |60-0|
 
 
 def test_pearson_hand_computed():

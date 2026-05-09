@@ -99,7 +99,7 @@ def main() -> int:
         "--lab-dir",
         type=Path,
         default=None,
-        help="Path to a canonical lab folder, e.g. experiment_data/S25/LabTest_2",
+        help="Path to a canonical lab folder, e.g. experiment_data/S24/LabTest_2 or .../S25/LabTest_2",
     )
     ap.add_argument(
         "--all",

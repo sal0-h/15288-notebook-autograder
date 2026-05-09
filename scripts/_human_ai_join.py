@@ -14,13 +14,22 @@ from results_store import load_results
 
 # assignment_name -> experiment_data/<cohort>/<lab>/human_grades.csv
 HUMAN_CSV_REL: dict[str, tuple[str, str]] = {
+    "S24_LabTest_2": ("S24", "LabTest_2"),
+    "S24_LabTest_4": ("S24", "LabTest_4"),
+    "S24_LabTest_5": ("S24", "LabTest_5"),
+    "S24_LabTest_6": ("S24", "LabTest_6"),
+    "S24_LabTest_Final": ("S24", "LabTest_Final"),
     "S25_LabTest_2": ("S25", "LabTest_2"),
     "S25_LabTest_3": ("S25", "LabTest_3"),
     "S25_LabTest_4": ("S25", "LabTest_4"),
     "S25_LabTest_6": ("S25", "LabTest_6"),
     "S25_LabTest_7": ("S25", "LabTest_7"),
     "S26_LabTest_2": ("S26", "LabTest_2"),
-    "S26_LabTest_1": ("S26", "LabTest_1"),
+    "S23_LabTest_3": ("S23", "LabTest_3"),
+    "S23_LabTest_4": ("S23", "LabTest_4"),
+    "S23_LabTest_5": ("S23", "LabTest_5"),
+    "S23_LabTest_6": ("S23", "LabTest_6"),
+    "S23_LabTest_7": ("S23", "LabTest_7"),
 }
 
 _META_LOWER = frozenset({"anon_id", "total score", "max points"})
