@@ -98,9 +98,7 @@ def test_analyze_lab_constant_human_total(tmp_path, monkeypatch):
     cmp = _import_compare_module()
     human = tmp_path / "human.csv"
     human.write_text(
-        "anon_id,Total Score,Max Points,1.1\n"
-        "001,0,100,\n"
-        "002,0,100,\n",
+        "anon_id,Total Score,Max Points,1.1\n" "001,0,100,\n" "002,0,100,\n",
         encoding="utf-8",
     )
     graded = tmp_path / "graded.json"

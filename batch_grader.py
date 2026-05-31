@@ -5,6 +5,7 @@ import json
 import logging
 from dataclasses import dataclass
 from pathlib import Path
+from collections.abc import Callable
 from typing import Generator
 
 from openai import OpenAI
@@ -137,7 +138,7 @@ def grade_all_students(
     cfg: AppConfig,
     client: OpenAI | None = None,
     results_lock=None,
-    cancel_check: callable | None = None,
+    cancel_check: Callable[[], bool] | None = None,
 ) -> Generator[dict, None, None]:
     """
     Grade all students sequentially or in parallel.

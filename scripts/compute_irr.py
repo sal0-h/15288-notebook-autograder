@@ -324,7 +324,9 @@ def main() -> int:
         raw = list(args.grader_b_csv) + list(args.staff_csv)
         grader_b_paths = [p if p.is_absolute() else PROJECT_ROOT / p for p in raw]
     elif not args.no_grader_b_csv and not args.no_staff_csv:
-        auto = PROJECT_ROOT / "research" / "paper" / "hw1_manual_grades_grader_b_wide.csv"
+        auto = (
+            PROJECT_ROOT / "research" / "paper" / "hw1_manual_grades_grader_b_wide.csv"
+        )
         if auto.is_file():
             grader_b_paths = [auto]
 
@@ -348,12 +350,16 @@ def main() -> int:
     parse_warnings.extend(miss_sa)
     parse_warnings.extend(miss_ya)
 
-    rows_hh = pair_human_human(salman_h, grader_b_h) if (salman_h and grader_b_h) else []
+    rows_hh = (
+        pair_human_human(salman_h, grader_b_h) if (salman_h and grader_b_h) else []
+    )
 
     m_salman = compute_agreement_metrics(
         rows_salman_ai, left_key="human", right_key="ai"
     )
-    m_grader_b = compute_agreement_metrics(rows_grader_b_ai, left_key="human", right_key="ai")
+    m_grader_b = compute_agreement_metrics(
+        rows_grader_b_ai, left_key="human", right_key="ai"
+    )
     m_hh = (
         compute_agreement_metrics(
             rows_hh, left_key="human_salman_json", right_key="human_grader_b_csv"

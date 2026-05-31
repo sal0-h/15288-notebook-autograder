@@ -108,8 +108,7 @@ def _is_question_column(header: str) -> bool:
 def gradescope_notebook_dual_headers_present(headers: list[str]) -> bool:
     """True if any question column uses ``<g.g>: <n.n> (pts)`` (notebook QID after colon)."""
     return any(
-        _is_question_column(h) and _DUAL_GS_NB_HEADER.match(h.strip())
-        for h in headers
+        _is_question_column(h) and _DUAL_GS_NB_HEADER.match(h.strip()) for h in headers
     )
 
 

@@ -37,6 +37,7 @@ def _load_build_module():
 def question_ids_parse_order(parsed: dict) -> list[str]:
     """Section order (numeric when possible), then question id order within section."""
     out: list[str] = []
+
     def sec_key(s: str) -> tuple:
         return (0, int(s)) if str(s).isdigit() else (1, s)
 
@@ -138,8 +139,7 @@ def canonicalize(
             raise ValueError(f"No question columns parsed from {grades_path}")
 
     cfg_dict = {
-        "assignment_name": assignment_name
-        or f"S24_{lab_dir.name}",
+        "assignment_name": assignment_name or f"S24_{lab_dir.name}",
         "model": "gpt-4.1",
         "rubric_model": "",
         "rubric_review": True,
@@ -293,9 +293,7 @@ def canonicalize(
                 out_row[m] = str(row.get(m, "")).strip()
             for qid in sorted_qids:
                 col = col_by_qid.get(qid)
-                out_row[qid] = (
-                    str(row.get(col, "")).strip() if col is not None else ""
-                )
+                out_row[qid] = str(row.get(col, "")).strip() if col is not None else ""
             w.writerow(out_row)
 
     # Verify
@@ -311,9 +309,7 @@ def canonicalize(
     got = set(get_all_question_ids(parsed2))
     want = set(sorted_qids)
     if not want.issubset(got):
-        raise ValueError(
-            f"Post-write parse missing qids: {sorted(want - got)[:20]}"
-        )
+        raise ValueError(f"Post-write parse missing qids: {sorted(want - got)[:20]}")
 
 
 def main() -> int:
