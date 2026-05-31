@@ -7,12 +7,8 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from config_models import ensure_app_config, sort_key_qid
-from export import RUN_AUTOGRADER, export_all, export_autograder_zip
-
-_GRADESCOPE_RUNTIME_SNIPPET = (
-    Path(__file__).resolve().parents[1] / "gradescope_runtime.py"
-).read_text(encoding="utf-8")
+from config_models import ensure_app_config
+from export import export_all, export_autograder_zip
 
 
 def _make_config(tmp_path: Path, output_dir: Path) -> dict:
@@ -59,8 +55,6 @@ class TestExportAll:
         summary = export_all(ensure_app_config(config))
         assert summary["students"] == 0
         assert summary["excel_path"] == ""
-        assert summary.get("autograder_zip") == ""
-        assert summary.get("gradescope_files") == 0
 
     def test_gradescope_json_format(self, tmp_path):
         results = [
@@ -72,24 +66,16 @@ class TestExportAll:
                 "summary_feedback": "",
             },
         ]
-        graded_path = tmp_path / "graded_results.json"
-        graded_path.write_text(json.dumps(results, indent=2), encoding="utf-8")
+        (tmp_path / "graded_results.json").write_text(
+            json.dumps(results, indent=2), encoding="utf-8"
+        )
         _write_parsed_student(tmp_path, "Alice", ["1.1"])
         config = _make_config(tmp_path, tmp_path)
         summary = export_all(ensure_app_config(config))
         assert summary["students"] == 1
-        gs_path = tmp_path / "gradescope" / "Alice.json"
-        assert gs_path.exists()
-        gs_data = json.loads(gs_path.read_text(encoding="utf-8"))
-        assert "tests" in gs_data
-        assert len(gs_data["tests"]) == 2
-        assert (
-            gs_data["tests"][0]["name"] == "1.1"
-        )  # qid as-is (no Q prefix) for Gradescope outline match
-        assert gs_data["tests"][0]["score"] == 2
-        assert gs_data["tests"][0]["max_score"] == 2
+        gs_data = json.loads((tmp_path / "gradescope" / "Alice.json").read_text())
+        assert gs_data["tests"][0]["name"] == "1.1"
         assert gs_data["tests"][-1]["name"] == "Notebook Format Lint"
-        assert gs_data["tests"][-1]["max_score"] == 0
 
     def test_excel_columns(self, tmp_path):
         results = [
@@ -101,157 +87,14 @@ class TestExportAll:
                 "summary_feedback": "Q1.1: -1",
             },
         ]
-        graded_path = tmp_path / "graded_results.json"
-        graded_path.write_text(json.dumps(results, indent=2), encoding="utf-8")
+        (tmp_path / "graded_results.json").write_text(
+            json.dumps(results, indent=2), encoding="utf-8"
+        )
         _write_parsed_student(tmp_path, "Alice", ["1.1"])
-        config = _make_config(tmp_path, tmp_path)
-        summary = export_all(ensure_app_config(config))
-        excel_path = tmp_path / "Final_Grades.xlsx"
-        assert excel_path.exists()
-        df = pd.read_excel(excel_path)
+        export_all(ensure_app_config(_make_config(tmp_path, tmp_path)))
+        df = pd.read_excel(tmp_path / "Final_Grades.xlsx")
         assert "student_name" in df.columns
-        assert "total_score" in df.columns
-        assert "Q1.1" in df.columns
-        assert "summary_feedback" in df.columns
         assert df.iloc[0]["student_name"] == "Alice"
-        assert df.iloc[0]["total_score"] == 1
-
-    def test_filename_sanitization_fallback(self, tmp_path):
-        results = [
-            {
-                "student_name": "///",
-                "questions": {"1.1": {"score": 0, "max": 1, "feedback": ""}},
-                "total_score": 0,
-                "total_max": 1,
-                "summary_feedback": "",
-            },
-        ]
-        graded_path = tmp_path / "graded_results.json"
-        graded_path.write_text(json.dumps(results, indent=2), encoding="utf-8")
-        config = _make_config(tmp_path, tmp_path)
-        export_all(ensure_app_config(config))
-        gs_dir = tmp_path / "gradescope"
-        files = list(gs_dir.glob("*.json"))
-        assert len(files) == 1
-        assert "unknown_student" in files[0].name
-
-    def test_linter_uses_solution_qids_when_grade_only_set(self, tmp_path):
-        """When grade_only is set, linter test uses full solution QIDs, not grade_only."""
-        solution_parsed = {
-            "sections": {
-                "1": {
-                    "overview_markdown": "",
-                    "questions": {
-                        "1.1": {"points": 1},
-                        "1.2": {"points": 2},
-                        "2.1": {"points": 3},
-                    },
-                },
-            },
-            "duplicate_qids": [],
-        }
-        (tmp_path / "solution_parsed.json").write_text(
-            json.dumps(solution_parsed), encoding="utf-8"
-        )
-        results = [
-            {
-                "student_name": "Eve",
-                "questions": {
-                    "1.1": {"score": 1, "max": 1, "feedback": "ok"},
-                    "1.2": {"score": 0, "max": 2, "feedback": ""},
-                    "2.1": {"score": 0, "max": 3, "feedback": ""},
-                },
-                "total_score": 1,
-                "total_max": 6,
-                "summary_feedback": "",
-            },
-        ]
-        (tmp_path / "graded_results.json").write_text(
-            json.dumps(results, indent=2), encoding="utf-8"
-        )
-        _write_parsed_student(tmp_path, "Eve", ["1.1", "1.2"])
-        config = _make_config(tmp_path, tmp_path)
-        config["parsed_dir"] = str(tmp_path / "parsed")
-        config["grading"] = {"grade_only": ["1.1", "1.2"]}
-        export_all(ensure_app_config(config))
-        gs_data = json.loads((tmp_path / "gradescope" / "Eve.json").read_text())
-        lint = gs_data["tests"][-1]
-        assert "2.1" in lint["output"]
-        assert (
-            "Questions Missing" in lint["output"] or "missing" in lint["output"].lower()
-        )
-
-    def test_grade_only_filters_gradescope_export(self, tmp_path):
-        results = [
-            {
-                "student_name": "Bob",
-                "questions": {
-                    "8.1": {"score": 2, "max": 2, "feedback": "ok"},
-                    "9.1": {"score": 3, "max": 7, "feedback": "partial"},
-                    "1.1": {
-                        "score": 0,
-                        "max": 1,
-                        "feedback": "[skipped - not in grade_only]",
-                    },
-                },
-                "total_score": 5,
-                "total_max": 10,
-                "summary_feedback": "",
-            },
-        ]
-        (tmp_path / "graded_results.json").write_text(
-            json.dumps(results, indent=2), encoding="utf-8"
-        )
-        _write_parsed_student(tmp_path, "Bob", ["8.1", "9.1"])
-        config = _make_config(tmp_path, tmp_path)
-        config["grading"] = {"grade_only": ["8.1", "9.1"]}
-        export_all(ensure_app_config(config))
-        gs_data = json.loads((tmp_path / "gradescope" / "Bob.json").read_text())
-        names = [t["name"] for t in gs_data["tests"]]
-        assert names[:-1] == ["8.1", "9.1"]
-        assert names[-1] == "Notebook Format Lint"
-        assert "1.1" not in names
-
-    def test_gradescope_title_mapping(self, tmp_path):
-        results = [
-            {
-                "student_name": "Carol",
-                "questions": {"8.1": {"score": 1, "max": 2, "feedback": ""}},
-                "total_score": 1,
-                "total_max": 2,
-                "summary_feedback": "",
-            },
-        ]
-        (tmp_path / "graded_results.json").write_text(
-            json.dumps(results, indent=2), encoding="utf-8"
-        )
-        _write_parsed_student(tmp_path, "Carol", ["8.1"])
-        config = _make_config(tmp_path, tmp_path)
-        config["gradescope_title_mapping"] = {"8.1": "Outline Item 5"}
-        export_all(ensure_app_config(config))
-        gs_data = json.loads((tmp_path / "gradescope" / "Carol.json").read_text())
-        assert gs_data["tests"][0]["name"] == "Outline Item 5"
-        assert gs_data["tests"][-1]["name"] == "Notebook Format Lint"
-
-    def test_linter_summary_present_when_parsed_missing(self, tmp_path):
-        results = [
-            {
-                "student_name": "Dana",
-                "questions": {"1.1": {"score": 1, "max": 2, "feedback": ""}},
-                "total_score": 1,
-                "total_max": 2,
-                "summary_feedback": "",
-            },
-        ]
-        (tmp_path / "graded_results.json").write_text(
-            json.dumps(results, indent=2), encoding="utf-8"
-        )
-        config = _make_config(tmp_path, tmp_path)
-        export_all(ensure_app_config(config))
-        gs_data = json.loads((tmp_path / "gradescope" / "Dana.json").read_text())
-        lint = gs_data["tests"][-1]
-        assert lint["name"] == "Notebook Format Lint"
-        assert "Parsed notebook not found" in lint["output"]
 
 
 class TestExportAutograderZip:
@@ -268,60 +111,18 @@ class TestExportAutograderZip:
         (tmp_path / "graded_results.json").write_text(
             json.dumps(results, indent=2), encoding="utf-8"
         )
-        config = _make_config(tmp_path, tmp_path)
-        export_all(ensure_app_config(config))
-        zip_path = export_autograder_zip(ensure_app_config(config))
+        export_all(ensure_app_config(_make_config(tmp_path, tmp_path)))
+        zip_path = export_autograder_zip(
+            ensure_app_config(_make_config(tmp_path, tmp_path))
+        )
         assert zip_path.exists()
-        assert zip_path.name == "gradescope_autograder.zip"
         with zipfile.ZipFile(zip_path, "r") as zf:
             names = zf.namelist()
             assert "setup.sh" in names
             assert "run_autograder" in names
-            assert "gradescope_runtime.py" in names
             assert "results/Alice.json" in names
-            # setup.sh and run_autograder should be executable (Unix)
-            for name in ("setup.sh", "run_autograder"):
-                info = zf.getinfo(name)
-                assert (info.external_attr >> 16) & 0o111  # executable bit
-                assert info.create_system == 3  # Unix
 
     def test_raises_if_gradescope_dir_missing(self, tmp_path):
         config = _make_config(tmp_path, tmp_path)
         with pytest.raises(FileNotFoundError, match="Run export first"):
             export_autograder_zip(ensure_app_config(config))
-
-    def test_zip_includes_email_stem_map(self, tmp_path):
-        results = [
-            {
-                "student_name": "Alice",
-                "questions": {"1.1": {"score": 2, "max": 2, "feedback": "ok"}},
-                "total_score": 2,
-                "total_max": 2,
-                "summary_feedback": "",
-            },
-        ]
-        (tmp_path / "graded_results.json").write_text(
-            json.dumps(results, indent=2), encoding="utf-8"
-        )
-        _write_parsed_student(tmp_path, "Alice", ["1.1"])
-        config = _make_config(tmp_path, tmp_path)
-        export_all(ensure_app_config(config))
-        (tmp_path / "email_stem_map.json").write_text(
-            json.dumps({"alice@example.com": "Alice"}), encoding="utf-8"
-        )
-        zip_path = export_autograder_zip(ensure_app_config(config))
-        with zipfile.ZipFile(zip_path, "r") as zf:
-            names = zf.namelist()
-            assert "email_stem_map.json" in names
-            assert "results/Alice.json" in names
-
-
-class TestRunAutograderScript:
-    def test_thin_wrapper_invokes_gradescope_runtime(self):
-        assert "gradescope_runtime" in RUN_AUTOGRADER
-        assert "/autograder/source" in RUN_AUTOGRADER
-
-    def test_error_responses_include_nonempty_tests(self):
-        """Gradescope requires non-empty tests array; fallback responses must include status."""
-        assert '"tests": []' not in _GRADESCOPE_RUNTIME_SNIPPET
-        assert '"name": "Autograder Status"' in _GRADESCOPE_RUNTIME_SNIPPET

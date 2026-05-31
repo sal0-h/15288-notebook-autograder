@@ -809,32 +809,28 @@ Tests live in `tests/` and are run with `pytest tests/ -q`.
 | File                     | What it covers                                                                                     |
 | ------------------------ | -------------------------------------------------------------------------------------------------- |
 | `test_llm_client.py` | `temperature_for_model` policy for GPT-5 id families |
-| `test_utils.py`          | Config load/save/defaults, `AppConfig` serialization helpers, `ensure_app_config`, path resolution |
-| `test_parse.py`          | Notebook parsing with mock cell structures                                                         |
-| `test_grade.py`          | `grade_student` and `grade_group` logic including `grade_only`, merge, skip, retry                 |
+| `test_utils.py`          | Config load/save round-trip, logging, OpenAI client wiring, assignment output paths |
+| `test_parse.py`          | Notebook parsing, code output extraction, QID helpers |
+| `test_grade.py`          | `grade_student`, `grade_only`, merge, totals, batch merge integration |
 | `test_rubric.py`         | Rubric generation and review pass logic                                                            |
-| `test_export.py`         | Excel and Gradescope JSON output, `gradescope_title_mapping`, autograder ZIP layout                  |
-| `test_experiment_data_scripts.py` | `build_experiment_layout.py` (column parsing including Gradescope ``<g>: <notebook> (pts)`` → notebook QID, S24 cohort tag, S25/S26 e2e, `config.yaml` preserve vs `--overwrite-config`), `canonicalize_experiment_lab.py` (positional CSV guard, dual-header keying, `--allow-misaligned-human`), `remap_gradescope_notebook_qids.py` (rewrite notebook QID in export headers), `verify_experiment_lab_layout.py`, `prepare_assignment` smoke |
-| `test_backup_grading_results.py` | `scripts/backup_grading_results.py`: snapshot ``graded_results.json`` + ``experiment_runs/`` |
-| `test_compare_experiment_to_human.py` | `scripts/compare_experiment_to_human.py`: `analyze_lab` totals / per-question MAE / Pearson; warns when human `Total Score` is constant (undefined *r*, misleading MAE) |
-| `test_compute_irr.py` | `scripts/compute_irr.py`: HW1 Salman (JSON) ± Grader B (wide CSV), human–human + human–AI vs `graded_results.json` smoke (tiny fixture) |
-| `test_analyze_human_ai_discrepancies.py` | `scripts/analyze_human_ai_discrepancies.py` + `scripts/_human_ai_join.py`: Task 2/3 rows, Task 4 quartile invariance, grader scan (skips Autograder headers), Task 1 `_raw` scan |
-| `test_audit_experiment_output_rubrics.py` | `scripts/audit_experiment_output_rubrics.py`: rubric vs `question_groups` coverage, deduction sums, coarse-item heuristic |
-| `test_gather.py`         | Submission extraction from metadata, `email_stem_map.json`                                           |
+| `test_export.py`         | Gradescope JSON, Excel, autograder ZIP (core paths) |
+| `test_gather.py`         | Submission metadata parsing and folder gather |
 | `test_calibrate.py`      | Z-score computation and outlier flagging                                                           |
-| `test_app.py`            | FastAPI endpoints including config CRUD, `POST /parse-solution`, grading SSE, export downloads      |
+| `test_app.py`            | API safety (traversal, upload limits), config load/create, grading lock, export/genai smoke |
 | `test_prompt_builder.py` | Prompt construction, sanitization, token budgeting                                                 |
 | `test_linter_export.py`  | Linter ZIP creation                                                                                |
-| `test_results_store.py`  | `load_results`, `save_results`, `load_results_with_backup`, update_student                         |
+| `test_results_store.py`  | `load_results` recovery, dedupe, `update_student`, round-trip |
 | `test_integration.py`    | End-to-end parse → grade → export with mocked LLM                                                  |
-| `test_queue_estimate.py` | `load_grade_queue` vs `estimate_grade` alignment                                                   |
+| `test_queue_estimate.py` | `load_grade_queue`, estimate path alignment, pending-student cost shape |
 | `test_usage_helpers.py`  | `token_usage` helpers: `detach_usage_from_graded_result`, `merge_graded_usage`, SSE summary event |
 | `test_results_models.py` | `GradedResult` / disk round-trip                                                                   |
-| `test_genai_detection.py` | Optional GenAI suspicion pass; `llm.json_runner.complete_structured` mocked; scores unchanged                      |
-| `test_json_runner.py`     | `execute_llm_task` retries, exhaustion, fallbacks; `run_jobs` smoke test; `extract_llm_questions` validation |
+| `test_genai_detection.py` | Optional GenAI suspicion pass; scores unchanged |
+| `test_json_runner.py`     | `execute_llm_task` retries, exhaustion, fallbacks; `run_jobs`; `extract_llm_questions` |
 | `test_batch_grader.py`    | `load_grade_queue` resume logic, skip-already-graded behavior                                      |
-| `test_config_models.py`   | `normalize_qid`, config load/save round-trip, `GradingConfig` methods, `load_solution_parsed`      |
-| `test_question_tags.py`   | Tag extraction in parser, `tag_notebook` script injection, prompt type instruction injection        |
+| `test_config_models.py`   | `normalize_qid`, config load/save round-trip, `GradingConfig`, `load_solution_parsed`      |
+| `test_question_tags.py`   | Parser tag extraction, `tag_notebook`, prompt type injection |
+
+Research and experiment scripts under `scripts/` are **not** CI-gated; run them manually when refreshing cohort layouts or paper metrics (see `experiment_data/README.md`, `research/README.md`).
 
 
 LLM calls are always mocked in tests via `unittest.mock.patch`. Tests never hit
