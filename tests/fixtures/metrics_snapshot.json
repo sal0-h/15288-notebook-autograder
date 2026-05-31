@@ -1,0 +1,24 @@
+{
+  "models": {
+    "gpt-4.1-mini": {
+      "labs": {
+        "S26_LabTest_2": {
+          "paired": 10,
+          "mae_total": 1.2,
+          "rmse_total": 1.5,
+          "pearson_r": 0.85
+        }
+      }
+    },
+    "gpt-4.1": {
+      "labs": {
+        "S26_LabTest_2": {
+          "paired": 10,
+          "mae_total": 0.9,
+          "rmse_total": 1.1,
+          "pearson_r": 0.9
+        }
+      }
+    }
+  }
+}

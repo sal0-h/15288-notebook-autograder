@@ -2,7 +2,7 @@
 
 import json
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -73,7 +73,7 @@ def test_run_genai_detection_merges_flags_preserves_scores(tmp_path: Path):
         "llm.json_runner.complete_structured",
         return_value=(fake_parsed, TokenUsage(10, 20)),
     ):
-        summary = run_genai_detection(cfg)
+        summary = run_genai_detection(cfg, client=MagicMock())
 
     assert summary["students_processed"] == 1
     assert summary["questions_flagged"] == 1
@@ -160,7 +160,7 @@ def test_run_genai_detection_parallel_workers(tmp_path: Path):
         "llm.json_runner.complete_structured",
         return_value=(fake_parsed, TokenUsage(10, 20)),
     ) as mock_cs:
-        summary = run_genai_detection(cfg)
+        summary = run_genai_detection(cfg, client=MagicMock())
 
     assert summary["students_processed"] == 2
     assert summary["questions_flagged"] == 0

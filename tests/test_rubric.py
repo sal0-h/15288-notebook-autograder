@@ -307,7 +307,7 @@ class TestGenerateRubrics:
             "grading": {"question_groups": [["1.1"]]},
         }
         with pytest.raises(FileNotFoundError, match="Solution parsed not found"):
-            generate_rubrics(ensure_app_config(config))
+            generate_rubrics(ensure_app_config(config), client=MagicMock())
 
     def test_group_indices_merges_into_existing(self, tmp_path):
         """When group_indices is set, only generates for those groups and merges into existing."""
