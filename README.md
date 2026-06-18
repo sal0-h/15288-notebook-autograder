@@ -141,6 +141,8 @@ The single source of truth for a live assignment is always `output/{assignment_n
 
 Dependencies are listed in requirements.txt and include FastAPI, Pydantic, pandas, openpyxl, tiktoken, and the OpenAI Python SDK.
 
+Optional **agentic (CrewAI) mode** uses a separate dependency file: `pip install -r requirements-agentic.txt`. Enable in assignment config with `agentic.enabled: true` and `agentic.crew_type: lean|verified|panel` (default off).
+
 ## Installation
 
 ```bash

@@ -35,7 +35,8 @@ how the pieces fit together, trace data through the pipeline, or make non-trivia
 ```
 ai_autograder/
 ├── app.py                  FastAPI backend + static UI serving
-├── batch_grader.py         Batch orchestration (sequential + parallel, resume)
+├── agentic/                Opt-in CrewAI rubric/grading crews (lazy import; needs requirements-agentic.txt)
+├── agent_prompts/          CrewAI agent/task YAML (DEFAULT + per-assignment overrides)
 ├── calibrate.py            Post-grading z-score outlier detection
 ├── estimate.py             Token and cost estimation
 ├── export.py               Gradescope JSON, Excel, autograder ZIP
@@ -183,6 +184,13 @@ class AppConfig(BaseModel):
     gradescope_title_mapping: dict[str, str] = {}
     parsing: ParsingConfig = ...               # section/question regexes, keep_images
     grading: GradingConfig = ...               # question_groups, grade_only, grade_only_merge
+    agentic: AgenticConfig = ...               # enabled (default false), crew_type (lean|verified|panel)
+```
+
+```python
+class AgenticConfig(BaseModel):
+    enabled: bool = False                       # when true, rubric/grade use CrewAI crews
+    crew_type: str = "lean"                     # lean | verified | panel
 ```
 
 Sub-models:
@@ -472,6 +480,8 @@ no longer sum to points after the LLM's rewrite.
 
 **Parallelism:** `cfg.workers` controls parallel rubric **generation** and **review** when `workers > 1` and there is more than one group. Parallel bulk grading uses the same entrypoint: `llm.json_runner.run_jobs` (handles both sequential and parallel dispatch internally).
 
+**Agentic mode (opt-in):** When `agentic.enabled` is true, `generate_one_group` and `review_one_group` delegate to `agentic.rubric_crew` instead of `execute_llm_task`. Crew profiles (`lean`, `verified`, `panel`) control how many agents run per group. Install `pip install -r requirements-agentic.txt` before enabling. Token/cost estimates return `unavailable` in agentic mode (`estimate.py`).
+
 ---
 
 ### 4.4 Grade
@@ -486,6 +496,8 @@ One LLM call per question group. Flow:
 2. Run `llm.json_runner.execute_llm_task` (messages, model, caps, `response_model=grading_models.GradingLlmResponse`). Inside the runner: `llm.json_runner.complete_structured` (wraps `client.responses.parse` with `text_format=<Pydantic model>` — OpenAI Structured Outputs, requires gpt-4o / gpt-4.1-* or later), global retry budget `llm.json_runner.MAX_JSON_LLM_ATTEMPTS` (= `MAX_VALIDATION_RETRIES + 1`), exponential backoff via `llm.json_runner.retry_with_exponential_backoff`.
 3. The API guarantees the response matches `grading_models.GradingLlmResponse` (`grades: list[QuestionGrade]`) — no JSON parsing or fence stripping needed.
 4. Post-process in `grade.py` (`_postprocess_grade_group`): normalizes each row’s `question_id` (`Q1.1` / `q1.1` → `1.1`), deduplicates by QID, checks all group questions are present (raises `ValueError` → retry if any missing), returns `list[QuestionGrade]` (no dict copy of the group).
+
+**Agentic mode (opt-in):** When `agentic.enabled` is true, `grade_group` delegates to `grade_group_agentic` → `agentic.grading_crew.run_grading`. The grounding step reuses `build_group_prompt` (multimodal, injection flags preserved). Richer profiles add text-only verify/adjudicate crews. Fallback on failure matches the simple path (`GRADING_FAILED`, `requires_review=True`).
 5. On exhaustion, `fallback_factory` returns a list of `QuestionGrade` rows (one per QID) with zero scores and `[grading failed after retries]` feedback.
 
 `effective_max_completion` is capped at `max(2048, len(group) * 1024)` to avoid
@@ -726,6 +738,8 @@ Row types are shared for LLM wire and pipeline: **`QuestionGrade`** (grading), *
 
 The Review tab auto-loads results when the tab is activated. It fetches per-student parsed JSON (`GET /parsed/{student_name}`) and renders `answer_text_concat` plus any `image/png` or `image/jpeg` entries under `answer_cells[].images` as inline `<img>` data URLs (`ui/js/app.js`). Per-question `_provenance` (model, rubric hash, timestamp) is shown below the confidence badge.
 
+**Setup tab — agentic mode:** Checkbox **Agentic mode (CrewAI)** and **Crew profile** select (`lean` / `verified` / `panel`) map to `agentic.enabled` and `agentic.crew_type` in `PUT /config`. When enabled, rubric/grade cost estimates show “not available” instead of a dollar amount (`estimate.py` returns `unavailable: true`).
+
 ### Export (`POST /export`, file downloads)
 
 `POST /export` runs `export_all`: writes per-student Gradescope JSONs under `gradescope/`, `Final_Grades.xlsx`, and regenerates `gradescope_autograder.zip` when there is at least one graded student. The JSON body includes `students`, `gradescope_dir`, `gradescope_files`, `excel_path`, and `autograder_zip` (empty strings and zero counts when `graded_results.json` is empty). The Export tab shows those paths and uses `estimateErrorMessage` for HTTP errors. `GET /export/excel`, `GET /export/autograder-zip`, and `GET /export/linter-zip` serve downloads; the autograder route calls `run_export` then `export_autograder_zip` so a direct download stays aligned with disk state. Download `href`s are prefixed with the same `API` base as `fetch` (`ui/js/shared.js`).
@@ -828,6 +842,9 @@ Tests live in `tests/` and are run with `pytest tests/ -q`.
 | `test_json_runner.py`     | `execute_llm_task` retries, exhaustion, fallbacks; `run_jobs`; `extract_llm_questions` |
 | `test_batch_grader.py`    | `load_grade_queue` resume logic, skip-already-graded behavior                                      |
 | `test_config_models.py`   | `normalize_qid`, config load/save round-trip, `GradingConfig`, `load_solution_parsed`      |
+| `test_agentic_config.py`  | `AgenticConfig` parsing, invalid `crew_type`, lazy crewai import                         |
+| `test_agentic_rubric.py`  | Agentic rubric generation/review twins and dispatch when `agentic.enabled`               |
+| `test_agentic_grade.py`   | Agentic grading twin, dispatch, failure fallback                                         |
 | `test_question_tags.py`   | Parser tag extraction, `tag_notebook`, prompt type injection |
 
 Research and experiment scripts under `scripts/` are **not** CI-gated; run them manually when refreshing cohort layouts or paper metrics (see `experiment_data/README.md`, `research/README.md`).

@@ -33,6 +33,7 @@ When tradeoffs conflict, use this order:
 | **Concurrent CLI + server**          | **Should not happen** — do not run two grading processes on the same `output/{assignment}/` folder; no cross-process file locking.                                                                                                                                                                          |
 | **Tests**                            | **More coverage is better** — keep adding; mock LLMs in CI always.                                                                                                                                                                                                                                          |
 | **GenAI suspicion pass**             | **Separate LLM call** after grading (cheap model, temp 0). Inputs: question + student markdown + code only — no rubric, reference, plots, or stdout. Writes `suspicious_genai` on each question in `graded_results.json`; **never changes scores**. Re-runs overwrite prior flags. Optional: CLI, HTTP, UI. |
+| **Agentic (CrewAI) grading/rubric** | **Off by default** (`agentic.enabled: false`). When enabled, rubric and grading use multi-agent crews (`lean` \| `verified` \| `panel`). Requires optional `requirements-agentic.txt`. Normal single-LLM path unchanged when disabled. |
 
 
 ## Data contracts
