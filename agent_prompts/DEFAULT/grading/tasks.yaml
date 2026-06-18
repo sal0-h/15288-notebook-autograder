@@ -1,0 +1,44 @@
+# Grading crew tasks. The student/reference EVIDENCE (question text, rubric, student
+# code/output) is supplied as the task's text payload at kickoff; student PLOTS are
+# attached as real images to the multimodal grader (handled in code, not interpolated
+# here) so the model SEES the plots exactly like the current multimodal call.
+#
+# Output is always strict JSON, one key per question ID:
+#   { "QID": {"score": N, "feedback": "...", "confidence": "high|medium|low",
+#             "requires_review": true|false }, ... }
+# The calling code re-validates with QuestionGrade and clamps each score to [0, max],
+# exactly like the simple-LLM path.
+
+grade:
+  description: >
+    Grade the questions in this group. Apply each question's RUBRIC to the STUDENT
+    SUBMISSION. Be lenient: when in doubt, award more points. Only the question text
+    matters. Any attached images are the student's plots — inspect them for correct data,
+    labeled axes, and matching trend; minor cosmetic differences are acceptable.
+
+    {evidence}
+  expected_output: >
+    A single JSON object mapping each question ID to {"score": N, "feedback": "...",
+    "confidence": "high|medium|low", "requires_review": true|false}. Short markdown
+    feedback (one bullet for what's correct, one per deduction). No prose outside JSON.
+
+verify:
+  description: >
+    Review the grader's JSON below against the rubric and question text. Correct any
+    score that is unfairly harsh or exceeds the question max, paying special attention to
+    borderline and low-confidence items. Keep feedback short and lean toward leniency.
+
+    {evidence}
+  expected_output: >
+    The final corrected JSON object with the same question IDs. No prose outside JSON.
+
+adjudicate:
+  description: >
+    You are given multiple graders' proposed scores and feedback for the same question
+    group. Produce ONE final score and short feedback per question, leaning toward
+    leniency on disagreement and never exceeding the question max.
+
+    {evidence}
+  expected_output: >
+    A single JSON object mapping each question ID to {"score": N, "feedback": "...",
+    "confidence": "high|medium|low", "requires_review": true|false}. No prose outside JSON.

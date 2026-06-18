@@ -199,6 +199,23 @@ class RubricEntry(BaseModel):
         return self
 
 
+class AgenticConfig(BaseModel):
+    """Opt-in CrewAI multi-agent mode. When disabled, the simple-LLM path runs unchanged."""
+
+    enabled: bool = False
+    crew_type: str = "lean"  # lean | verified | panel (see agentic.crew_types.CrewType)
+
+    @field_validator("crew_type", mode="before")
+    @classmethod
+    def coerce_crew_type(cls, v) -> str:
+        s = str(v or "lean").strip().lower()
+        if s not in ("lean", "verified", "panel"):
+            raise ValueError(
+                f"agentic.crew_type must be one of lean, verified, panel; got {v!r}"
+            )
+        return s
+
+
 class AppConfig(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
@@ -221,6 +238,7 @@ class AppConfig(BaseModel):
     gradescope_title_mapping: dict[str, str] = Field(default_factory=dict)
     parsing: ParsingConfig = Field(default_factory=ParsingConfig)
     grading: GradingConfig = Field(default_factory=GradingConfig)
+    agentic: AgenticConfig = Field(default_factory=AgenticConfig)
 
 
 def default_config(assignment_name: str = "default", **overrides) -> dict:

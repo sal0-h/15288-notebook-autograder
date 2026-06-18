@@ -1,0 +1,54 @@
+# Rubric crew tasks. {evidence} is filled at kickoff with the per-group question
+# text + reference solution (built by the rubric module, text-only). Output is always
+# strict JSON: { "QID": { "points": N, "items": [ {"description": str, "deduction": N}, ... ] } }
+# Deductions MUST sum to points for each question. The calling code re-validates and
+# rescales as a safety net, exactly like the simple-LLM path.
+
+generate:
+  description: >
+    Create LENIENT grading rubrics for the following question group. The QUESTION TEXT
+    is the sole specification; the REFERENCE SOLUTION is only one possible approach.
+
+    {evidence}
+
+    For each question ID, output an object with "points" (integer, the question's total)
+    and "items" (a small list of broad, concept-level criteria). The sum of all
+    "deduction" values for a question MUST equal its points exactly. Minimize the number
+    of items; for simple questions a single broad item is fine.
+  expected_output: >
+    A single JSON object mapping each question ID to {"points": N, "items":
+    [{"description": str, "deduction": N}, ...]}. No prose outside the JSON.
+
+refine:
+  description: >
+    Audit the CURRENT RUBRIC below for leniency and fairness against the QUESTION TEXT.
+    Rewrite ONLY the description text of each criterion to be as generous as reasonably
+    possible while still testing the core objective. Do NOT change the number of items,
+    the points, or any deduction amount.
+
+    {evidence}
+  expected_output: >
+    A JSON object with the EXACT same question IDs, item counts, points, and deduction
+    amounts as the input, but with improved description text. No prose outside the JSON.
+
+validate:
+  description: >
+    Validate the rubric below. Confirm that for every question the deductions sum exactly
+    to the points, descriptions are concrete and positively phrased, and no criterion
+    requires anything the QUESTION TEXT did not ask for. Correct any violation.
+
+    {evidence}
+  expected_output: >
+    The final, corrected JSON rubric object. Deductions MUST sum to points per question.
+    No prose outside the JSON.
+
+synthesize:
+  description: >
+    You are given a draft rubric plus auditor notes for a question group. Produce ONE
+    final rubric per question: lenient, fair, using the fewest broad criteria, with
+    deductions summing EXACTLY to the points.
+
+    {evidence}
+  expected_output: >
+    A single JSON object mapping each question ID to {"points": N, "items": [...]}.
+    No prose outside the JSON.

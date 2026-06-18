@@ -46,8 +46,22 @@ def _tokens_from_messages(messages: list, model: str) -> int:
     return total
 
 
+def _agentic_estimate_unavailable() -> dict:
+    """Token/cost estimates assume one LLM call per group; agentic crews fan out."""
+    u = TokenUsage()
+    return {
+        "agentic": True,
+        "unavailable": True,
+        "message": "Estimates are not available in agentic (multi-agent) mode.",
+        **u.to_json_dict(),
+        "cost_usd": 0,
+    }
+
+
 def estimate_rubrics(config: AppConfig) -> dict:
     """Estimate tokens and cost for rubric generation."""
+    if config.agentic.enabled:
+        return _agentic_estimate_unavailable()
     try:
         solution_parsed = load_solution_parsed(config)
     except FileNotFoundError:
@@ -95,6 +109,9 @@ def estimate_rubrics(config: AppConfig) -> dict:
 
 def estimate_grade(config: AppConfig, student_name: str | None = None) -> dict:
     """Estimate tokens and cost for grading. If student_name is None, estimates pending bulk grading only."""
+    if config.agentic.enabled:
+        return _agentic_estimate_unavailable()
+
     paths = get_assignment_output_paths(config)
     parsed_dir = paths.parsed_dir
 

@@ -1,0 +1,4 @@
+# Agentic (CrewAI) subsystem — only needed when config.agentic.enabled is true.
+# CrewAI is built on pydantic v2 (compatible with requirements.txt) and pulls in litellm,
+# which routes the existing OpenAI models. Safe to omit if you never enable agentic mode.
+crewai>=0.70

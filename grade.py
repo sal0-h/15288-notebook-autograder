@@ -125,6 +125,15 @@ def grade_group(
     Returns:
         (grade_items, qid_to_max, usage, qid_injection_suspect)
     """
+    if config.agentic.enabled:
+        return grade_group_agentic(
+            group,
+            solution_parsed,
+            student_parsed,
+            config,
+            ctx,
+            student_name=student_name,
+        )
     messages, qid_to_max, qid_injection_suspect = build_group_prompt(
         group,
         solution_parsed,
@@ -172,6 +181,61 @@ def grade_group(
         fallback_factory=_exhausted,
     )
     return grade_items, qid_to_max, usage, qid_injection_suspect
+
+
+def grade_group_agentic(
+    group: list[str],
+    solution_parsed: dict,
+    student_parsed: dict,
+    config: AppConfig,
+    ctx: LlmContext,
+    student_name: str | None = None,
+) -> tuple[list[QuestionGrade], dict[str, int], TokenUsage, dict[str, bool]]:
+    """Agentic twin of grade_group via the CrewAI grading crew.
+
+    Identical return shape. On failure, returns the same zeroed GRADING_FAILED result
+    as grade_group.
+    """
+    from agentic.grading_crew import run_grading  # lazy: crewai optional
+
+    name_ctx = f" [{student_name}]" if student_name else ""
+    try:
+        grade_items, qid_to_max, usage, qid_injection = run_grading(
+            group,
+            solution_parsed,
+            student_parsed,
+            config,
+            crew_type=config.agentic.crew_type,
+            client=ctx.client,
+        )
+        return grade_items, qid_to_max, usage, qid_injection
+    except Exception as e:
+        ctx.logger.exception(
+            "Agentic grading failed for group %s%s: %s",
+            group,
+            name_ctx,
+            e,
+            extra={"task": "grade_group_agentic", "model": ctx.model},
+        )
+        qid_to_max = {
+            qid: (get_question_data(solution_parsed, qid) or {}).get("points", 0)
+            for qid in group
+        }
+        return (
+            [
+                QuestionGrade(
+                    question_id=qid,
+                    score=0.0,
+                    feedback=GRADING_FAILED,
+                    confidence="low",
+                    requires_review=True,
+                )
+                for qid in group
+            ],
+            qid_to_max,
+            TokenUsage(),
+            {},
+        )
 
 
 def _store_group_grades(

@@ -32,6 +32,7 @@ class RubricReviewJob:
     group: list[str]
     rubrics: dict[str, RubricEntry]
     solution_parsed: dict
+    config: AppConfig
     ctx: LlmContext
 
 
@@ -77,6 +78,38 @@ def _postprocess_rubric_review(
 
 def review_one_group(job: RubricReviewJob) -> dict[str, RubricEntry]:
     """Review rubrics for one group; return revised qid -> rubric entries."""
+    if job.config.agentic.enabled:
+        return _review_one_group_agentic(job)
+    return _review_one_group_simple(job)
+
+
+def _review_one_group_agentic(job: RubricReviewJob) -> dict[str, RubricEntry]:
+    from agentic.postprocess import merge_reviewed_rubric
+    from agentic.rubric_crew import run_rubric_review
+
+    group = job.group
+    rubrics = job.rubrics
+    solution_parsed = job.solution_parsed
+    config = job.config
+    ctx = job.ctx
+
+    try:
+        raw, _usage, group_rubrics = run_rubric_review(
+            group,
+            rubrics,
+            solution_parsed,
+            config,
+            crew_type=config.agentic.crew_type,
+        )
+        if not group_rubrics:
+            return {}
+        return merge_reviewed_rubric(raw, group_rubrics)
+    except Exception as e:
+        ctx.logger.warning("Agentic rubric review failed for group %s: %s", group, e)
+        return {}
+
+
+def _review_one_group_simple(job: RubricReviewJob) -> dict[str, RubricEntry]:
     group = job.group
     rubrics = job.rubrics
     solution_parsed = job.solution_parsed
@@ -168,6 +201,7 @@ def review_rubrics(
             group=group,
             rubrics=rubrics,
             solution_parsed=solution_parsed,
+            config=config,
             ctx=ctx,
         )
         for group in groups

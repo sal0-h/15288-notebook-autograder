@@ -105,6 +105,9 @@ def generate_one_group(
     job: RubricGenJob,
 ) -> tuple[int, list[str], dict[str, RubricEntry], TokenUsage, bool]:
     """Generate rubric for one group. Returns (idx, group, rubrics_for_group, usage, had_error)."""
+    if job.config.agentic.enabled:
+        return _generate_one_group_agentic(job)
+
     idx = job.idx
     group = job.group
     solution_parsed = job.solution_parsed
@@ -177,6 +180,60 @@ def generate_one_group(
     )
 
     return (idx, group, rubrics_for_group, usage, had_error)
+
+
+def _generate_one_group_agentic(
+    job: RubricGenJob,
+) -> tuple[int, list[str], dict[str, RubricEntry], TokenUsage, bool]:
+    """Agentic twin of generate_one_group via CrewAI rubric crew."""
+    from agentic.postprocess import normalize_rubric_json
+    from agentic.rubric_crew import run_rubric_generation
+
+    idx = job.idx
+    group = job.group
+    solution_parsed = job.solution_parsed
+    config = job.config
+    ctx = job.ctx
+    had_error = False
+
+    if not group:
+        return (idx, group, {}, TokenUsage(), had_error)
+
+    try:
+        raw, usage = run_rubric_generation(
+            group,
+            solution_parsed,
+            config,
+            crew_type=config.agentic.crew_type,
+        )
+        rubrics_for_group = normalize_rubric_json(raw, group, solution_parsed)
+        for qid in group:
+            if qid not in rubrics_for_group:
+                sol_q = get_question_data(solution_parsed, qid)
+                pts = int((sol_q or {}).get("points", 0))
+                rubrics_for_group[qid] = RubricEntry(
+                    points=pts,
+                    items=[
+                        RubricItem(description=GENERATION_FAILED, deduction=float(pts)),
+                    ],
+                )
+        return (idx, group, rubrics_for_group, usage, had_error)
+    except Exception as e:
+        had_error = True
+        ctx.logger.exception(
+            "Agentic rubric generation failed for group %s: %s", group, e
+        )
+        rubrics_for_group: dict[str, RubricEntry] = {}
+        for qid in group:
+            sol_q = get_question_data(solution_parsed, qid)
+            pts = int((sol_q or {}).get("points", 0))
+            rubrics_for_group[qid] = RubricEntry(
+                points=pts,
+                items=[
+                    RubricItem(description=GENERATION_FAILED, deduction=float(pts)),
+                ],
+            )
+        return (idx, group, rubrics_for_group, TokenUsage(), had_error)
 
 
 def generate_rubrics(
