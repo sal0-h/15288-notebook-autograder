@@ -115,6 +115,20 @@
                     <strong>Include reference solution during grading</strong> <span class="text-muted-sm">(usually keep OFF to avoid anchoring on solution-specific values)</span>
                 </label>
             </div>
+            <div class="mb-2">
+                <label class="flex-label">
+                    <input type="checkbox" id="setupAgenticCheck">
+                    <strong>Agentic mode (CrewAI)</strong> <span class="text-muted-sm">(multi-agent rubric/grading; install <code>requirements-agentic.txt</code> first)</span>
+                </label>
+            </div>
+            <div class="mb-2 hidden" id="setupAgenticCrewWrap">
+                <label for="setupAgenticCrewType"><strong>Crew profile</strong></label>
+                <select id="setupAgenticCrewType" class="input-select">
+                    <option value="lean">lean — closest to single-call</option>
+                    <option value="verified">verified — adds checker stage</option>
+                    <option value="panel">panel — specialists + adjudicator</option>
+                </select>
+            </div>
             <div class="mb-2 flex-row-gap10">
                 <button type="button" class="btn" id="setupParseUploadBtn" disabled>Parse uploaded solution</button>
                 <button type="button" class="btn btn-secondary" id="setupParseExistingBtn">Parse existing solution</button>

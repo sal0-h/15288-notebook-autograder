@@ -102,6 +102,9 @@ function formatEstimate(data, response) {
     const err = estimateErrorMessage(data, response);
     if (err) return { kind: "error", text: err };
     if (!data) return null;
+    if (data.unavailable && data.message) {
+        return { kind: "ok", text: data.message };
+    }
     const pt = data.prompt_tokens || 0;
     const ct = data.completion_tokens || 0;
     const rawCost = data.cost_usd != null ? data.cost_usd : 0;

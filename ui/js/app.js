@@ -85,6 +85,11 @@ const filterGroupsForUi = window.filterGroupsByGradeOnly || function(groups, gra
     return groups.map(g => g.filter(q => set.has(q))).filter(g => g.length > 0);
 };
 
+function _syncAgenticCrewVisibility() {
+    const enabled = document.getElementById("setupAgenticCheck").checked;
+    document.getElementById("setupAgenticCrewWrap").classList.toggle("hidden", !enabled);
+}
+
 function _populateSetupFields(cfg) {
     setupConfig = cfg;
     document.getElementById("setupAssignmentName").value = setupConfig.assignment_name || "";
@@ -140,6 +145,16 @@ function _populateSetupFields(cfg) {
     }
     document.getElementById("setupRubricReviewCheck").checked = setupConfig.rubric_review !== false;
     document.getElementById("setupIncludeReferenceCheck").checked = setupConfig.include_reference_in_grading === true;
+    const agentic = setupConfig.agentic || {};
+    document.getElementById("setupAgenticCheck").checked = agentic.enabled === true;
+    const crewType = (agentic.crew_type || "lean").toLowerCase();
+    const crewSelect = document.getElementById("setupAgenticCrewType");
+    if (Array.from(crewSelect.options).some(o => o.value === crewType)) {
+        crewSelect.value = crewType;
+    } else {
+        crewSelect.value = "lean";
+    }
+    _syncAgenticCrewVisibility();
     setupQuestionGroups = (setupConfig.grading || {}).question_groups || [];
     const gradeOnly = (setupConfig.grading || {}).grade_only;
     const gradeOnlyMerge = (setupConfig.grading || {}).grade_only_merge === true;
@@ -244,6 +259,10 @@ async function doLoadAssignment() {
 }
 
 document.getElementById("setupLoadBtn").onclick = () => doLoadAssignment();
+
+document.getElementById("setupAgenticCheck").onchange = () => {
+    _syncAgenticCrewVisibility();
+};
 
 document.getElementById("setupResetBtn").onclick = async () => {
     if (!confirm("Reset all config fields to defaults? Your rubrics and graded results are NOT affected.")) return;
@@ -434,6 +453,10 @@ document.getElementById("setupSaveBtn").onclick = async () => {
     setupConfig.genai_detection_model = document.getElementById("setupGenaiModel").value || "gpt-4.1-mini";
     setupConfig.rubric_review = document.getElementById("setupRubricReviewCheck").checked;
     setupConfig.include_reference_in_grading = document.getElementById("setupIncludeReferenceCheck").checked;
+    setupConfig.agentic = {
+        enabled: document.getElementById("setupAgenticCheck").checked,
+        crew_type: document.getElementById("setupAgenticCrewType").value || "lean",
+    };
     setupConfig.workers = Math.max(1, parseInt(document.getElementById("setupWorkersInput").value, 10) || 1);
     setupConfig.grading = setupConfig.grading || {};
     setupConfig.grading.question_groups = setupQuestionGroups;
